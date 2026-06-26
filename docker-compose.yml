@@ -1,0 +1,36 @@
+# Local development infrastructure for Project Olympus.
+#
+# Brings up the backing services the app depends on (PostgreSQL, Redis). The
+# application itself is run on the host via `make run-api` / `make run-worker`
+# during development for fast iteration; containerised app images (see
+# deploy/Dockerfile) are used in staging/production.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: olympus
+      POSTGRES_PASSWORD: olympus
+      POSTGRES_DB: olympus
+    ports:
+      - "5432:5432"
+    volumes:
+      - olympus_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U olympus"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  olympus_pg:
