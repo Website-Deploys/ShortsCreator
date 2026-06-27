@@ -16,7 +16,7 @@ from olympus.domain.contracts.storage import StoragePort
 from olympus.domain.entities.project import Project, ProjectStatus
 from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.platform.logging import get_logger
-from olympus.utils import new_id, utc_now
+from olympus.utils import new_id, project_write_lock, utc_now
 
 log = get_logger(__name__)
 
@@ -93,13 +93,14 @@ class ProjectService:
     async def queue(self, project_id: str) -> Project:
         """Mark a project as queued for the editing pipeline (honest: not run)."""
 
-        project = await self.get(project_id)
-        if project.status in (ProjectStatus.UPLOADED, ProjectStatus.FAILED):
-            project.status = ProjectStatus.QUEUED
-            project.updated_at = utc_now()
-            await self._repo.save(project)
-            log.info("project_queued", project_id=project.id)
-        return project
+        async with project_write_lock(project_id):
+            project = await self.get(project_id)
+            if project.status in (ProjectStatus.UPLOADED, ProjectStatus.FAILED):
+                project.status = ProjectStatus.QUEUED
+                project.updated_at = utc_now()
+                await self._repo.save(project)
+                log.info("project_queued", project_id=project.id)
+            return project
 
     async def rename(self, project_id: str, name: str) -> Project:
         """Rename a project."""
@@ -109,35 +110,38 @@ class ProjectService:
             raise ValidationError("Project name cannot be empty.")
         if len(cleaned) > 200:
             raise ValidationError("Project name is too long.")
-        project = await self.get(project_id)
-        project.name = cleaned
-        project.updated_at = utc_now()
-        await self._repo.save(project)
-        log.info("project_renamed", project_id=project_id)
-        return project
+        async with project_write_lock(project_id):
+            project = await self.get(project_id)
+            project.name = cleaned
+            project.updated_at = utc_now()
+            await self._repo.save(project)
+            log.info("project_renamed", project_id=project_id)
+            return project
 
     async def set_thumbnail(
         self, project_id: str, data: bytes, *, content_type: str | None
     ) -> Project:
         """Store a thumbnail image for the project (a real frame from the video)."""
 
-        project = await self.get(project_id)
         key = f"projects/{project_id}/thumbnail.jpg"
         await self._storage.put(key, data, content_type=content_type or "image/jpeg")
-        project.thumbnail_key = key
-        project.updated_at = utc_now()
-        await self._repo.save(project)
-        log.info("project_thumbnail_set", project_id=project_id, size_bytes=len(data))
-        return project
+        async with project_write_lock(project_id):
+            project = await self.get(project_id)
+            project.thumbnail_key = key
+            project.updated_at = utc_now()
+            await self._repo.save(project)
+            log.info("project_thumbnail_set", project_id=project_id, size_bytes=len(data))
+            return project
 
     async def delete(self, project_id: str) -> None:
         """Delete a project and its stored artifacts (source + thumbnail)."""
 
-        project = await self._repo.get(project_id)
-        if project is None:
-            return  # idempotent
-        await self._storage.delete(project.storage_key)
-        if project.thumbnail_key:
-            await self._storage.delete(project.thumbnail_key)
-        await self._repo.delete(project_id)
-        log.info("project_deleted", project_id=project_id)
+        async with project_write_lock(project_id):
+            project = await self._repo.get(project_id)
+            if project is None:
+                return  # idempotent
+            await self._storage.delete(project.storage_key)
+            if project.thumbnail_key:
+                await self._storage.delete(project.thumbnail_key)
+            await self._repo.delete(project_id)
+            log.info("project_deleted", project_id=project_id)

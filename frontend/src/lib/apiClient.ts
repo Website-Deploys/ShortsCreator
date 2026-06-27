@@ -13,6 +13,8 @@ import type {
   ApiError,
   CreateProjectInput,
   Project,
+  Story,
+  StorySummary,
   SystemInfo,
 } from "@/lib/types";
 
@@ -87,6 +89,16 @@ export const api = {
     request<Analysis>(`/projects/${id}/analysis/stages/${stage}/rerun`, { method: "POST" }),
   cancelAnalysis: (id: string) =>
     request<{ cancelled: boolean }>(`/projects/${id}/analysis/cancel`, { method: "POST" }),
+
+  /* Story Engine — narrative understanding. */
+  getStory: (id: string) => request<Story>(`/projects/${id}/story`),
+  runStory: (id: string) =>
+    request<Story>(`/projects/${id}/story/run`, { method: "POST" }),
+  rerunStoryStage: (id: string, stage: string) =>
+    request<Story>(`/projects/${id}/story/stages/${stage}/rerun`, { method: "POST" }),
+  cancelStory: (id: string) =>
+    request<{ cancelled: boolean }>(`/projects/${id}/story/cancel`, { method: "POST" }),
+  getStorySummary: (id: string) => request<StorySummary>(`/projects/${id}/story/summary`),
 
   /** Upload a captured thumbnail frame (multipart; not JSON). */
   uploadThumbnail: async (id: string, blob: Blob): Promise<Project> => {

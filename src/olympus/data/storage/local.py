@@ -12,6 +12,8 @@ in a thread to keep the async event loop responsive.
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -43,7 +45,21 @@ class LocalStorage(StoragePort):
         def _write() -> int:
             path = self._path_for(key)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
+            # Atomic write: write to a temp file in the same directory, then
+            # os.replace() it into place. This guarantees readers always see a
+            # complete file, never a partially-written one - essential because
+            # background tasks (e.g. analysis status updates) may rewrite a
+            # document concurrently with a reader.
+            fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(data)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, path)
+            except BaseException:
+                Path(tmp).unlink(missing_ok=True)
+                raise
             return len(data)
 
         try:
