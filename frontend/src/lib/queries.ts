@@ -36,6 +36,18 @@ import type {
   Virality,
   WorkersResponse,
   Workflow,
+  AdminSnapshot,
+  AlertsResponse,
+  AuditResponse,
+  CostEstimate,
+  EnginesResponse,
+  FailuresResponse,
+  MonitoringHealthResponse,
+  QueueSnapshot,
+  StorageAnalytics,
+  SystemMetrics,
+  UsageStats,
+  WorkflowAnalytics,
 } from "@/lib/types";
 
 export const queryKeys = {
@@ -68,6 +80,18 @@ export const queryKeys = {
   librarySearch: (q: string) => ["library", "search", q] as const,
   libraryActivity: (projectId?: string) => ["library", "activity", projectId ?? "all"] as const,
   libraryStorage: (projectId?: string) => ["library", "storage", projectId ?? "all"] as const,
+  monitoringHealth: ["monitoring", "health"] as const,
+  monitoringEngines: ["monitoring", "engines"] as const,
+  monitoringWorkflows: ["monitoring", "workflows"] as const,
+  monitoringQueue: ["monitoring", "queue"] as const,
+  monitoringSystem: ["monitoring", "system"] as const,
+  monitoringStorage: ["monitoring", "storage"] as const,
+  monitoringFailures: ["monitoring", "failures"] as const,
+  monitoringUsage: ["monitoring", "usage"] as const,
+  monitoringCost: ["monitoring", "cost"] as const,
+  monitoringAudit: ["monitoring", "audit"] as const,
+  monitoringAlerts: ["monitoring", "alerts"] as const,
+  monitoringAdmin: ["monitoring", "admin"] as const,
 };
 
 const TERMINAL: ReadonlySet<string> = new Set(["analyzed", "complete", "failed"]);
@@ -902,5 +926,119 @@ export function useLibraryCleanup() {
     mutationFn: ({ operation, projectId }: { operation: string; projectId?: string }) =>
       api.libraryCleanup(operation, projectId),
     onSuccess: () => invalidateLibrary(qc),
+  });
+}
+
+
+
+/* -------------------------------------------------------------------------- */
+/* Production Monitoring & Analytics - observational, live-refreshing         */
+/* -------------------------------------------------------------------------- */
+
+/** Live operational dashboards refresh on a fixed interval (real backend state). */
+const MONITORING_REFRESH_MS = 5000;
+
+export function useMonitoringHealth(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringHealth,
+    enabled,
+    refetchInterval: enabled ? MONITORING_REFRESH_MS : false,
+    queryFn: (): Promise<MonitoringHealthResponse> => api.getMonitoringHealth(),
+  });
+}
+
+export function useMonitoringEngines(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringEngines,
+    enabled,
+    refetchInterval: enabled ? MONITORING_REFRESH_MS : false,
+    queryFn: (): Promise<EnginesResponse> => api.getMonitoringEngines(),
+  });
+}
+
+export function useMonitoringWorkflows(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringWorkflows,
+    enabled,
+    refetchInterval: enabled ? MONITORING_REFRESH_MS : false,
+    queryFn: (): Promise<WorkflowAnalytics> => api.getMonitoringWorkflows(),
+  });
+}
+
+export function useMonitoringQueue(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringQueue,
+    enabled,
+    refetchInterval: enabled ? 2500 : false,
+    queryFn: (): Promise<QueueSnapshot> => api.getMonitoringQueue(),
+  });
+}
+
+export function useMonitoringSystem(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringSystem,
+    enabled,
+    refetchInterval: enabled ? MONITORING_REFRESH_MS : false,
+    queryFn: (): Promise<SystemMetrics> => api.getMonitoringSystem(),
+  });
+}
+
+export function useMonitoringStorage(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringStorage,
+    enabled,
+    queryFn: (): Promise<StorageAnalytics> => api.getMonitoringStorage(false),
+  });
+}
+
+export function useMonitoringFailures(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringFailures,
+    enabled,
+    refetchInterval: enabled ? MONITORING_REFRESH_MS : false,
+    queryFn: (): Promise<FailuresResponse> => api.getMonitoringFailures(),
+  });
+}
+
+export function useMonitoringUsage(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringUsage,
+    enabled,
+    queryFn: (): Promise<UsageStats> => api.getMonitoringUsage(),
+  });
+}
+
+export function useMonitoringCost(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringCost,
+    enabled,
+    queryFn: (): Promise<CostEstimate> => api.getMonitoringCost(),
+  });
+}
+
+export function useMonitoringAudit(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringAudit,
+    enabled,
+    refetchInterval: enabled ? MONITORING_REFRESH_MS : false,
+    queryFn: (): Promise<AuditResponse> => api.getMonitoringAudit(100),
+  });
+}
+
+export function useMonitoringAlerts(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringAlerts,
+    enabled,
+    refetchInterval: enabled ? MONITORING_REFRESH_MS : false,
+    queryFn: (): Promise<AlertsResponse> => api.getMonitoringAlerts(),
+  });
+}
+
+export function useMonitoringAdmin(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.monitoringAdmin,
+    enabled,
+    refetchInterval: enabled ? MONITORING_REFRESH_MS : false,
+    queryFn: (): Promise<AdminSnapshot> => api.getMonitoringAdmin(),
   });
 }

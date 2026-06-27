@@ -24,8 +24,10 @@ from olympus.data.database.session import get_session
 from olympus.data.repositories import (
     StorageActivityRepository,
     StorageAnalysisRepository,
+    StorageAuditRepository,
     StorageEditingRepository,
     StorageLibraryMetaRepository,
+    StorageMetricsSnapshotRepository,
     StorageOptimizationRepository,
     StoragePlanningRepository,
     StorageProjectRepository,
@@ -44,6 +46,7 @@ from olympus.rendering import build_clip_renderer, build_renderer
 from olympus.services.analysis import AnalysisService
 from olympus.services.editing import EditingService
 from olympus.services.intake import IntakeService
+from olympus.services.monitoring import MonitoringService
 from olympus.services.optimization import OptimizationService
 from olympus.services.planning import ClipPlannerService
 from olympus.services.project_management import LibraryService
@@ -382,6 +385,36 @@ def library_service_provider() -> LibraryService:
     )
 
 
+def monitoring_service_provider() -> MonitoringService:
+    """Provide the Production Monitoring & Analytics service.
+
+    Composes every engine repository (read-only), the workflow and activity
+    repositories, and the monitoring-owned audit and metrics-snapshot
+    repositories, plus the live workflow service singleton for worker/queue
+    introspection. It is strictly observational: it never modifies any engine,
+    the workflow, or their data, and never fabricates a metric.
+    """
+
+    storage = build_storage()
+    return MonitoringService(
+        storage=storage,
+        project_repo=StorageProjectRepository(storage),
+        analysis_repo=StorageAnalysisRepository(storage),
+        story_repo=StorageStoryRepository(storage),
+        virality_repo=StorageViralityRepository(storage),
+        planning_repo=StoragePlanningRepository(storage),
+        editing_repo=StorageEditingRepository(storage),
+        render_manifest_repo=StorageRenderManifestRepository(storage),
+        render_run_repo=StorageRenderRunRepository(storage),
+        optimization_repo=StorageOptimizationRepository(storage),
+        workflow_repo=StorageWorkflowRepository(storage),
+        activity_repo=StorageActivityRepository(storage),
+        audit_repo=StorageAuditRepository(storage),
+        snapshot_repo=StorageMetricsSnapshotRepository(storage),
+        workflow_service=workflow_service_provider(),
+    )
+
+
 # Reusable typed aliases for clean route signatures.
 SettingsDep = Annotated[Settings, Depends(settings_provider)]
 DbSessionDep = Annotated[AsyncSession, Depends(db_session_provider)]
@@ -400,3 +433,4 @@ OptimizationServiceDep = Annotated[OptimizationService, Depends(optimization_ser
 RenderingServiceDep = Annotated[RenderingService, Depends(rendering_service_provider)]
 WorkflowServiceDep = Annotated[WorkflowService, Depends(workflow_service_provider)]
 LibraryServiceDep = Annotated[LibraryService, Depends(library_service_provider)]
+MonitoringServiceDep = Annotated[MonitoringService, Depends(monitoring_service_provider)]

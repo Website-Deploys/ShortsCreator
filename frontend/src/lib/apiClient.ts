@@ -54,6 +54,18 @@ import type {
   WorkflowHistoryResponse,
   WorkersResponse,
   JobLogsResponse,
+  AdminSnapshot,
+  AlertsResponse,
+  AuditResponse,
+  CostEstimate,
+  EnginesResponse,
+  FailuresResponse,
+  MonitoringHealthResponse,
+  QueueSnapshot,
+  StorageAnalytics,
+  SystemMetrics,
+  UsageStats,
+  WorkflowAnalytics,
 } from "@/lib/types";
 
 /** Error thrown when the API returns a non-2xx response. */
@@ -289,6 +301,22 @@ export const api = {
     request<JobLogsResponse>(`/projects/${id}/workflow/jobs/${jobId}/logs`),
   getWorkers: () => request<WorkersResponse>(`/workflow/workers`),
   getScheduler: () => request<SchedulerStatus>(`/workflow/scheduler`),
+
+  /* Production Monitoring & Analytics - observational only. */
+  getMonitoringHealth: () => request<MonitoringHealthResponse>(`/monitoring/health`),
+  getMonitoringEngines: () => request<EnginesResponse>(`/monitoring/engines`),
+  getMonitoringWorkflows: () => request<WorkflowAnalytics>(`/monitoring/workflows`),
+  getMonitoringQueue: () => request<QueueSnapshot>(`/monitoring/queue`),
+  getMonitoringSystem: () => request<SystemMetrics>(`/monitoring/system`),
+  getMonitoringStorage: (capture = false) =>
+    request<StorageAnalytics>(`/monitoring/storage${_qs({ capture })}`),
+  getMonitoringFailures: () => request<FailuresResponse>(`/monitoring/failures`),
+  getMonitoringUsage: () => request<UsageStats>(`/monitoring/usage`),
+  getMonitoringCost: () => request<CostEstimate>(`/monitoring/cost`),
+  getMonitoringAudit: (limit?: number) =>
+    request<AuditResponse>(`/monitoring/audit${_qs({ limit: limit ? String(limit) : undefined })}`),
+  getMonitoringAlerts: () => request<AlertsResponse>(`/monitoring/alerts`),
+  getMonitoringAdmin: () => request<AdminSnapshot>(`/monitoring/admin`),
 
   /** Upload a captured thumbnail frame (multipart; not JSON). */
   uploadThumbnail: async (id: string, blob: Blob): Promise<Project> => {
