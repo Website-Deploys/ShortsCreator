@@ -19,6 +19,10 @@ import type {
   PlanList,
   Project,
   QualityReport,
+  RenderLogs,
+  RenderManifestResponse,
+  RenderRun,
+  RenderValidation,
   Story,
   TimelineList,
   Virality,
@@ -40,6 +44,10 @@ export const queryKeys = {
   variants: (id: string) => ["projects", id, "variants"] as const,
   music: (id: string) => ["projects", id, "music"] as const,
   packages: (id: string) => ["projects", id, "packages"] as const,
+  render: (id: string) => ["projects", id, "render"] as const,
+  renderManifest: (id: string) => ["projects", id, "render", "manifest"] as const,
+  renderValidation: (id: string) => ["projects", id, "render", "validation"] as const,
+  renderLogs: (id: string) => ["projects", id, "render", "logs"] as const,
 };
 
 const TERMINAL: ReadonlySet<string> = new Set(["analyzed", "complete", "failed"]);
@@ -559,6 +567,119 @@ export function useCancelOptimization(id: string) {
     mutationFn: () => api.cancelOptimization(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.optimization(id) });
+    },
+  });
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Rendering Engine - deterministic execution into real MP4s                  */
+/* -------------------------------------------------------------------------- */
+
+const RENDER_TERMINAL: ReadonlySet<string> = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * A project's render run. Polls while rendering is in progress, then settles.
+ * Returns `null` when no render run exists yet (HTTP 404) - rendering is started
+ * explicitly (it is the heavy execution step), so `null` is the common "not
+ * started" state.
+ */
+export function useRender(id: string) {
+  return useQuery({
+    queryKey: queryKeys.render(id),
+    queryFn: async (): Promise<RenderRun | null> => {
+      try {
+        return await api.getRender(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false;
+      return RENDER_TERMINAL.has(data.status) ? false : 2000;
+    },
+  });
+}
+
+/** The published render manifest (available once a render produced real files). */
+export function useRenderManifest(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.renderManifest(id),
+    enabled,
+    queryFn: async (): Promise<RenderManifestResponse | null> => {
+      try {
+        return await api.getRenderManifest(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+  });
+}
+
+/** The final render validation report. */
+export function useRenderValidation(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.renderValidation(id),
+    enabled,
+    queryFn: async (): Promise<RenderValidation | null> => {
+      try {
+        return await api.getRenderValidation(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+  });
+}
+
+/** Per-stage render logs. */
+export function useRenderLogs(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.renderLogs(id),
+    enabled,
+    queryFn: async (): Promise<RenderLogs | null> => {
+      try {
+        return await api.getRenderLogs(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+  });
+}
+
+/** Start (or resume) the render pipeline. */
+export function useRunRender(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.runRender(id),
+    onSuccess: (run: RenderRun) => qc.setQueryData(queryKeys.render(id), run),
+  });
+}
+
+/** Re-run a single render stage in isolation. */
+export function useRerunRenderStage(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (stage: string) => api.rerunRenderStage(id, stage),
+    onSuccess: (run: RenderRun) => {
+      qc.setQueryData(queryKeys.render(id), run);
+      void qc.invalidateQueries({ queryKey: queryKeys.renderManifest(id) });
+      void qc.invalidateQueries({ queryKey: queryKeys.renderValidation(id) });
+    },
+  });
+}
+
+/** Request cancellation of an in-flight render run. */
+export function useCancelRender(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.cancelRender(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.render(id) });
     },
   });
 }

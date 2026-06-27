@@ -64,6 +64,11 @@ class RenderedVideo:
     bitrate_kbps: int | None = None
     audio_sample_rate: int | None = None
     size_bytes: int | None = None
+    checksum: str | None = None
+    subtitles_included: bool | None = None
+    music_included: bool | None = None
+    timeline_version: str | None = None
+    rendered_at: str | None = None
     source_video: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -95,6 +100,11 @@ class RenderedVideo:
             "bitrate_kbps": self.bitrate_kbps,
             "audio_sample_rate": self.audio_sample_rate,
             "size_bytes": self.size_bytes,
+            "checksum": self.checksum,
+            "subtitles_included": self.subtitles_included,
+            "music_included": self.music_included,
+            "timeline_version": self.timeline_version,
+            "rendered_at": self.rendered_at,
             "source_video": self.source_video,
             "metadata": self.metadata,
         }
@@ -117,6 +127,11 @@ class RenderedVideo:
             bitrate_kbps=raw.get("bitrate_kbps"),
             audio_sample_rate=raw.get("audio_sample_rate"),
             size_bytes=raw.get("size_bytes"),
+            checksum=raw.get("checksum"),
+            subtitles_included=raw.get("subtitles_included"),
+            music_included=raw.get("music_included"),
+            timeline_version=raw.get("timeline_version"),
+            rendered_at=raw.get("rendered_at"),
             source_video=raw.get("source_video", {}) or {},
             metadata=raw.get("metadata", {}) or {},
         )
@@ -131,6 +146,9 @@ class RenderManifest:
     created_at: datetime
     updated_at: datetime
     renderer: str = "unknown"
+    render_id: str | None = None
+    rendering_version: str | None = None
+    timeline_version: str | None = None
     renders: list[RenderedVideo] = field(default_factory=list)
 
     def render(self, clip_id: str) -> RenderedVideo | None:
@@ -141,6 +159,9 @@ class RenderManifest:
             "project_id": self.project_id,
             "status": self.status.value,
             "renderer": self.renderer,
+            "render_id": self.render_id,
+            "rendering_version": self.rendering_version,
+            "timeline_version": self.timeline_version,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "renders": [r.to_dict() for r in self.renders],
@@ -152,6 +173,9 @@ class RenderManifest:
             project_id=str(raw["project_id"]),
             status=RenderStatus(raw.get("status", "completed")),
             renderer=str(raw.get("renderer", "unknown")),
+            render_id=raw.get("render_id"),
+            rendering_version=raw.get("rendering_version"),
+            timeline_version=raw.get("timeline_version"),
             created_at=_parse_dt(raw.get("created_at")),
             updated_at=_parse_dt(raw.get("updated_at")),
             renders=[

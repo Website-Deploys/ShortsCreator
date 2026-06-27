@@ -23,6 +23,10 @@ import type {
   PlanResponse,
   Project,
   QualityReport,
+  RenderLogs,
+  RenderManifestResponse,
+  RenderRun,
+  RenderValidation,
   Story,
   StorySummary,
   SystemInfo,
@@ -181,6 +185,20 @@ export const api = {
   getPackage: (id: string, clipId: string) =>
     request<PackageResponse>(`/projects/${id}/optimization/packages/${clipId}`),
 
+  /* Rendering Engine - deterministic execution into real MP4s. */
+  getRender: (id: string) => request<RenderRun>(`/projects/${id}/rendering`),
+  runRender: (id: string) =>
+    request<RenderRun>(`/projects/${id}/rendering/run`, { method: "POST" }),
+  rerunRenderStage: (id: string, stage: string) =>
+    request<RenderRun>(`/projects/${id}/rendering/stages/${stage}/rerun`, { method: "POST" }),
+  cancelRender: (id: string) =>
+    request<{ cancelled: boolean }>(`/projects/${id}/rendering/cancel`, { method: "POST" }),
+  getRenderManifest: (id: string) =>
+    request<RenderManifestResponse>(`/projects/${id}/rendering/manifest`),
+  getRenderValidation: (id: string) =>
+    request<RenderValidation>(`/projects/${id}/rendering/validation`),
+  getRenderLogs: (id: string) => request<RenderLogs>(`/projects/${id}/rendering/logs`),
+
   /** Upload a captured thumbnail frame (multipart; not JSON). */
   uploadThumbnail: async (id: string, blob: Blob): Promise<Project> => {
     const form = new FormData();
@@ -206,4 +224,9 @@ export const mediaUrls = {
     `${API_V1}/projects/${id}/optimization/packages/${clipId}/assets/${kind}`,
   packageMetadata: (id: string, clipId: string) =>
     `${API_V1}/projects/${id}/optimization/packages/${clipId}/metadata`,
+  /** Download a rendered clip's MP4. */
+  renderClip: (id: string, clipId: string) =>
+    `${API_V1}/projects/${id}/rendering/clips/${clipId}/download`,
+  /** Download the render manifest JSON. */
+  renderManifest: (id: string) => `${API_V1}/projects/${id}/rendering/manifest/download`,
 };

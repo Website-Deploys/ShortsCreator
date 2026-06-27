@@ -3,7 +3,7 @@
 /**
  * The Project Workspace - a spacious, sectioned creator workspace.
  *
- * Loads the project from the backend (survives refresh). Seven tabs:
+ * Loads the project from the backend (survives refresh). Eight tabs:
  *   Overview  -> video player, the Cognitive Engine's progress, the (honest,
  *                future) editing pipeline, and Shorts.
  *   Analysis  -> read-only viewer of what Olympus understands (transcript,
@@ -14,6 +14,9 @@
  *   Clip Planner -> ranked editing plans (blueprints) - what to edit, never how.
  *   Editing   -> non-destructive multi-track edit timelines assembled from
  *                approved clips, every decision explained with confidence.
+ *   Rendering -> deterministic execution of the timelines into real MP4s, with
+ *                a published render manifest - honest UNAVAILABLE when a renderer
+ *                (e.g. FFmpeg) is absent.
  *   Optimization -> post-render polish (audio, captions, music, visuals,
  *                thumbnails, quality, variants, exports) - honest UNAVAILABLE
  *                when a render or model is absent.
@@ -32,6 +35,7 @@ import {
   BrainIcon,
   FilmIcon,
   ScissorsIcon,
+  ServerIcon,
   SlidersIcon,
   SpinnerIcon,
   ZapIcon,
@@ -55,6 +59,8 @@ import { EditingStages } from "@/components/project/EditingStages";
 import { EditingView } from "@/components/project/EditingView";
 import { OptimizationStages } from "@/components/project/OptimizationStages";
 import { OptimizationView } from "@/components/project/OptimizationView";
+import { RenderingStages } from "@/components/project/RenderingStages";
+import { RenderingView } from "@/components/project/RenderingView";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -68,7 +74,9 @@ import {
   useOptimization,
   useProject,
   usePlanning,
+  useRender,
   useRunOptimization,
+  useRunRender,
   useStory,
   useVirality,
 } from "@/lib/queries";
@@ -81,6 +89,7 @@ type Tab =
   | "virality"
   | "clip-planner"
   | "editing"
+  | "rendering"
   | "optimization";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -97,6 +106,7 @@ function Tabs({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void 
     { id: "virality", label: "Virality" },
     { id: "clip-planner", label: "Clip Planner" },
     { id: "editing", label: "Editing" },
+    { id: "rendering", label: "Rendering" },
     { id: "optimization", label: "Optimization" },
   ];
   return (
@@ -128,6 +138,8 @@ function ProjectWorkspace({ project }: { project: Project }) {
   const viralitySummary = virality ? parseSummary(virality) : null;
   const { data: planning, isLoading: planningLoading } = usePlanning(project.id);
   const { data: editing, isLoading: editingLoading } = useEditing(project.id);
+  const { data: rendering, isLoading: renderingLoading } = useRender(project.id);
+  const runRender = useRunRender(project.id);
   const { data: optimization, isLoading: optimizationLoading } = useOptimization(project.id);
   const runOptimization = useRunOptimization(project.id);
 
@@ -322,6 +334,39 @@ function ProjectWorkspace({ project }: { project: Project }) {
                     icon={<FilmIcon className="h-6 w-6" />}
                     title="Editing hasn't started yet"
                     description="The Editing Engine begins automatically once the Clip Planner completes. It assembles non-destructive edit timelines from approved clips — it never renders or exports video."
+                  />
+                )
+              )}
+            </div>
+          )}
+
+          {tab === "rendering" && (
+            <div className="space-y-10">
+              <section>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <SectionTitle>Render pipeline</SectionTitle>
+                  {!rendering && !renderingLoading && (
+                    <Button onClick={() => runRender.mutate()} disabled={runRender.isPending}>
+                      {runRender.isPending ? "Starting…" : "Run render"}
+                    </Button>
+                  )}
+                </div>
+                <Card>
+                  <RenderingStages render={rendering} isLoading={renderingLoading} />
+                </Card>
+              </section>
+
+              {rendering ? (
+                <section>
+                  <SectionTitle>Render output</SectionTitle>
+                  <RenderingView render={rendering} />
+                </section>
+              ) : (
+                !renderingLoading && (
+                  <EmptyState
+                    icon={<ServerIcon className="h-6 w-6" />}
+                    title="Rendering hasn't run yet"
+                    description="The Rendering Engine executes the edit timeline into a real MP4 (jump cuts, reframing, captions, audio), then publishes the render manifest the Optimization Engine consumes. Start it with “Run render”. It makes no creative decisions, and when a renderer (e.g. FFmpeg) is unavailable it reports honestly instead of fabricating output."
                   />
                 )
               )}
