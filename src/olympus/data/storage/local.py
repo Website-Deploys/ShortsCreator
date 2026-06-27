@@ -12,6 +12,7 @@ in a thread to keep the async event loop responsive.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from olympus.domain.contracts.storage import StorageObject, StoragePort
@@ -51,6 +52,32 @@ class LocalStorage(StoragePort):
             raise StorageError("Failed to write object.", details={"key": key}) from exc
         return StorageObject(key=key, size_bytes=size, content_type=content_type)
 
+    async def put_stream(
+        self,
+        key: str,
+        chunks: AsyncIterator[bytes],
+        *,
+        content_type: str | None = None,
+    ) -> StorageObject:
+        path = self._path_for(key)
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+        size = 0
+        try:
+            handle = await asyncio.to_thread(open, path, "wb")
+            try:
+                async for chunk in chunks:
+                    if not chunk:
+                        continue
+                    await asyncio.to_thread(handle.write, chunk)
+                    size += len(chunk)
+            finally:
+                await asyncio.to_thread(handle.close)
+        except OSError as exc:
+            # Clean up a partial file so we never leave corrupt artifacts.
+            await asyncio.to_thread(path.unlink, True)
+            raise StorageError("Failed to stream object.", details={"key": key}) from exc
+        return StorageObject(key=key, size_bytes=size, content_type=content_type)
+
     async def get(self, key: str) -> bytes:
         def _read() -> bytes:
             return self._path_for(key).read_bytes()
@@ -71,7 +98,26 @@ class LocalStorage(StoragePort):
 
         await asyncio.to_thread(_delete)
 
+    async def list_keys(self, prefix: str) -> list[str]:
+        def _walk() -> list[str]:
+            start = self._path_for(prefix) if prefix else self._root
+            if not start.exists():
+                return []
+            keys: list[str] = []
+            for path in start.rglob("*"):
+                if path.is_file():
+                    keys.append(path.relative_to(self._root).as_posix())
+            return sorted(keys)
+
+        return await asyncio.to_thread(_walk)
+
     async def generate_access_url(self, key: str, *, expires_in: int = 3600) -> str:
         # In local development there is no presigning; the API serves the file.
         # The expiry is advisory and enforced by the serving endpoint later.
         return f"/internal/storage/{key}"
+
+    def local_path(self, key: str) -> str | None:
+        """Return the on-disk path for ``key`` if it exists, else ``None``."""
+
+        path = self._path_for(key)
+        return str(path) if path.exists() else None

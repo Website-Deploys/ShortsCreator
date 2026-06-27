@@ -1,19 +1,20 @@
 /**
  * Typed HTTP client for the Olympus backend.
  *
- * A thin wrapper around `fetch` that:
- * - prefixes the versioned API base URL,
- * - parses JSON responses,
- * - normalises backend errors (the `{ error: { code, message } }` envelope)
- *   into a thrown `ApiClientError` carrying the code and request id.
- *
- * Endpoints that do not yet exist on the backend (projects, clips) are declared
- * here against their planned contracts so the UI is ready for Milestone 2; the
- * UI handles their absence gracefully until they ship.
+ * A thin wrapper around `fetch` that prefixes the versioned API base URL, parses
+ * JSON, and normalises the backend's `{ error: { code, message } }` envelope
+ * into a thrown `ApiClientError`. All endpoints here are real and implemented on
+ * the backend.
  */
 
 import { API_V1 } from "@/lib/config";
-import type { ApiError, Project, SystemInfo } from "@/lib/types";
+import type {
+  Analysis,
+  ApiError,
+  CreateProjectInput,
+  Project,
+  SystemInfo,
+} from "@/lib/types";
 
 /** Error thrown when the API returns a non-2xx response. */
 export class ApiClientError extends Error {
@@ -37,9 +38,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     });
-  } catch (cause) {
+  } catch {
     throw new ApiClientError(
-      "Could not reach the Olympus backend.",
+      "Could not reach Olympus. Please check your connection.",
       "network_error",
       0,
     );
@@ -50,7 +51,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       body = (await response.json()) as ApiError;
     } catch {
-      // Non-JSON error body; fall through to a generic message.
+      /* non-JSON error body */
     }
     throw new ApiClientError(
       body?.error.message ?? `Request failed (${response.status}).`,
@@ -60,27 +61,51 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
 
-  // 204 No Content -> nothing to parse.
-  if (response.status === 204) {
-    return undefined as T;
-  }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
 export const api = {
-  /** GET /system/info - implemented on the backend today. */
   getSystemInfo: () => request<SystemInfo>("/system/info"),
 
-  /** GET /projects - planned for Milestone 2. */
   listProjects: () => request<Project[]>("/projects"),
-
-  /** GET /projects/{id} - planned for Milestone 2. */
   getProject: (id: string) => request<Project>(`/projects/${id}`),
+  createProject: (input: CreateProjectInput) =>
+    request<Project>("/projects", { method: "POST", body: JSON.stringify(input) }),
+  renameProject: (id: string, name: string) =>
+    request<Project>(`/projects/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  processProject: (id: string) =>
+    request<Project>(`/projects/${id}/process`, { method: "POST" }),
+  deleteProject: (id: string) =>
+    request<void>(`/projects/${id}`, { method: "DELETE" }),
 
-  /** POST /projects - planned for Milestone 2. */
-  createProject: (payload: { source_type: "url"; url: string }) =>
-    request<Project>("/projects", {
+  /* Cognitive Engine — video understanding. */
+  getAnalysis: (id: string) => request<Analysis>(`/projects/${id}/analysis`),
+  runAnalysis: (id: string) =>
+    request<Analysis>(`/projects/${id}/analysis/run`, { method: "POST" }),
+  rerunStage: (id: string, stage: string) =>
+    request<Analysis>(`/projects/${id}/analysis/stages/${stage}/rerun`, { method: "POST" }),
+  cancelAnalysis: (id: string) =>
+    request<{ cancelled: boolean }>(`/projects/${id}/analysis/cancel`, { method: "POST" }),
+
+  /** Upload a captured thumbnail frame (multipart; not JSON). */
+  uploadThumbnail: async (id: string, blob: Blob): Promise<Project> => {
+    const form = new FormData();
+    form.append("file", blob, "thumbnail.jpg");
+    const response = await fetch(`${API_V1}/projects/${id}/thumbnail`, {
       method: "POST",
-      body: JSON.stringify(payload),
-    }),
+      body: form,
+    });
+    if (!response.ok) {
+      throw new ApiClientError("Failed to store thumbnail.", "thumbnail_error", response.status);
+    }
+    return (await response.json()) as Project;
+  },
+};
+
+/** Direct media URLs served by the backend (no external services). */
+export const mediaUrls = {
+  source: (id: string) => `${API_V1}/projects/${id}/source`,
+  download: (id: string) => `${API_V1}/projects/${id}/source?download=true`,
+  thumbnail: (id: string) => `${API_V1}/projects/${id}/thumbnail`,
 };

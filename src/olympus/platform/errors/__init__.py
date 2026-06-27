@@ -15,15 +15,15 @@ from olympus.platform.errors.exceptions import (
 from olympus.platform.errors.handlers import register_exception_handlers
 
 __all__ = [
-    "OlympusError",
-    "ValidationError",
-    "UnauthorizedError",
+    "ConfigurationError",
+    "ConflictError",
+    "ExternalServiceError",
     "ForbiddenError",
     "NotFoundError",
-    "ConflictError",
+    "OlympusError",
     "RateLimitedError",
     "StorageError",
-    "ExternalServiceError",
-    "ConfigurationError",
+    "UnauthorizedError",
+    "ValidationError",
     "register_exception_handlers",
 ]

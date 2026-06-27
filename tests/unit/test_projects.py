@@ -1,0 +1,196 @@
+"""Tests for project persistence, the project service, and the projects API."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from olympus.api.dependencies import (
+    analysis_service_provider,
+    intake_provider,
+    project_service_provider,
+    storage_provider,
+)
+from olympus.data.repositories import StorageAnalysisRepository, StorageProjectRepository
+from olympus.data.storage.local import LocalStorage
+from olympus.platform.errors import NotFoundError, ValidationError
+from olympus.services.analysis import AnalysisService
+from olympus.services.intake import IntakeService
+from olympus.services.projects import NewProjectInput, ProjectService
+
+
+@pytest.fixture
+def storage(tmp_path: Path) -> LocalStorage:
+    return LocalStorage(root=str(tmp_path))
+
+
+@pytest.fixture
+def service(storage: LocalStorage) -> ProjectService:
+    return ProjectService(StorageProjectRepository(storage), storage)
+
+
+async def _seed_upload(storage: LocalStorage, key: str = "uploads/u1/source.mp4") -> str:
+    await storage.put(key, b"video-bytes", content_type="video/mp4")
+    return key
+
+
+def _new_input(key: str) -> NewProjectInput:
+    return NewProjectInput(
+        storage_key=key,
+        source_filename="my video.mp4",
+        size_bytes=11,
+        video_format="mp4",
+        content_type="video/mp4",
+        duration_seconds=42.5,
+        width=1920,
+        height=1080,
+    )
+
+
+async def test_create_and_get_project(service: ProjectService, storage: LocalStorage) -> None:
+    key = await _seed_upload(storage)
+    created = await service.create(_new_input(key))
+    assert created.name == "my video"
+    assert created.status.value == "uploaded"
+
+    fetched = await service.get(created.id)
+    assert fetched.id == created.id
+    assert fetched.width == 1920
+
+
+async def test_create_rejects_missing_upload(service: ProjectService) -> None:
+    with pytest.raises(ValidationError):
+        await service.create(_new_input("uploads/missing/source.mp4"))
+
+
+async def test_persistence_survives_new_repository(storage: LocalStorage) -> None:
+    """A project persists across repository instances (i.e. across restarts)."""
+
+    key = await _seed_upload(storage)
+    service_a = ProjectService(StorageProjectRepository(storage), storage)
+    created = await service_a.create(_new_input(key))
+
+    # A brand-new service/repo reading the same storage must find it.
+    service_b = ProjectService(StorageProjectRepository(storage), storage)
+    listed = await service_b.list()
+    assert [p.id for p in listed] == [created.id]
+
+
+async def test_queue_is_honest(service: ProjectService, storage: LocalStorage) -> None:
+    key = await _seed_upload(storage)
+    created = await service.create(_new_input(key))
+    queued = await service.queue(created.id)
+    # Honest: it becomes "queued", never fabricated as processing/complete.
+    assert queued.status.value == "queued"
+
+
+async def test_rename_project(service: ProjectService, storage: LocalStorage) -> None:
+    key = await _seed_upload(storage)
+    created = await service.create(_new_input(key))
+    renamed = await service.rename(created.id, "  My Highlight Reel  ")
+    assert renamed.name == "My Highlight Reel"
+    with pytest.raises(ValidationError):
+        await service.rename(created.id, "   ")
+
+
+async def test_set_thumbnail(service: ProjectService, storage: LocalStorage) -> None:
+    key = await _seed_upload(storage)
+    created = await service.create(_new_input(key))
+    assert created.thumbnail_key is None
+    updated = await service.set_thumbnail(
+        created.id, b"\xff\xd8jpegbytes", content_type="image/jpeg"
+    )
+    assert updated.thumbnail_key is not None
+    assert await storage.exists(updated.thumbnail_key) is True
+
+
+async def test_delete_removes_project_and_source(
+    service: ProjectService, storage: LocalStorage
+) -> None:
+    key = await _seed_upload(storage)
+    created = await service.create(_new_input(key))
+    await service.delete(created.id)
+    assert await storage.exists(key) is False
+    with pytest.raises(NotFoundError):
+        await service.get(created.id)
+
+
+def test_projects_api_roundtrip(app: FastAPI, tmp_path: Path) -> None:
+    """The HTTP API can create, list, fetch, and delete a project."""
+
+    store = LocalStorage(root=str(tmp_path))
+    app.dependency_overrides[project_service_provider] = lambda: ProjectService(
+        StorageProjectRepository(store), store
+    )
+    app.dependency_overrides[intake_provider] = lambda: IntakeService(store)
+    app.dependency_overrides[storage_provider] = lambda: store
+    # Share the same storage so the auto-triggered analysis sees the project.
+    app.dependency_overrides[analysis_service_provider] = lambda: AnalysisService(
+        analysis_repo=StorageAnalysisRepository(store),
+        project_repo=StorageProjectRepository(store),
+        storage=store,
+    )
+
+    with TestClient(app) as client:
+        up = client.post(
+            "/api/v1/uploads",
+            files={"file": ("clip.mp4", b"bytes-bytes", "video/mp4")},
+        )
+        assert up.status_code == 201
+        upload = up.json()
+
+        created = client.post(
+            "/api/v1/projects",
+            json={
+                "storage_key": upload["storage_key"],
+                "source_filename": upload["filename"],
+                "size_bytes": upload["size_bytes"],
+                "video_format": upload["video_format"],
+                "duration_seconds": 12.0,
+                "width": 1280,
+                "height": 720,
+            },
+        )
+        assert created.status_code == 201
+        project = created.json()
+        # Auto-trigger: the Cognitive Engine starts understanding immediately.
+        assert project["status"] in ("analyzing", "analyzed")
+
+        listed = client.get("/api/v1/projects")
+        assert listed.status_code == 200
+        assert any(p["id"] == project["id"] for p in listed.json())
+
+        fetched = client.get(f"/api/v1/projects/{project['id']}")
+        assert fetched.status_code == 200
+        assert fetched.json()["has_thumbnail"] is False
+
+        # Serve the original video (range-capable endpoint).
+        source = client.get(f"/api/v1/projects/{project['id']}/source")
+        assert source.status_code == 200
+        assert source.content == b"bytes-bytes"
+
+        # Upload a thumbnail (a real captured frame) and serve it back.
+        thumb_set = client.post(
+            f"/api/v1/projects/{project['id']}/thumbnail",
+            files={"file": ("thumb.jpg", b"\xff\xd8jpeg", "image/jpeg")},
+        )
+        assert thumb_set.status_code == 200
+        assert thumb_set.json()["has_thumbnail"] is True
+        thumb = client.get(f"/api/v1/projects/{project['id']}/thumbnail")
+        assert thumb.status_code == 200
+
+        # Rename.
+        renamed = client.patch(
+            f"/api/v1/projects/{project['id']}", json={"name": "Renamed"}
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["name"] == "Renamed"
+
+        deleted = client.delete(f"/api/v1/projects/{project['id']}")
+        assert deleted.status_code == 204
+
+        missing = client.get(f"/api/v1/projects/{project['id']}")
+        assert missing.status_code == 404

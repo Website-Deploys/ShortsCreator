@@ -14,10 +14,12 @@ from olympus.domain.contracts.ai import (
     TranscriptResult,
     TranscriptSegment,
 )
+from olympus.domain.contracts.projects import ProjectRepository
 from olympus.domain.contracts.rendering import Renderer, RenderRequest, RenderResult
 from olympus.domain.contracts.storage import StorageObject, StoragePort
 
 __all__ = [
+    "ProjectRepository",
     "RenderRequest",
     "RenderResult",
     "Renderer",
