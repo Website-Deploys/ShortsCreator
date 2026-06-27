@@ -319,3 +319,111 @@ export interface PlanningSummary {
   project_id: string;
   summary: Record<string, unknown>;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Editing Engine — non-destructive edit timelines                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Honest status of a single editing stage. `unavailable` means the stage lacked
+ * its inputs (e.g. no approved clips / no transcript) — no edit is fabricated,
+ * and the reason is given. `failed` is reserved for genuine errors.
+ */
+export type EditingStageStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "unavailable"
+  | "failed"
+  | "cancelled";
+
+/** Overall status of a project's editing analysis. */
+export type EditingStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+/** One editing stage and its honest result. */
+export interface EditingStage {
+  stage: string;
+  label: string;
+  status: EditingStageStatus;
+  version: string;
+  progress: number;
+  attempts: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  reason: string | null;
+  data: Record<string, unknown> | null;
+}
+
+/** A project's complete, evolving set of edit timelines. */
+export interface Editing {
+  project_id: string;
+  pipeline_version: string;
+  status: EditingStatus;
+  created_at: string;
+  updated_at: string;
+  completed_stages: number;
+  total_stages: number;
+  stages: EditingStage[];
+}
+
+/**
+ * One timeline event (clip-relative seconds). `confidence` is `null` when the
+ * engine honestly could not determine it (UNKNOWN). Extra fields (scale,
+ * transition_type, text, word, ...) vary by event type and are kept loose.
+ */
+export interface TimelineEvent {
+  id: string;
+  type: string;
+  start: number;
+  end: number;
+  duration: number;
+  reason: string;
+  confidence: number | null;
+  evidence: Record<string, unknown>[];
+  [key: string]: unknown;
+}
+
+/** One track of a timeline (video / audio / caption / markers). */
+export interface TimelineTrack {
+  kind: string;
+  events: TimelineEvent[];
+}
+
+/** A single clip's complete, non-destructive edit timeline. */
+export interface Timeline {
+  clip_id: string;
+  plan_id?: string;
+  rank?: number | null;
+  source_video?: { filename?: string; storage_key?: string };
+  source_start: number;
+  source_end: number;
+  duration: number;
+  fps: number;
+  tracks: TimelineTrack[];
+  metadata: Record<string, unknown>;
+}
+
+/** All assembled timelines for a project. */
+export interface TimelineList {
+  project_id: string;
+  timeline_count: number;
+  timelines: Timeline[];
+}
+
+/** A single clip's timeline. */
+export interface TimelineResponse {
+  project_id: string;
+  timeline: Timeline;
+}
+
+/** The timeline validation report. */
+export interface ValidationReport {
+  project_id: string;
+  report: {
+    valid: boolean;
+    clips: { clip_id: string; valid: boolean; issues: Record<string, unknown>[] }[];
+    issue_count: number;
+  };
+}
+

@@ -12,6 +12,7 @@ import type {
   Analysis,
   ApiError,
   CreateProjectInput,
+  Editing,
   PlanList,
   Planning,
   PlanningSummary,
@@ -20,6 +21,10 @@ import type {
   Story,
   StorySummary,
   SystemInfo,
+  Timeline,
+  TimelineEvent,
+  TimelineList,
+  ValidationReport,
   Virality,
   ViralitySummary,
 } from "@/lib/types";
@@ -130,6 +135,26 @@ export const api = {
   listPlans: (id: string) => request<PlanList>(`/projects/${id}/planning/plans`),
   getPlan: (id: string, planId: string) =>
     request<PlanResponse>(`/projects/${id}/planning/plans/${planId}`),
+
+  /* Editing Engine — non-destructive edit timelines. */
+  getEditing: (id: string) => request<Editing>(`/projects/${id}/editing`),
+  runEditing: (id: string) =>
+    request<Editing>(`/projects/${id}/editing/run`, { method: "POST" }),
+  rerunEditingStage: (id: string, stage: string) =>
+    request<Editing>(`/projects/${id}/editing/stages/${stage}/rerun`, { method: "POST" }),
+  cancelEditing: (id: string) =>
+    request<{ cancelled: boolean }>(`/projects/${id}/editing/cancel`, { method: "POST" }),
+  listTimelines: (id: string) => request<TimelineList>(`/projects/${id}/editing/timelines`),
+  getTimeline: (id: string, clipId: string) =>
+    request<{ project_id: string; timeline: Timeline }>(
+      `/projects/${id}/editing/timelines/${clipId}`,
+    ),
+  getTimelineEvents: (id: string, clipId: string) =>
+    request<{ project_id: string; clip_id: string; event_count: number; events: TimelineEvent[] }>(
+      `/projects/${id}/editing/timelines/${clipId}/events`,
+    ),
+  getValidationReport: (id: string) =>
+    request<ValidationReport>(`/projects/${id}/editing/validation`),
 
   /** Upload a captured thumbnail frame (multipart; not JSON). */
   uploadThumbnail: async (id: string, blob: Blob): Promise<Project> => {
