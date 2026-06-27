@@ -10,9 +10,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiClientError } from "@/lib/apiClient";
 import type {
+  ActivityFeedResponse,
   Analysis,
+  AssetsResponse,
+  ClipsResponse,
   CreateProjectInput,
   Editing,
+  ExportsResponse,
+  LibraryDashboard,
   Optimization,
   PackageList,
   Planning,
@@ -24,6 +29,8 @@ import type {
   RenderRun,
   RenderValidation,
   SchedulerStatus,
+  SearchResponse,
+  StorageResponse,
   Story,
   TimelineList,
   Virality,
@@ -54,6 +61,13 @@ export const queryKeys = {
   workflow: (id: string) => ["projects", id, "workflow"] as const,
   workers: ["workflow", "workers"] as const,
   scheduler: ["workflow", "scheduler"] as const,
+  libraryDashboard: ["library", "dashboard"] as const,
+  libraryAssets: (params: Record<string, unknown>) => ["library", "assets", params] as const,
+  libraryClips: (params: Record<string, unknown>) => ["library", "clips", params] as const,
+  libraryExports: (params: Record<string, unknown>) => ["library", "exports", params] as const,
+  librarySearch: (q: string) => ["library", "search", q] as const,
+  libraryActivity: (projectId?: string) => ["library", "activity", projectId ?? "all"] as const,
+  libraryStorage: (projectId?: string) => ["library", "storage", projectId ?? "all"] as const,
 };
 
 const TERMINAL: ReadonlySet<string> = new Set(["analyzed", "complete", "failed"]);
@@ -793,5 +807,100 @@ export function useRetryWorkflowJob(id: string) {
   return useMutation({
     mutationFn: (jobId: string) => api.retryWorkflowJob(id, jobId),
     onSuccess: (wf: Workflow) => qc.setQueryData(queryKeys.workflow(id), wf),
+  });
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Project Management & Asset Library                                         */
+/* -------------------------------------------------------------------------- */
+
+export function useLibraryDashboard() {
+  return useQuery({
+    queryKey: queryKeys.libraryDashboard,
+    queryFn: (): Promise<LibraryDashboard> => api.getLibraryDashboard(),
+  });
+}
+
+export function useLibraryAssets(params: Record<string, string | boolean | undefined> = {}) {
+  return useQuery({
+    queryKey: queryKeys.libraryAssets(params),
+    queryFn: (): Promise<AssetsResponse> => api.getLibraryAssets(params),
+  });
+}
+
+export function useLibraryClips(params: Record<string, string | boolean | undefined> = {}) {
+  return useQuery({
+    queryKey: queryKeys.libraryClips(params),
+    queryFn: (): Promise<ClipsResponse> => api.getLibraryClips(params),
+  });
+}
+
+export function useLibraryExports(params: Record<string, string | boolean | undefined> = {}) {
+  return useQuery({
+    queryKey: queryKeys.libraryExports(params),
+    queryFn: (): Promise<ExportsResponse> => api.getLibraryExports(params),
+  });
+}
+
+export function useLibrarySearch(q: string) {
+  return useQuery({
+    queryKey: queryKeys.librarySearch(q),
+    enabled: q.trim().length > 0,
+    queryFn: (): Promise<SearchResponse> => api.librarySearch(q),
+  });
+}
+
+export function useLibraryActivity(projectId?: string) {
+  return useQuery({
+    queryKey: queryKeys.libraryActivity(projectId),
+    queryFn: (): Promise<ActivityFeedResponse> => api.getLibraryActivity({ project_id: projectId }),
+  });
+}
+
+export function useLibraryStorage(projectId?: string) {
+  return useQuery({
+    queryKey: queryKeys.libraryStorage(projectId),
+    queryFn: (): Promise<StorageResponse> => api.getLibraryStorage(projectId),
+  });
+}
+
+function invalidateLibrary(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ["library"] });
+}
+
+/** Archive / restore a project (additive metadata; engine data untouched). */
+export function useArchiveProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (projectId: string) => api.archiveProject(projectId),
+    onSuccess: () => invalidateLibrary(qc),
+  });
+}
+
+export function useRestoreProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (projectId: string) => api.restoreProject(projectId),
+    onSuccess: () => invalidateLibrary(qc),
+  });
+}
+
+export function useSetProjectFavorite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ projectId, favorite }: { projectId: string; favorite: boolean }) =>
+      api.setProjectFavorite(projectId, favorite),
+    onSuccess: () => invalidateLibrary(qc),
+  });
+}
+
+/** Run a cleanup operation (the only destructive library action). */
+export function useLibraryCleanup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ operation, projectId }: { operation: string; projectId?: string }) =>
+      api.libraryCleanup(operation, projectId),
+    onSuccess: () => invalidateLibrary(qc),
   });
 }

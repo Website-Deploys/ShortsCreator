@@ -22,14 +22,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from olympus.ai import build_transcription_provider
 from olympus.data.database.session import get_session
 from olympus.data.repositories import (
+    StorageActivityRepository,
     StorageAnalysisRepository,
     StorageEditingRepository,
+    StorageLibraryMetaRepository,
     StorageOptimizationRepository,
     StoragePlanningRepository,
     StorageProjectRepository,
     StorageRenderManifestRepository,
     StorageRenderRunRepository,
     StorageStoryRepository,
+    StorageVersionRepository,
     StorageViralityRepository,
     StorageWorkflowRepository,
 )
@@ -43,6 +46,7 @@ from olympus.services.editing import EditingService
 from olympus.services.intake import IntakeService
 from olympus.services.optimization import OptimizationService
 from olympus.services.planning import ClipPlannerService
+from olympus.services.project_management import LibraryService
 from olympus.services.projects import ProjectService
 from olympus.services.rendering import RenderingService
 from olympus.services.story import StoryService
@@ -351,6 +355,33 @@ def workflow_service_provider() -> WorkflowService:
     return _WORKFLOW_SERVICE
 
 
+def library_service_provider() -> LibraryService:
+    """Provide the Project Management / Asset Library service.
+
+    Composes the existing engine repositories (read-only) with the library's own
+    additive repositories (versions, activity, metadata) under the ``library/``
+    storage namespace. It never modifies any engine or its data.
+    """
+
+    storage = build_storage()
+    return LibraryService(
+        storage=storage,
+        project_repo=StorageProjectRepository(storage),
+        analysis_repo=StorageAnalysisRepository(storage),
+        story_repo=StorageStoryRepository(storage),
+        virality_repo=StorageViralityRepository(storage),
+        planning_repo=StoragePlanningRepository(storage),
+        editing_repo=StorageEditingRepository(storage),
+        render_manifest_repo=StorageRenderManifestRepository(storage),
+        render_run_repo=StorageRenderRunRepository(storage),
+        optimization_repo=StorageOptimizationRepository(storage),
+        workflow_repo=StorageWorkflowRepository(storage),
+        version_repo=StorageVersionRepository(storage),
+        activity_repo=StorageActivityRepository(storage),
+        meta_repo=StorageLibraryMetaRepository(storage),
+    )
+
+
 # Reusable typed aliases for clean route signatures.
 SettingsDep = Annotated[Settings, Depends(settings_provider)]
 DbSessionDep = Annotated[AsyncSession, Depends(db_session_provider)]
@@ -368,3 +399,4 @@ EditingServiceDep = Annotated[EditingService, Depends(editing_service_provider)]
 OptimizationServiceDep = Annotated[OptimizationService, Depends(optimization_service_provider)]
 RenderingServiceDep = Annotated[RenderingService, Depends(rendering_service_provider)]
 WorkflowServiceDep = Annotated[WorkflowService, Depends(workflow_service_provider)]
+LibraryServiceDep = Annotated[LibraryService, Depends(library_service_provider)]

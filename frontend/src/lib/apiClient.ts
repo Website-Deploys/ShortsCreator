@@ -9,10 +9,18 @@
 
 import { API_V1 } from "@/lib/config";
 import type {
+  ActivityFeedResponse,
   Analysis,
   ApiError,
+  AssetsResponse,
+  CleanupResultResponse,
+  ClipsResponse,
   CreateProjectInput,
   Editing,
+  ExportsResponse,
+  LibraryDashboard,
+  LibraryMetaResponse,
+  LibraryVersion,
   MusicRecommendations,
   Optimization,
   PackageList,
@@ -28,6 +36,8 @@ import type {
   RenderRun,
   RenderValidation,
   SchedulerStatus,
+  SearchResponse,
+  StorageResponse,
   Story,
   StorySummary,
   SystemInfo,
@@ -36,6 +46,8 @@ import type {
   TimelineList,
   ValidationReport,
   VariantList,
+  VersionEnginesResponse,
+  VersionsResponse,
   Virality,
   ViralitySummary,
   Workflow,
@@ -91,6 +103,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+/** Build a query string from defined params (skips undefined/empty values). */
+function _qs(params: Record<string, string | boolean | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === "") continue;
+    search.set(key, String(value));
+  }
+  const str = search.toString();
+  return str ? `?${str}` : "";
 }
 
 export const api = {
@@ -203,6 +226,48 @@ export const api = {
   getRenderValidation: (id: string) =>
     request<RenderValidation>(`/projects/${id}/rendering/validation`),
   getRenderLogs: (id: string) => request<RenderLogs>(`/projects/${id}/rendering/logs`),
+
+  /* Project Management & Asset Library. */
+  getLibraryDashboard: () => request<LibraryDashboard>(`/library/dashboard`),
+  getLibraryAssets: (params: Record<string, string | boolean | undefined> = {}) =>
+    request<AssetsResponse>(`/library/assets${_qs(params)}`),
+  getLibraryClips: (params: Record<string, string | boolean | undefined> = {}) =>
+    request<ClipsResponse>(`/library/clips${_qs(params)}`),
+  getLibraryExports: (params: Record<string, string | boolean | undefined> = {}) =>
+    request<ExportsResponse>(`/library/exports${_qs(params)}`),
+  librarySearch: (q: string) => request<SearchResponse>(`/library/search${_qs({ q })}`),
+  getLibraryActivity: (params: Record<string, string | boolean | undefined> = {}) =>
+    request<ActivityFeedResponse>(`/library/activity${_qs(params)}`),
+  getLibraryStorage: (projectId?: string) =>
+    request<StorageResponse>(`/library/storage${_qs({ project_id: projectId })}`),
+  getLibraryVersionEngines: (id: string) =>
+    request<VersionEnginesResponse>(`/library/projects/${id}/versions`),
+  getLibraryVersions: (id: string, engine: string) =>
+    request<VersionsResponse>(`/library/projects/${id}/versions/${engine}`),
+  captureLibraryVersions: (id: string) =>
+    request<{ project_id: string; captured: LibraryVersion[] }>(
+      `/library/projects/${id}/versions/capture`,
+      { method: "POST" },
+    ),
+  setProjectFavorite: (id: string, favorite: boolean) =>
+    request<LibraryMetaResponse>(`/library/projects/${id}/favorite`, {
+      method: "POST",
+      body: JSON.stringify({ favorite }),
+    }),
+  addProjectTag: (id: string, tag: string) =>
+    request<LibraryMetaResponse>(`/library/projects/${id}/tags`, {
+      method: "POST",
+      body: JSON.stringify({ tag }),
+    }),
+  archiveProject: (id: string) =>
+    request<LibraryMetaResponse>(`/library/projects/${id}/archive`, { method: "POST" }),
+  restoreProject: (id: string) =>
+    request<LibraryMetaResponse>(`/library/projects/${id}/restore`, { method: "POST" }),
+  libraryCleanup: (operation: string, projectId?: string) =>
+    request<CleanupResultResponse>(
+      `/library/cleanup/${operation}${_qs({ project_id: projectId })}`,
+      { method: "POST" },
+    ),
 
   /* Workflow Orchestration Engine - the central nervous system. */
   getWorkflow: (id: string) => request<Workflow>(`/projects/${id}/workflow`),
