@@ -27,6 +27,7 @@ import type {
   RenderManifestResponse,
   RenderRun,
   RenderValidation,
+  SchedulerStatus,
   Story,
   StorySummary,
   SystemInfo,
@@ -37,6 +38,10 @@ import type {
   VariantList,
   Virality,
   ViralitySummary,
+  Workflow,
+  WorkflowHistoryResponse,
+  WorkersResponse,
+  JobLogsResponse,
 } from "@/lib/types";
 
 /** Error thrown when the API returns a non-2xx response. */
@@ -198,6 +203,27 @@ export const api = {
   getRenderValidation: (id: string) =>
     request<RenderValidation>(`/projects/${id}/rendering/validation`),
   getRenderLogs: (id: string) => request<RenderLogs>(`/projects/${id}/rendering/logs`),
+
+  /* Workflow Orchestration Engine - the central nervous system. */
+  getWorkflow: (id: string) => request<Workflow>(`/projects/${id}/workflow`),
+  startWorkflow: (id: string) =>
+    request<Workflow>(`/projects/${id}/workflow/start`, { method: "POST" }),
+  pauseWorkflow: (id: string) =>
+    request<Workflow>(`/projects/${id}/workflow/pause`, { method: "POST" }),
+  resumeWorkflow: (id: string) =>
+    request<Workflow>(`/projects/${id}/workflow/resume`, { method: "POST" }),
+  cancelWorkflow: (id: string) =>
+    request<Workflow>(`/projects/${id}/workflow/cancel`, { method: "POST" }),
+  retryWorkflow: (id: string) =>
+    request<Workflow>(`/projects/${id}/workflow/retry`, { method: "POST" }),
+  retryWorkflowJob: (id: string, jobId: string) =>
+    request<Workflow>(`/projects/${id}/workflow/jobs/${jobId}/retry`, { method: "POST" }),
+  getWorkflowHistory: (id: string) =>
+    request<WorkflowHistoryResponse>(`/projects/${id}/workflow/history`),
+  getWorkflowJobLogs: (id: string, jobId: string) =>
+    request<JobLogsResponse>(`/projects/${id}/workflow/jobs/${jobId}/logs`),
+  getWorkers: () => request<WorkersResponse>(`/workflow/workers`),
+  getScheduler: () => request<SchedulerStatus>(`/workflow/scheduler`),
 
   /** Upload a captured thumbnail frame (multipart; not JSON). */
   uploadThumbnail: async (id: string, blob: Blob): Promise<Project> => {

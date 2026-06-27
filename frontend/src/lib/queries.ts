@@ -23,9 +23,12 @@ import type {
   RenderManifestResponse,
   RenderRun,
   RenderValidation,
+  SchedulerStatus,
   Story,
   TimelineList,
   Virality,
+  WorkersResponse,
+  Workflow,
 } from "@/lib/types";
 
 export const queryKeys = {
@@ -48,6 +51,9 @@ export const queryKeys = {
   renderManifest: (id: string) => ["projects", id, "render", "manifest"] as const,
   renderValidation: (id: string) => ["projects", id, "render", "validation"] as const,
   renderLogs: (id: string) => ["projects", id, "render", "logs"] as const,
+  workflow: (id: string) => ["projects", id, "workflow"] as const,
+  workers: ["workflow", "workers"] as const,
+  scheduler: ["workflow", "scheduler"] as const,
 };
 
 const TERMINAL: ReadonlySet<string> = new Set(["analyzed", "complete", "failed"]);
@@ -681,5 +687,111 @@ export function useCancelRender(id: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.render(id) });
     },
+  });
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Workflow Orchestration Engine - the central nervous system                 */
+/* -------------------------------------------------------------------------- */
+
+const WORKFLOW_TERMINAL: ReadonlySet<string> = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * A project's workflow. Polls live while the workflow is active (running/paused/
+ * pending) so the dashboard updates from real backend state, and settles when it
+ * reaches a terminal status. Returns `null` when no workflow has been started.
+ */
+export function useWorkflow(id: string) {
+  return useQuery({
+    queryKey: queryKeys.workflow(id),
+    queryFn: async (): Promise<Workflow | null> => {
+      try {
+        return await api.getWorkflow(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false;
+      return WORKFLOW_TERMINAL.has(data.status) ? false : 1500;
+    },
+  });
+}
+
+/** The worker pool's health (polls while a workflow view is open). */
+export function useWorkers(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.workers,
+    enabled,
+    refetchInterval: enabled ? 2000 : false,
+    queryFn: (): Promise<WorkersResponse> => api.getWorkers(),
+  });
+}
+
+/** The queue/scheduler snapshot (polls while a workflow view is open). */
+export function useScheduler(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.scheduler,
+    enabled,
+    refetchInterval: enabled ? 2000 : false,
+    queryFn: (): Promise<SchedulerStatus> => api.getScheduler(),
+  });
+}
+
+function workflowMutation(id: string, fn: (id: string) => Promise<Workflow>) {
+  return () => fn(id);
+}
+
+/** Start (or resume) the full project workflow. */
+export function useStartWorkflow(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: workflowMutation(id, api.startWorkflow),
+    onSuccess: (wf: Workflow) => qc.setQueryData(queryKeys.workflow(id), wf),
+  });
+}
+
+/** Pause / resume / cancel / retry mutations (each refreshes the workflow). */
+export function usePauseWorkflow(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: workflowMutation(id, api.pauseWorkflow),
+    onSuccess: (wf: Workflow) => qc.setQueryData(queryKeys.workflow(id), wf),
+  });
+}
+
+export function useResumeWorkflow(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: workflowMutation(id, api.resumeWorkflow),
+    onSuccess: (wf: Workflow) => qc.setQueryData(queryKeys.workflow(id), wf),
+  });
+}
+
+export function useCancelWorkflow(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: workflowMutation(id, api.cancelWorkflow),
+    onSuccess: (wf: Workflow) => qc.setQueryData(queryKeys.workflow(id), wf),
+  });
+}
+
+export function useRetryWorkflow(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: workflowMutation(id, api.retryWorkflow),
+    onSuccess: (wf: Workflow) => qc.setQueryData(queryKeys.workflow(id), wf),
+  });
+}
+
+/** Retry a single job. */
+export function useRetryWorkflowJob(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => api.retryWorkflowJob(id, jobId),
+    onSuccess: (wf: Workflow) => qc.setQueryData(queryKeys.workflow(id), wf),
   });
 }

@@ -3,9 +3,13 @@
 /**
  * The Project Workspace - a spacious, sectioned creator workspace.
  *
- * Loads the project from the backend (survives refresh). Eight tabs:
+ * Loads the project from the backend (survives refresh). Nine tabs:
  *   Overview  -> video player, the Cognitive Engine's progress, the (honest,
  *                future) editing pipeline, and Shorts.
+ *   Workflow  -> the orchestration dashboard (the central nervous system):
+ *                execution graph across every engine, live progress, jobs +
+ *                logs, workers, scheduler, timeline, and start/pause/resume/
+ *                cancel/retry controls. All from real orchestration state.
  *   Analysis  -> read-only viewer of what Olympus understands (transcript,
  *                speakers, scenes, OCR, emotion, technical profile).
  *   Story     -> the narrative understanding (sections, hook, arc, payoffs...).
@@ -61,6 +65,7 @@ import { OptimizationStages } from "@/components/project/OptimizationStages";
 import { OptimizationView } from "@/components/project/OptimizationView";
 import { RenderingStages } from "@/components/project/RenderingStages";
 import { RenderingView } from "@/components/project/RenderingView";
+import { WorkflowDashboard } from "@/components/project/WorkflowDashboard";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -84,6 +89,7 @@ import type { Project } from "@/lib/types";
 
 type Tab =
   | "overview"
+  | "workflow"
   | "analysis"
   | "story"
   | "virality"
@@ -101,6 +107,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function Tabs({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void }) {
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
+    { id: "workflow", label: "Workflow" },
     { id: "analysis", label: "Analysis" },
     { id: "story", label: "Story" },
     { id: "virality", label: "Virality" },
@@ -192,6 +199,8 @@ function ProjectWorkspace({ project }: { project: Project }) {
               </section>
             </>
           )}
+
+          {tab === "workflow" && <WorkflowDashboard projectId={project.id} />}
 
           {tab === "analysis" && (
             <section>

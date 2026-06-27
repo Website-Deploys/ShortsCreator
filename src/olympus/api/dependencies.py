@@ -31,6 +31,7 @@ from olympus.data.repositories import (
     StorageRenderRunRepository,
     StorageStoryRepository,
     StorageViralityRepository,
+    StorageWorkflowRepository,
 )
 from olympus.data.storage import build_storage
 from olympus.domain.contracts import Renderer, StoragePort, TranscriptionProvider
@@ -46,6 +47,8 @@ from olympus.services.projects import ProjectService
 from olympus.services.rendering import RenderingService
 from olympus.services.story import StoryService
 from olympus.services.virality import ViralityService
+from olympus.services.workflow import WorkflowService
+from olympus.workflow import UploadRunner, build_service_runner
 
 
 def settings_provider() -> Settings:
@@ -289,6 +292,65 @@ def analysis_service_provider() -> AnalysisService:
     )
 
 
+# --------------------------------------------------------------------------- #
+# Workflow Orchestration Engine
+# --------------------------------------------------------------------------- #
+# The Workflow Engine is a process-wide singleton: it owns the in-memory active-
+# workflow cache, the job queue, the worker pool, and the event bus, which must
+# be shared across all requests (unlike the per-request engine services). It is
+# built lazily and reused.
+_WORKFLOW_SERVICE: WorkflowService | None = None
+
+
+def build_workflow_service() -> WorkflowService:
+    """Construct the singleton workflow service, wiring runners to real engines.
+
+    Each runner drives an existing engine's service to a genuine terminal state;
+    the services are built once here (they coordinate via process-wide registries
+    and shared storage, so a single instance is correct). This is pure wiring -
+    no engine is modified, and the engines' own APIs and chaining keep working.
+    """
+
+    storage = build_storage()
+    runners = {
+        "upload": UploadRunner(storage),
+        "cognitive": build_service_runner(
+            "cognitive", analysis_service_provider(), getter="get_analysis"
+        ),
+        "story": build_service_runner("story", story_service_provider(), getter="get_story"),
+        "virality": build_service_runner(
+            "virality", virality_service_provider(), getter="get_virality"
+        ),
+        "planning": build_service_runner(
+            "planning", planning_service_provider(), getter="get_planning"
+        ),
+        "editing": build_service_runner(
+            "editing", editing_service_provider(), getter="get_editing"
+        ),
+        "rendering": build_service_runner(
+            "rendering", rendering_service_provider(), getter="get_run"
+        ),
+        "optimization": build_service_runner(
+            "optimization", optimization_service_provider(), getter="get_optimization"
+        ),
+    }
+    return WorkflowService(
+        repository=StorageWorkflowRepository(storage),
+        project_repo=StorageProjectRepository(storage),
+        runners=runners,
+        concurrency=2,
+    )
+
+
+def workflow_service_provider() -> WorkflowService:
+    """Provide the process-wide singleton workflow service."""
+
+    global _WORKFLOW_SERVICE
+    if _WORKFLOW_SERVICE is None:
+        _WORKFLOW_SERVICE = build_workflow_service()
+    return _WORKFLOW_SERVICE
+
+
 # Reusable typed aliases for clean route signatures.
 SettingsDep = Annotated[Settings, Depends(settings_provider)]
 DbSessionDep = Annotated[AsyncSession, Depends(db_session_provider)]
@@ -305,3 +367,4 @@ ClipPlannerServiceDep = Annotated[ClipPlannerService, Depends(planning_service_p
 EditingServiceDep = Annotated[EditingService, Depends(editing_service_provider)]
 OptimizationServiceDep = Annotated[OptimizationService, Depends(optimization_service_provider)]
 RenderingServiceDep = Annotated[RenderingService, Depends(rendering_service_provider)]
+WorkflowServiceDep = Annotated[WorkflowService, Depends(workflow_service_provider)]

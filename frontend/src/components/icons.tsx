@@ -145,6 +145,17 @@ export function PlusIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function NetworkIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <rect x="9" y="2" width="6" height="5" rx="1" />
+      <rect x="3" y="17" width="6" height="5" rx="1" />
+      <rect x="15" y="17" width="6" height="5" rx="1" />
+      <path d="M12 7v4M6 17v-2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
 export function ServerIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
