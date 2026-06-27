@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from olympus.api.dependencies import (
     AnalysisServiceDep,
     ClipPlannerServiceDep,
+    EditingServiceDep,
     ProjectServiceDep,
     StorageDep,
     StoryServiceDep,
@@ -107,9 +108,11 @@ async def delete_project(
     story: StoryServiceDep,
     virality: ViralityServiceDep,
     planning: ClipPlannerServiceDep,
+    editing: EditingServiceDep,
 ) -> Response:
     """Delete a project, its stored artifacts, and all engine analyses."""
 
+    await editing.delete(project_id)
     await planning.delete(project_id)
     await virality.delete(project_id)
     await story.delete(project_id)

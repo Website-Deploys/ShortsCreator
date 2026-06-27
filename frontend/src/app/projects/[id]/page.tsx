@@ -3,7 +3,7 @@
 /**
  * The Project Workspace - a spacious, sectioned creator workspace.
  *
- * Loads the project from the backend (survives refresh). Five tabs:
+ * Loads the project from the backend (survives refresh). Six tabs:
  *   Overview  -> video player, the Cognitive Engine's progress, the (honest,
  *                future) editing pipeline, and Shorts.
  *   Analysis  -> read-only viewer of what Olympus understands (transcript,
@@ -11,6 +11,9 @@
  *   Story     -> the narrative understanding (sections, hook, arc, payoffs...).
  *   Virality  -> the viral-potential assessment (scores, timeline, heatmap,
  *                strengths, recommendations) - always shown with confidence.
+ *   Clip Planner -> ranked editing plans (blueprints) - what to edit, never how.
+ *   Editing   -> non-destructive multi-track edit timelines assembled from
+ *                approved clips, every decision explained with confidence.
  * Honest throughout: no fabricated processing or results.
  */
 import { useState } from "react";
@@ -24,6 +27,7 @@ import {
   ArrowLeftIcon,
   BookIcon,
   BrainIcon,
+  FilmIcon,
   ScissorsIcon,
   SpinnerIcon,
   ZapIcon,
@@ -43,6 +47,8 @@ import { ViralityTimeline } from "@/components/project/ViralityTimeline";
 import { ViralityViewer } from "@/components/project/ViralityViewer";
 import { ClipPlannerStages } from "@/components/project/ClipPlannerStages";
 import { ClipPlannerView } from "@/components/project/ClipPlannerView";
+import { EditingStages } from "@/components/project/EditingStages";
+import { EditingView } from "@/components/project/EditingView";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -50,10 +56,17 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { parseSummary } from "@/lib/virality";
-import { useAnalysis, useProject, usePlanning, useStory, useVirality } from "@/lib/queries";
+import {
+  useAnalysis,
+  useEditing,
+  useProject,
+  usePlanning,
+  useStory,
+  useVirality,
+} from "@/lib/queries";
 import type { Project } from "@/lib/types";
 
-type Tab = "overview" | "analysis" | "story" | "virality" | "clip-planner";
+type Tab = "overview" | "analysis" | "story" | "virality" | "clip-planner" | "editing";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -68,6 +81,7 @@ function Tabs({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void 
     { id: "story", label: "Story" },
     { id: "virality", label: "Virality" },
     { id: "clip-planner", label: "Clip Planner" },
+    { id: "editing", label: "Editing" },
   ];
   return (
     <div className="mt-6 flex gap-1 border-b border-white/10" role="tablist">
@@ -97,6 +111,7 @@ function ProjectWorkspace({ project }: { project: Project }) {
   const { data: virality, isLoading: viralityLoading } = useVirality(project.id);
   const viralitySummary = virality ? parseSummary(virality) : null;
   const { data: planning, isLoading: planningLoading } = usePlanning(project.id);
+  const { data: editing, isLoading: editingLoading } = useEditing(project.id);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8 animate-fade-in">
@@ -263,6 +278,32 @@ function ProjectWorkspace({ project }: { project: Project }) {
                     icon={<ScissorsIcon className="h-6 w-6" />}
                     title="Clip planning hasn't started yet"
                     description="The Clip Planner begins automatically once the virality assessment completes. It decides what to edit — it never edits or renders video."
+                  />
+                )
+              )}
+            </div>
+          )}
+
+          {tab === "editing" && (
+            <div className="space-y-10">
+              <section>
+                <SectionTitle>Editing pipeline</SectionTitle>
+                <Card>
+                  <EditingStages editing={editing} isLoading={editingLoading} />
+                </Card>
+              </section>
+
+              {editingLoading && !editing ? null : editing ? (
+                <section>
+                  <SectionTitle>Edit timelines</SectionTitle>
+                  <EditingView editing={editing} />
+                </section>
+              ) : (
+                !editingLoading && (
+                  <EmptyState
+                    icon={<FilmIcon className="h-6 w-6" />}
+                    title="Editing hasn't started yet"
+                    description="The Editing Engine begins automatically once the Clip Planner completes. It assembles non-destructive edit timelines from approved clips — it never renders or exports video."
                   />
                 )
               )}

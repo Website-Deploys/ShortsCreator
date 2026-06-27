@@ -11,6 +11,7 @@ from fastapi import APIRouter
 
 from olympus.api.v1.routes import (
     analysis,
+    editing,
     health,
     planning,
     projects,
@@ -29,3 +30,4 @@ api_v1_router.include_router(analysis.router)
 api_v1_router.include_router(story.router)
 api_v1_router.include_router(virality.router)
 api_v1_router.include_router(planning.router)
+api_v1_router.include_router(editing.router)

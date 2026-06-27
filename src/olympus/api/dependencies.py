@@ -23,6 +23,7 @@ from olympus.ai import build_transcription_provider
 from olympus.data.database.session import get_session
 from olympus.data.repositories import (
     StorageAnalysisRepository,
+    StorageEditingRepository,
     StoragePlanningRepository,
     StorageProjectRepository,
     StorageStoryRepository,
@@ -33,6 +34,7 @@ from olympus.domain.contracts import Renderer, StoragePort, TranscriptionProvide
 from olympus.platform.config import Settings, get_settings
 from olympus.rendering import build_renderer
 from olympus.services.analysis import AnalysisService
+from olympus.services.editing import EditingService
 from olympus.services.intake import IntakeService
 from olympus.services.planning import ClipPlannerService
 from olympus.services.projects import ProjectService
@@ -84,15 +86,42 @@ def project_service_provider() -> ProjectService:
     return ProjectService(StorageProjectRepository(storage), storage)
 
 
+def editing_service_provider() -> EditingService:
+    """Provide the editing service (the Editing Engine's application boundary).
+
+    Wired to the configured storage; reads the Cognitive, Story, Virality, and
+    Clip Planner outputs as its only inputs. The in-flight run registry lives in
+    the service module (process-wide), so per-request instances coordinate
+    correctly. It renders nothing.
+    """
+
+    storage = build_storage()
+    return EditingService(
+        editing_repo=StorageEditingRepository(storage),
+        planning_repo=StoragePlanningRepository(storage),
+        virality_repo=StorageViralityRepository(storage),
+        story_repo=StorageStoryRepository(storage),
+        analysis_repo=StorageAnalysisRepository(storage),
+        project_repo=StorageProjectRepository(storage),
+        storage=storage,
+    )
+
+
 def planning_service_provider() -> ClipPlannerService:
     """Provide the clip-planner service (the Clip Planner's application boundary).
 
     Wired to the configured storage; reads the Cognitive, Story, and Virality
-    engines' outputs as its only inputs. The in-flight run registry lives in the
-    service module (process-wide), so per-request instances coordinate correctly.
+    engines' outputs as its only inputs. Its completion hook automatically begins
+    the Editing Engine once clip planning finishes, chaining the layers without
+    coupling them. The in-flight run registry lives in the service module
+    (process-wide), so per-request instances coordinate correctly.
     """
 
     storage = build_storage()
+
+    async def _start_editing(project: object, _planning: object) -> None:
+        await editing_service_provider().start(project)  # type: ignore[arg-type]
+
     return ClipPlannerService(
         planning_repo=StoragePlanningRepository(storage),
         virality_repo=StorageViralityRepository(storage),
@@ -100,6 +129,7 @@ def planning_service_provider() -> ClipPlannerService:
         analysis_repo=StorageAnalysisRepository(storage),
         project_repo=StorageProjectRepository(storage),
         storage=storage,
+        on_complete=_start_editing,
     )
 
 
@@ -186,3 +216,4 @@ AnalysisServiceDep = Annotated[AnalysisService, Depends(analysis_service_provide
 StoryServiceDep = Annotated[StoryService, Depends(story_service_provider)]
 ViralityServiceDep = Annotated[ViralityService, Depends(virality_service_provider)]
 ClipPlannerServiceDep = Annotated[ClipPlannerService, Depends(planning_service_provider)]
+EditingServiceDep = Annotated[EditingService, Depends(editing_service_provider)]

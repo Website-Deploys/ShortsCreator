@@ -9,7 +9,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiClientError } from "@/lib/apiClient";
-import type { Analysis, CreateProjectInput, PlanList, Planning, Project, Story, Virality } from "@/lib/types";
+import type {
+  Analysis,
+  CreateProjectInput,
+  Editing,
+  PlanList,
+  Planning,
+  Project,
+  Story,
+  TimelineList,
+  Virality,
+} from "@/lib/types";
 
 export const queryKeys = {
   systemInfo: ["system", "info"] as const,
@@ -20,6 +30,8 @@ export const queryKeys = {
   virality: (id: string) => ["projects", id, "virality"] as const,
   planning: (id: string) => ["projects", id, "planning"] as const,
   plans: (id: string) => ["projects", id, "plans"] as const,
+  editing: (id: string) => ["projects", id, "editing"] as const,
+  timelines: (id: string) => ["projects", id, "timelines"] as const,
 };
 
 const TERMINAL: ReadonlySet<string> = new Set(["analyzed", "complete", "failed"]);
@@ -357,6 +369,89 @@ export function useCancelPlanning(id: string) {
     mutationFn: () => api.cancelPlanning(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.planning(id) });
+    },
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Editing Engine — non-destructive edit timelines                            */
+/* -------------------------------------------------------------------------- */
+
+const EDITING_TERMINAL: ReadonlySet<string> = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * A project's editing analysis. Polls while the pipeline is still running (or
+ * while it hasn't started yet — it begins automatically once the Clip Planner
+ * finishes), then settles at a terminal state. Returns `null` when no editing
+ * analysis exists yet (HTTP 404).
+ */
+export function useEditing(id: string) {
+  return useQuery({
+    queryKey: queryKeys.editing(id),
+    queryFn: async (): Promise<Editing | null> => {
+      try {
+        return await api.getEditing(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 3000; // not created yet — keep checking
+      return EDITING_TERMINAL.has(data.status) ? false : 2000;
+    },
+  });
+}
+
+/**
+ * The assembled edit timelines. Available once the pipeline is terminal; returns
+ * `null` while still running or absent (HTTP 404), and an empty list when the
+ * engine honestly produced zero timelines.
+ */
+export function useTimelines(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.timelines(id),
+    enabled,
+    queryFn: async (): Promise<TimelineList | null> => {
+      try {
+        return await api.listTimelines(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+  });
+}
+
+/** Start (or resume) the editing pipeline. */
+export function useRunEditing(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.runEditing(id),
+    onSuccess: (editing: Editing) => qc.setQueryData(queryKeys.editing(id), editing),
+  });
+}
+
+/** Re-run a single editing stage in isolation. */
+export function useRerunEditingStage(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (stage: string) => api.rerunEditingStage(id, stage),
+    onSuccess: (editing: Editing) => {
+      qc.setQueryData(queryKeys.editing(id), editing);
+      void qc.invalidateQueries({ queryKey: queryKeys.timelines(id) });
+    },
+  });
+}
+
+/** Request cancellation of an in-flight editing run. */
+export function useCancelEditing(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.cancelEditing(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.editing(id) });
     },
   });
 }

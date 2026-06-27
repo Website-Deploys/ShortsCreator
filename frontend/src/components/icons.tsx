@@ -6,6 +6,15 @@
  */
 import type { SVGProps } from "react";
 
+export function FilmIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M7 3v18M17 3v18M3 7.5h4M17 7.5h4M3 12h18M3 16.5h4M17 16.5h4" />
+    </svg>
+  );
+}
+
 export function UploadCloudIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -132,6 +141,14 @@ export function PlusIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+export function MinusIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <path d="M5 12h14" />
     </svg>
   );
 }
