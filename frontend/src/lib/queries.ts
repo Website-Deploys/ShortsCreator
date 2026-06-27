@@ -9,7 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiClientError } from "@/lib/apiClient";
-import type { Analysis, CreateProjectInput, Project, Story } from "@/lib/types";
+import type { Analysis, CreateProjectInput, Project, Story, Virality } from "@/lib/types";
 
 export const queryKeys = {
   systemInfo: ["system", "info"] as const,
@@ -17,6 +17,7 @@ export const queryKeys = {
   project: (id: string) => ["projects", id] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
   story: (id: string) => ["projects", id, "story"] as const,
+  virality: (id: string) => ["projects", id, "virality"] as const,
 };
 
 const TERMINAL: ReadonlySet<string> = new Set(["analyzed", "complete", "failed"]);
@@ -211,6 +212,66 @@ export function useCancelStory(id: string) {
     mutationFn: () => api.cancelStory(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.story(id) });
+    },
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Virality Engine — viral-potential assessment                               */
+/* -------------------------------------------------------------------------- */
+
+const VIRALITY_TERMINAL: ReadonlySet<string> = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * A project's virality assessment. Polls while the pipeline is still running
+ * (or while it hasn't started yet — it begins automatically once the Story
+ * Engine finishes), then settles at a terminal state. Returns `null` when no
+ * virality analysis exists yet (HTTP 404).
+ */
+export function useVirality(id: string) {
+  return useQuery({
+    queryKey: queryKeys.virality(id),
+    queryFn: async (): Promise<Virality | null> => {
+      try {
+        return await api.getVirality(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 3000; // not created yet — keep checking
+      return VIRALITY_TERMINAL.has(data.status) ? false : 2000;
+    },
+  });
+}
+
+/** Start (or resume) the virality pipeline. */
+export function useRunVirality(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.runVirality(id),
+    onSuccess: (virality: Virality) => qc.setQueryData(queryKeys.virality(id), virality),
+  });
+}
+
+/** Re-run a single virality stage in isolation. */
+export function useRerunViralityStage(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (stage: string) => api.rerunViralityStage(id, stage),
+    onSuccess: (virality: Virality) => qc.setQueryData(queryKeys.virality(id), virality),
+  });
+}
+
+/** Request cancellation of an in-flight virality run. */
+export function useCancelVirality(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.cancelVirality(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.virality(id) });
     },
   });
 }

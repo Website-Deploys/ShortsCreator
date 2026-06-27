@@ -3,11 +3,14 @@
 /**
  * The Project Workspace - a spacious, sectioned creator workspace.
  *
- * Loads the project from the backend (survives refresh). Two tabs:
- *   Overview  -> video player, the Cognitive Engine's real understanding
- *                progress, the (honest, future) editing pipeline, and Shorts.
- *   Analysis  -> a read-only viewer of what Olympus understands (transcript,
+ * Loads the project from the backend (survives refresh). Four tabs:
+ *   Overview  -> video player, the Cognitive Engine's progress, the (honest,
+ *                future) editing pipeline, and Shorts.
+ *   Analysis  -> read-only viewer of what Olympus understands (transcript,
  *                speakers, scenes, OCR, emotion, technical profile).
+ *   Story     -> the narrative understanding (sections, hook, arc, payoffs...).
+ *   Virality  -> the viral-potential assessment (scores, timeline, heatmap,
+ *                strengths, recommendations) - always shown with confidence.
  * Honest throughout: no fabricated processing or results.
  */
 import { useState } from "react";
@@ -16,7 +19,14 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 
 import { AppShell } from "@/components/AppShell";
-import { AlertIcon, ArrowLeftIcon, BookIcon, BrainIcon, SpinnerIcon } from "@/components/icons";
+import {
+  AlertIcon,
+  ArrowLeftIcon,
+  BookIcon,
+  BrainIcon,
+  SpinnerIcon,
+  ZapIcon,
+} from "@/components/icons";
 import { AnalysisTimeline } from "@/components/project/AnalysisTimeline";
 import { AnalysisViewer } from "@/components/project/AnalysisViewer";
 import { MetadataGrid } from "@/components/project/MetadataGrid";
@@ -27,16 +37,20 @@ import { StoryStages } from "@/components/project/StoryStages";
 import { StoryTimeline } from "@/components/project/StoryTimeline";
 import { StoryViewer } from "@/components/project/StoryViewer";
 import { TechnicalDetails } from "@/components/project/TechnicalDetails";
+import { ViralityStages } from "@/components/project/ViralityStages";
+import { ViralityTimeline } from "@/components/project/ViralityTimeline";
+import { ViralityViewer } from "@/components/project/ViralityViewer";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { useAnalysis, useProject, useStory } from "@/lib/queries";
+import { parseSummary } from "@/lib/virality";
+import { useAnalysis, useProject, useStory, useVirality } from "@/lib/queries";
 import type { Project } from "@/lib/types";
 
-type Tab = "overview" | "analysis" | "story";
+type Tab = "overview" | "analysis" | "story" | "virality";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -49,6 +63,7 @@ function Tabs({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void 
     { id: "overview", label: "Overview" },
     { id: "analysis", label: "Analysis" },
     { id: "story", label: "Story" },
+    { id: "virality", label: "Virality" },
   ];
   return (
     <div className="mt-6 flex gap-1 border-b border-white/10" role="tablist">
@@ -75,6 +90,8 @@ function ProjectWorkspace({ project }: { project: Project }) {
   const [tab, setTab] = useState<Tab>("overview");
   const { data: analysis, isLoading: analysisLoading } = useAnalysis(project.id);
   const { data: story, isLoading: storyLoading } = useStory(project.id);
+  const { data: virality, isLoading: viralityLoading } = useVirality(project.id);
+  const viralitySummary = virality ? parseSummary(virality) : null;
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8 animate-fade-in">
@@ -177,6 +194,44 @@ function ProjectWorkspace({ project }: { project: Project }) {
                     icon={<BookIcon className="h-6 w-6" />}
                     title="Story analysis hasn't started yet"
                     description="The Story Engine begins automatically once the video understanding completes. This view fills in as each narrative signal is derived."
+                  />
+                )
+              )}
+            </div>
+          )}
+
+          {tab === "virality" && (
+            <div className="space-y-10">
+              <section>
+                <SectionTitle>Virality assessment</SectionTitle>
+                <Card>
+                  <ViralityStages virality={virality} isLoading={viralityLoading} />
+                </Card>
+              </section>
+
+              {viralitySummary && (
+                <section>
+                  <SectionTitle>Virality timeline &amp; heatmap</SectionTitle>
+                  <Card>
+                    <ViralityTimeline
+                      summary={viralitySummary}
+                      durationSeconds={project.duration_seconds}
+                    />
+                  </Card>
+                </section>
+              )}
+
+              {viralityLoading && !virality ? null : virality ? (
+                <section>
+                  <SectionTitle>How viral is this video, and why</SectionTitle>
+                  <ViralityViewer virality={virality} durationSeconds={project.duration_seconds} />
+                </section>
+              ) : (
+                !viralityLoading && (
+                  <EmptyState
+                    icon={<ZapIcon className="h-6 w-6" />}
+                    title="Virality analysis hasn't started yet"
+                    description="The Virality Engine begins automatically once the story understanding completes. This view fills in as each viral signal is assessed."
                   />
                 )
               )}

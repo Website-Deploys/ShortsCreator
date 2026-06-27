@@ -21,6 +21,7 @@ from olympus.api.dependencies import (
     ProjectServiceDep,
     StorageDep,
     StoryServiceDep,
+    ViralityServiceDep,
 )
 from olympus.api.v1.schemas.projects import (
     CreateProjectRequest,
@@ -103,9 +104,11 @@ async def delete_project(
     projects: ProjectServiceDep,
     analysis: AnalysisServiceDep,
     story: StoryServiceDep,
+    virality: ViralityServiceDep,
 ) -> Response:
-    """Delete a project, its stored artifacts, its analysis, and its story."""
+    """Delete a project, its stored artifacts, and all engine analyses."""
 
+    await virality.delete(project_id)
     await story.delete(project_id)
     await analysis.delete(project_id)
     await projects.delete(project_id)

@@ -17,6 +17,7 @@ changes; the pipeline, repository, and analyzers are untouched.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +32,10 @@ from olympus.platform.logging import get_logger
 from olympus.story import StoryPipeline, build_default_story_analyzers
 
 log = get_logger(__name__)
+
+# An optional hook invoked after a run completes successfully. Used to chain the
+# Virality Engine after the Story Engine without coupling this service to it.
+CompletionHook = Callable[[Project, StoryAnalysis], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -56,11 +61,13 @@ class StoryService:
         project_repo: ProjectRepository,
         storage: StoragePort,
         pipeline: StoryPipeline | None = None,
+        on_complete: CompletionHook | None = None,
     ) -> None:
         self._story_repo = story_repo
         self._analysis_repo = analysis_repo
         self._project_repo = project_repo
         self._storage = storage
+        self._on_complete = on_complete
         self._pipeline = pipeline or StoryPipeline(
             build_default_story_analyzers(), story_repo
         )
@@ -91,12 +98,20 @@ class StoryService:
     async def _run(self, project: Project, run: _Run) -> None:
         try:
             analysis = await self._analysis_repo.load(project.id)
-            await self._pipeline.run(
+            story = await self._pipeline.run(
                 project,
                 self._storage,
                 analysis=analysis,
                 cancel_event=run.cancel_event,
             )
+            # Chain the next intelligence layer (the Virality Engine) once the
+            # Story Engine has genuinely finished. Failures here never affect the
+            # completed story analysis.
+            if self._on_complete is not None and story.status.value == "completed":
+                try:
+                    await self._on_complete(project, story)
+                except Exception as exc:  # never let the hook break the analysis
+                    log.error("story_on_complete_error", project_id=project.id, error=str(exc))
         except asyncio.CancelledError:
             log.info("story_task_cancelled", project_id=project.id)
             raise

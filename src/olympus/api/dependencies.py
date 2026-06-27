@@ -25,6 +25,7 @@ from olympus.data.repositories import (
     StorageAnalysisRepository,
     StorageProjectRepository,
     StorageStoryRepository,
+    StorageViralityRepository,
 )
 from olympus.data.storage import build_storage
 from olympus.domain.contracts import Renderer, StoragePort, TranscriptionProvider
@@ -34,6 +35,7 @@ from olympus.services.analysis import AnalysisService
 from olympus.services.intake import IntakeService
 from olympus.services.projects import ProjectService
 from olympus.services.story import StoryService
+from olympus.services.virality import ViralityService
 
 
 def settings_provider() -> Settings:
@@ -80,20 +82,45 @@ def project_service_provider() -> ProjectService:
     return ProjectService(StorageProjectRepository(storage), storage)
 
 
+def virality_service_provider() -> ViralityService:
+    """Provide the virality service (the Virality Engine's application boundary).
+
+    Wired to the configured storage; reads the Cognitive Engine's and Story
+    Engine's outputs as its only inputs. The in-flight run registry lives in the
+    service module (process-wide), so per-request instances coordinate correctly.
+    """
+
+    storage = build_storage()
+    return ViralityService(
+        virality_repo=StorageViralityRepository(storage),
+        story_repo=StorageStoryRepository(storage),
+        analysis_repo=StorageAnalysisRepository(storage),
+        project_repo=StorageProjectRepository(storage),
+        storage=storage,
+    )
+
+
 def story_service_provider() -> StoryService:
     """Provide the story service (the Story Engine's application boundary).
 
     Wired to the configured storage; reads the Cognitive Engine's output (the
-    transcript) as its input. The in-flight run registry lives in the service
-    module (process-wide), so per-request instances coordinate correctly.
+    transcript) as its input. Its completion hook automatically begins Virality
+    analysis once the Story Engine finishes, chaining the layers without coupling
+    them. The in-flight run registry lives in the service module (process-wide),
+    so per-request instances coordinate correctly.
     """
 
     storage = build_storage()
+
+    async def _start_virality(project: object, _story: object) -> None:
+        await virality_service_provider().start(project)  # type: ignore[arg-type]
+
     return StoryService(
         story_repo=StorageStoryRepository(storage),
         analysis_repo=StorageAnalysisRepository(storage),
         project_repo=StorageProjectRepository(storage),
         storage=storage,
+        on_complete=_start_virality,
     )
 
 
@@ -130,3 +157,4 @@ IntakeDep = Annotated[IntakeService, Depends(intake_provider)]
 ProjectServiceDep = Annotated[ProjectService, Depends(project_service_provider)]
 AnalysisServiceDep = Annotated[AnalysisService, Depends(analysis_service_provider)]
 StoryServiceDep = Annotated[StoryService, Depends(story_service_provider)]
+ViralityServiceDep = Annotated[ViralityService, Depends(virality_service_provider)]
