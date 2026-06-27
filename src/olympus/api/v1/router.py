@@ -16,6 +16,7 @@ from olympus.api.v1.routes import (
     optimization,
     planning,
     projects,
+    rendering,
     story,
     system,
     uploads,
@@ -32,4 +33,5 @@ api_v1_router.include_router(story.router)
 api_v1_router.include_router(virality.router)
 api_v1_router.include_router(planning.router)
 api_v1_router.include_router(editing.router)
+api_v1_router.include_router(rendering.router)
 api_v1_router.include_router(optimization.router)

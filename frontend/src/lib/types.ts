@@ -524,3 +524,104 @@ export interface PackageResponse {
   project_id: string;
   package: PublishPackage;
 }
+
+
+/* -------------------------------------------------------------------------- */
+/* Rendering Engine - deterministic execution into real MP4s                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Honest status of a single render stage. `unavailable` means the renderer or a
+ * dependency (e.g. FFmpeg) is absent - the stage reports the exact reason and no
+ * file is fabricated. `failed` is reserved for genuine execution errors.
+ */
+export type RenderStageStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "unavailable"
+  | "failed"
+  | "cancelled";
+
+/** Overall status of a project's render run. */
+export type RenderRunStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+/** One render stage and its honest result. */
+export interface RenderStage {
+  stage: string;
+  label: string;
+  status: RenderStageStatus;
+  version: string;
+  progress: number;
+  attempts: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  reason: string | null;
+  data: Record<string, unknown> | null;
+}
+
+/** A project's complete, evolving render run. */
+export interface RenderRun {
+  project_id: string;
+  pipeline_version: string;
+  status: RenderRunStatus;
+  created_at: string;
+  updated_at: string;
+  completed_stages: number;
+  total_stages: number;
+  stages: RenderStage[];
+}
+
+/** One rendered clip described in the render manifest. */
+export interface RenderedVideo {
+  clip_id: string;
+  storage_key: string;
+  plan_id?: string | null;
+  rank?: number | null;
+  duration?: number | null;
+  width?: number | null;
+  height?: number | null;
+  fps?: number | null;
+  video_codec?: string | null;
+  audio_codec?: string | null;
+  has_audio?: boolean | null;
+  bitrate_kbps?: number | null;
+  size_bytes?: number | null;
+  checksum?: string | null;
+  subtitles_included?: boolean | null;
+  music_included?: boolean | null;
+}
+
+/** The published render manifest (the contract the Optimization Engine consumes). */
+export interface RenderManifestResponse {
+  project_id: string;
+  manifest: {
+    render_id?: string | null;
+    status: string;
+    renderer: string;
+    rendering_version?: string | null;
+    timeline_version?: string | null;
+    created_at?: string;
+    updated_at?: string;
+    renders: RenderedVideo[];
+  };
+}
+
+/** The final render validation report. */
+export interface RenderValidation {
+  project_id: string;
+  report: Record<string, unknown>;
+}
+
+/** Per-stage render logs, in pipeline order. */
+export interface RenderLogs {
+  project_id: string;
+  stages: {
+    stage: string;
+    status: string;
+    lines: string[];
+    reason: string | null;
+    error: string | null;
+  }[];
+}

@@ -6,6 +6,7 @@ from olympus.data.repositories.optimization_repository import StorageOptimizatio
 from olympus.data.repositories.planning_repository import StoragePlanningRepository
 from olympus.data.repositories.project_repository import StorageProjectRepository
 from olympus.data.repositories.render_repository import StorageRenderManifestRepository
+from olympus.data.repositories.render_run_repository import StorageRenderRunRepository
 from olympus.data.repositories.story_repository import StorageStoryRepository
 from olympus.data.repositories.virality_repository import StorageViralityRepository
 
@@ -16,6 +17,7 @@ __all__ = [
     "StoragePlanningRepository",
     "StorageProjectRepository",
     "StorageRenderManifestRepository",
+    "StorageRenderRunRepository",
     "StorageStoryRepository",
     "StorageViralityRepository",
 ]

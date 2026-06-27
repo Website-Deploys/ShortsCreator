@@ -28,19 +28,22 @@ from olympus.data.repositories import (
     StoragePlanningRepository,
     StorageProjectRepository,
     StorageRenderManifestRepository,
+    StorageRenderRunRepository,
     StorageStoryRepository,
     StorageViralityRepository,
 )
 from olympus.data.storage import build_storage
 from olympus.domain.contracts import Renderer, StoragePort, TranscriptionProvider
+from olympus.domain.contracts.rendering import ClipRenderer
 from olympus.platform.config import Settings, get_settings
-from olympus.rendering import build_renderer
+from olympus.rendering import build_clip_renderer, build_renderer
 from olympus.services.analysis import AnalysisService
 from olympus.services.editing import EditingService
 from olympus.services.intake import IntakeService
 from olympus.services.optimization import OptimizationService
 from olympus.services.planning import ClipPlannerService
 from olympus.services.projects import ProjectService
+from olympus.services.rendering import RenderingService
 from olympus.services.story import StoryService
 from olympus.services.virality import ViralityService
 
@@ -71,9 +74,22 @@ def transcription_provider() -> TranscriptionProvider:
 
 
 def renderer_provider() -> Renderer:
-    """Provide the configured renderer (typed as the contract)."""
+    """Provide the configured (legacy) renderer (typed as the contract)."""
 
     return build_renderer()
+
+
+def clip_renderer_provider() -> ClipRenderer:
+    """Provide the configured clip renderer for the Rendering Engine.
+
+    The Rendering Engine depends only on the :class:`ClipRenderer` abstraction;
+    this returns the FFmpeg-backed renderer today and can be swapped for a
+    GPU/cloud/distributed backend without touching any pipeline stage. When the
+    backend (e.g. FFmpeg) is absent, the renderer reports itself unavailable and
+    the engine renders nothing rather than fabricating output.
+    """
+
+    return build_clip_renderer(get_settings().rendering.ffmpeg_binary)
 
 
 def intake_provider() -> IntakeService:
@@ -136,6 +152,43 @@ def optimization_service_provider() -> OptimizationService:
         analysis_repo=StorageAnalysisRepository(storage),
         project_repo=StorageProjectRepository(storage),
         storage=storage,
+    )
+
+
+def rendering_service_provider() -> RenderingService:
+    """Provide the rendering service (the Rendering Engine's application boundary).
+
+    Wired to the configured storage and the replaceable clip renderer; reads the
+    Editing Engine's timelines (plus the Cognitive/Story/Virality/Clip Planner
+    outputs) as its only inputs, and the source media. It is the official producer
+    of the render manifest the Optimization Engine consumes.
+
+    Chaining: on a *successful* render (a manifest published with real rendered
+    clips), its completion hook automatically starts the Optimization Engine -
+    realising the Rendering -> Optimization chain. This is wiring only; neither
+    engine is redesigned. When FFmpeg is unavailable the render stages report
+    UNAVAILABLE honestly, no manifest is produced, and optimization is not
+    triggered (there is nothing to optimize). Rendering itself is started
+    explicitly (via the API), since it is the heavy execution step.
+    """
+
+    storage = build_storage()
+
+    async def _start_optimization(project: object, _run: object) -> None:
+        await optimization_service_provider().start(project)  # type: ignore[arg-type]
+
+    return RenderingService(
+        render_run_repo=StorageRenderRunRepository(storage),
+        manifest_store=StorageRenderManifestRepository(storage),
+        renderer=clip_renderer_provider(),
+        editing_repo=StorageEditingRepository(storage),
+        planning_repo=StoragePlanningRepository(storage),
+        virality_repo=StorageViralityRepository(storage),
+        story_repo=StorageStoryRepository(storage),
+        analysis_repo=StorageAnalysisRepository(storage),
+        project_repo=StorageProjectRepository(storage),
+        storage=storage,
+        on_complete=_start_optimization,
     )
 
 
@@ -242,6 +295,7 @@ DbSessionDep = Annotated[AsyncSession, Depends(db_session_provider)]
 StorageDep = Annotated[StoragePort, Depends(storage_provider)]
 TranscriptionDep = Annotated[TranscriptionProvider, Depends(transcription_provider)]
 RendererDep = Annotated[Renderer, Depends(renderer_provider)]
+ClipRendererDep = Annotated[ClipRenderer, Depends(clip_renderer_provider)]
 IntakeDep = Annotated[IntakeService, Depends(intake_provider)]
 ProjectServiceDep = Annotated[ProjectService, Depends(project_service_provider)]
 AnalysisServiceDep = Annotated[AnalysisService, Depends(analysis_service_provider)]
@@ -250,3 +304,4 @@ ViralityServiceDep = Annotated[ViralityService, Depends(virality_service_provide
 ClipPlannerServiceDep = Annotated[ClipPlannerService, Depends(planning_service_provider)]
 EditingServiceDep = Annotated[EditingService, Depends(editing_service_provider)]
 OptimizationServiceDep = Annotated[OptimizationService, Depends(optimization_service_provider)]
+RenderingServiceDep = Annotated[RenderingService, Depends(rendering_service_provider)]
