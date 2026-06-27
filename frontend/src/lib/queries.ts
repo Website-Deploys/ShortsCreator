@@ -9,7 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiClientError } from "@/lib/apiClient";
-import type { Analysis, CreateProjectInput, Project, Story, Virality } from "@/lib/types";
+import type { Analysis, CreateProjectInput, PlanList, Planning, Project, Story, Virality } from "@/lib/types";
 
 export const queryKeys = {
   systemInfo: ["system", "info"] as const,
@@ -18,6 +18,8 @@ export const queryKeys = {
   analysis: (id: string) => ["projects", id, "analysis"] as const,
   story: (id: string) => ["projects", id, "story"] as const,
   virality: (id: string) => ["projects", id, "virality"] as const,
+  planning: (id: string) => ["projects", id, "planning"] as const,
+  plans: (id: string) => ["projects", id, "plans"] as const,
 };
 
 const TERMINAL: ReadonlySet<string> = new Set(["analyzed", "complete", "failed"]);
@@ -272,6 +274,89 @@ export function useCancelVirality(id: string) {
     mutationFn: () => api.cancelVirality(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.virality(id) });
+    },
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Clip Planner — editing blueprints                                          */
+/* -------------------------------------------------------------------------- */
+
+const PLANNING_TERMINAL: ReadonlySet<string> = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * A project's clip planning. Polls while the pipeline is still running (or while
+ * it hasn't started yet — it begins automatically once the Virality Engine
+ * finishes), then settles at a terminal state. Returns `null` when no planning
+ * exists yet (HTTP 404).
+ */
+export function usePlanning(id: string) {
+  return useQuery({
+    queryKey: queryKeys.planning(id),
+    queryFn: async (): Promise<Planning | null> => {
+      try {
+        return await api.getPlanning(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 3000; // not created yet — keep checking
+      return PLANNING_TERMINAL.has(data.status) ? false : 2000;
+    },
+  });
+}
+
+/**
+ * The full ranked editing plans. Available once the pipeline is terminal;
+ * returns `null` while it is still running or absent (HTTP 404), and an empty
+ * list when the planner honestly produced zero clips.
+ */
+export function usePlans(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.plans(id),
+    enabled,
+    queryFn: async (): Promise<PlanList | null> => {
+      try {
+        return await api.listPlans(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+  });
+}
+
+/** Start (or resume) the clip-planning pipeline. */
+export function useRunPlanning(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.runPlanning(id),
+    onSuccess: (planning: Planning) => qc.setQueryData(queryKeys.planning(id), planning),
+  });
+}
+
+/** Re-run a single planning stage in isolation. */
+export function useRerunPlanningStage(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (stage: string) => api.rerunPlanningStage(id, stage),
+    onSuccess: (planning: Planning) => {
+      qc.setQueryData(queryKeys.planning(id), planning);
+      void qc.invalidateQueries({ queryKey: queryKeys.plans(id) });
+    },
+  });
+}
+
+/** Request cancellation of an in-flight planning run. */
+export function useCancelPlanning(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.cancelPlanning(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.planning(id) });
     },
   });
 }

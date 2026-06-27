@@ -3,7 +3,7 @@
 /**
  * The Project Workspace - a spacious, sectioned creator workspace.
  *
- * Loads the project from the backend (survives refresh). Four tabs:
+ * Loads the project from the backend (survives refresh). Five tabs:
  *   Overview  -> video player, the Cognitive Engine's progress, the (honest,
  *                future) editing pipeline, and Shorts.
  *   Analysis  -> read-only viewer of what Olympus understands (transcript,
@@ -24,6 +24,7 @@ import {
   ArrowLeftIcon,
   BookIcon,
   BrainIcon,
+  ScissorsIcon,
   SpinnerIcon,
   ZapIcon,
 } from "@/components/icons";
@@ -40,6 +41,8 @@ import { TechnicalDetails } from "@/components/project/TechnicalDetails";
 import { ViralityStages } from "@/components/project/ViralityStages";
 import { ViralityTimeline } from "@/components/project/ViralityTimeline";
 import { ViralityViewer } from "@/components/project/ViralityViewer";
+import { ClipPlannerStages } from "@/components/project/ClipPlannerStages";
+import { ClipPlannerView } from "@/components/project/ClipPlannerView";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -47,10 +50,10 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { parseSummary } from "@/lib/virality";
-import { useAnalysis, useProject, useStory, useVirality } from "@/lib/queries";
+import { useAnalysis, useProject, usePlanning, useStory, useVirality } from "@/lib/queries";
 import type { Project } from "@/lib/types";
 
-type Tab = "overview" | "analysis" | "story" | "virality";
+type Tab = "overview" | "analysis" | "story" | "virality" | "clip-planner";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -64,6 +67,7 @@ function Tabs({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void 
     { id: "analysis", label: "Analysis" },
     { id: "story", label: "Story" },
     { id: "virality", label: "Virality" },
+    { id: "clip-planner", label: "Clip Planner" },
   ];
   return (
     <div className="mt-6 flex gap-1 border-b border-white/10" role="tablist">
@@ -92,6 +96,7 @@ function ProjectWorkspace({ project }: { project: Project }) {
   const { data: story, isLoading: storyLoading } = useStory(project.id);
   const { data: virality, isLoading: viralityLoading } = useVirality(project.id);
   const viralitySummary = virality ? parseSummary(virality) : null;
+  const { data: planning, isLoading: planningLoading } = usePlanning(project.id);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8 animate-fade-in">
@@ -232,6 +237,32 @@ function ProjectWorkspace({ project }: { project: Project }) {
                     icon={<ZapIcon className="h-6 w-6" />}
                     title="Virality analysis hasn't started yet"
                     description="The Virality Engine begins automatically once the story understanding completes. This view fills in as each viral signal is assessed."
+                  />
+                )
+              )}
+            </div>
+          )}
+
+          {tab === "clip-planner" && (
+            <div className="space-y-10">
+              <section>
+                <SectionTitle>Clip planning</SectionTitle>
+                <Card>
+                  <ClipPlannerStages planning={planning} isLoading={planningLoading} />
+                </Card>
+              </section>
+
+              {planningLoading && !planning ? null : planning ? (
+                <section>
+                  <SectionTitle>Proposed editing plans</SectionTitle>
+                  <ClipPlannerView planning={planning} durationSeconds={project.duration_seconds} />
+                </section>
+              ) : (
+                !planningLoading && (
+                  <EmptyState
+                    icon={<ScissorsIcon className="h-6 w-6" />}
+                    title="Clip planning hasn't started yet"
+                    description="The Clip Planner begins automatically once the virality assessment completes. It decides what to edit — it never edits or renders video."
                   />
                 )
               )}
