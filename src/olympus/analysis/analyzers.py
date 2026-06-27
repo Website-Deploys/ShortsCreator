@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -31,6 +32,65 @@ log = get_logger(__name__)
 
 def _has(binary: str) -> bool:
     return shutil.which(binary) is not None
+
+
+def _ffmpeg_unavailable_reason() -> str | None:
+    """Return an honest reason if FFmpeg is unusable, else ``None``.
+
+    This isolates the *one* genuine FFmpeg precondition (the binary being on the
+    backend process's PATH) so it is never conflated with unrelated problems such
+    as the source file not being locally addressable.
+    """
+
+    if not _has("ffmpeg"):
+        return (
+            "Audio extraction requires the FFmpeg binary, which was not found on "
+            "the backend process's PATH. Install FFmpeg (and ensure the server "
+            "process inherits a PATH that includes it) to enable it."
+        )
+    return None
+
+
+async def _materialize_source(
+    ctx: StageContext, dest_dir: str
+) -> tuple[str | None, str | None]:
+    """Resolve a real on-disk path for the project's source video.
+
+    The analyzer's true requirement is "a file FFmpeg can open", not specifically
+    a path produced by the local-disk backend. We therefore:
+
+    1. Prefer ``storage.local_path`` (zero-copy) when the backend can expose one.
+    2. Otherwise fetch the object's real bytes through the storage port and write
+       them to a temp file in ``dest_dir``. This makes audio extraction work for
+       cloud backends and for any local-root/working-directory mismatch, using
+       the genuine uploaded bytes - never a fabricated or hardcoded path.
+
+    Returns ``(path, error_reason)``; exactly one is non-``None``.
+    """
+
+    key = ctx.project.storage_key
+    local = ctx.storage.local_path(key)
+    if local:
+        return local, None
+
+    # No local path (cloud backend, or a local root that does not contain the
+    # file under the current working directory). Fall back to the bytes.
+    if not await ctx.storage.exists(key):
+        return None, (
+            "The project's source video could not be found in storage "
+            f"(key={key!r}); audio extraction cannot run."
+        )
+    try:
+        data = await ctx.storage.get(key)
+    except Exception as exc:  # storage backends raise StorageError on failure
+        return None, (
+            "The project's source video exists but could not be read from "
+            f"storage ({type(exc).__name__}); audio extraction cannot run."
+        )
+    suffix = Path(ctx.project.source_filename or key).suffix or ".bin"
+    src_path = str(Path(dest_dir) / f"source{suffix}")
+    await asyncio.to_thread(Path(src_path).write_bytes, data)
+    return src_path, None
 
 
 async def _run(*args: str, timeout: float = 120.0) -> tuple[int, bytes, bytes]:
@@ -147,21 +207,51 @@ class AudioExtractionAnalyzer(Analyzer):
     depends_on = ("video_inspection",)
 
     async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
-        path = ctx.storage.local_path(ctx.project.storage_key)
-        if not _has("ffmpeg") or not path:
-            return StageOutcome.unavailable(
-                "Audio extraction requires FFmpeg, which is not available in this "
-                "environment. Install FFmpeg to enable it."
-            )
+        # Diagnostic visibility (debug-level): the exact facts needed to tell
+        # *which* precondition is at play, so an FFmpeg-present environment is
+        # never silently misreported as "FFmpeg missing".
+        local = ctx.storage.local_path(ctx.project.storage_key)
+        log.debug(
+            "audio_extraction_env",
+            path_env=os.environ.get("PATH", ""),
+            which_ffmpeg=shutil.which("ffmpeg"),
+            which_ffprobe=shutil.which("ffprobe"),
+            storage_key=ctx.project.storage_key,
+            local_path=local,
+        )
+
+        # Precondition 1 (the only genuine FFmpeg requirement): the binary.
+        ffmpeg_problem = _ffmpeg_unavailable_reason()
+        if ffmpeg_problem is not None:
+            return StageOutcome.unavailable(ffmpeg_problem)
+
         with tempfile.TemporaryDirectory() as tmp:
+            # Precondition 2: a real file FFmpeg can open. Prefer the backend's
+            # local path; otherwise materialize the real bytes (cloud backend or
+            # working-directory/root mismatch). This is reported honestly and
+            # never fabricated.
+            src_path, source_error = await _materialize_source(ctx, tmp)
+            if source_error is not None:
+                return StageOutcome.unavailable(source_error)
+            assert src_path is not None  # one of the two is always set
+
             out_path = str(Path(tmp) / "audio.wav")
             code, _, err = await _run(
-                "ffmpeg", "-y", "-i", path, "-vn", "-ac", "1", "-ar", "16000", out_path
+                "ffmpeg", "-y", "-i", src_path, "-vn", "-ac", "1", "-ar", "16000", out_path
             )
             if code != 0:
+                stderr_text = (err or b"").decode(errors="ignore").strip()
+                # Capture the complete FFmpeg stderr for diagnosis (full, not
+                # truncated, in the logs), and surface a bounded tail to the user.
+                log.warning(
+                    "audio_extraction_ffmpeg_failed",
+                    return_code=code,
+                    source=src_path,
+                    stderr=stderr_text,
+                )
                 return StageOutcome(
                     status=StageStatus.FAILED,
-                    reason=(err or b"").decode(errors="ignore")[-500:],
+                    reason=stderr_text[-500:] or f"FFmpeg exited with code {code}.",
                 )
             audio_bytes = await asyncio.to_thread(Path(out_path).read_bytes)
         audio_key = f"analysis/{ctx.project.id}/audio.wav"

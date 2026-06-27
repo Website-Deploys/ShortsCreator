@@ -290,3 +290,132 @@ async def _tick() -> None:
     import asyncio
 
     await asyncio.sleep(0.01)
+
+
+
+# --------------------------------------------------------------------------- #
+# Audio extraction: honest preconditions + backend-agnostic source resolution.
+#
+# Regression coverage for the bug where audio extraction reported "FFmpeg is not
+# available" even when FFmpeg WAS installed - because it conflated the FFmpeg
+# check with `storage.local_path() is None` (true for cloud backends and for any
+# local-root/working-directory mismatch). The fix separates the two and falls
+# back to materializing the real uploaded bytes when no local path exists.
+# --------------------------------------------------------------------------- #
+class _NoLocalPathStorage(LocalStorage):
+    """A storage backend that holds the real bytes but exposes no local path.
+
+    Mirrors a cloud (S3) backend, or a local backend whose resolved root does not
+    contain the file under the current working directory - the exact conditions
+    under which the old code wrongly blamed FFmpeg.
+    """
+
+    def local_path(self, key: str) -> str | None:
+        return None
+
+
+async def _audio_ctx(store: LocalStorage) -> StageContext:
+    from olympus.analysis.analyzers import AudioExtractionAnalyzer  # noqa: F401
+
+    project = await _make_project(store)
+    return StageContext(project=project, storage=store, results={})
+
+
+async def test_audio_extraction_unavailable_when_ffmpeg_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no FFmpeg binary, the message names FFmpeg/PATH - and nothing else."""
+
+    from olympus.analysis import analyzers
+
+    monkeypatch.setattr(analyzers.shutil, "which", lambda _binary: None)
+    store = LocalStorage(root=str(tmp_path))
+    ctx = await _audio_ctx(store)
+
+    outcome = await analyzers.AudioExtractionAnalyzer().analyze(ctx, lambda _v: None)
+    assert outcome.status is StageStatus.UNAVAILABLE
+    assert "FFmpeg" in (outcome.reason or "")
+    assert "PATH" in (outcome.reason or "")
+
+
+async def test_audio_extraction_runs_when_no_local_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FFmpeg present + no local path => materialize real bytes and succeed.
+
+    This is the core regression: previously this returned UNAVAILABLE blaming
+    FFmpeg. Now it fetches the bytes via the storage port, writes a temp file,
+    and FFmpeg (stubbed here) runs against a genuine existing file.
+    """
+
+    from olympus.analysis import analyzers
+
+    # FFmpeg "installed".
+    monkeypatch.setattr(analyzers.shutil, "which", lambda binary: f"/usr/bin/{binary}")
+
+    captured: dict[str, str] = {}
+
+    async def fake_run(*args: str, timeout: float = 120.0) -> tuple[int, bytes, bytes]:
+        # The input path is the 4th arg: ffmpeg -y -i <src> ...
+        src = args[3]
+        captured["src"] = src
+        # Prove the analyzer handed FFmpeg a real, existing file (not a
+        # hardcoded or fabricated path).
+        assert Path(src).exists()
+        # Emulate FFmpeg writing the output WAV.
+        Path(args[-1]).write_bytes(b"RIFFfake-wav-data")
+        return 0, b"", b""
+
+    monkeypatch.setattr(analyzers, "_run", fake_run)
+
+    store = _NoLocalPathStorage(root=str(tmp_path))
+    assert store.local_path("uploads/u1/source.mp4") is None  # cloud-like
+    ctx = await _audio_ctx(store)
+
+    outcome = await analyzers.AudioExtractionAnalyzer().analyze(ctx, lambda _v: None)
+    assert outcome.status is StageStatus.COMPLETED
+    assert outcome.data["audio_key"] == f"analysis/{ctx.project.id}/audio.wav"
+    # The materialized source carried the project's extension.
+    assert captured["src"].endswith(".mp4")
+    # The extracted audio was genuinely stored.
+    assert await store.exists(outcome.data["audio_key"])
+
+
+async def test_audio_extraction_reports_source_missing_distinctly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FFmpeg present but the source object is genuinely absent: honest, distinct."""
+
+    from olympus.analysis import analyzers
+
+    monkeypatch.setattr(analyzers.shutil, "which", lambda binary: f"/usr/bin/{binary}")
+    store = _NoLocalPathStorage(root=str(tmp_path))
+    project = await _make_project(store)
+    await store.delete(project.storage_key)  # remove the bytes
+    ctx = StageContext(project=project, storage=store, results={})
+
+    outcome = await analyzers.AudioExtractionAnalyzer().analyze(ctx, lambda _v: None)
+    assert outcome.status is StageStatus.UNAVAILABLE
+    assert "source video" in (outcome.reason or "")
+    assert "FFmpeg" not in (outcome.reason or "")  # not misattributed to FFmpeg
+
+
+async def test_audio_extraction_captures_ffmpeg_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real FFmpeg non-zero exit surfaces as FAILED carrying its stderr."""
+
+    from olympus.analysis import analyzers
+
+    monkeypatch.setattr(analyzers.shutil, "which", lambda binary: f"/usr/bin/{binary}")
+
+    async def failing_run(*args: str, timeout: float = 120.0) -> tuple[int, bytes, bytes]:
+        return 1, b"", b"ffmpeg: Invalid data found when processing input"
+
+    monkeypatch.setattr(analyzers, "_run", failing_run)
+    store = LocalStorage(root=str(tmp_path))
+    ctx = await _audio_ctx(store)
+
+    outcome = await analyzers.AudioExtractionAnalyzer().analyze(ctx, lambda _v: None)
+    assert outcome.status is StageStatus.FAILED
+    assert "Invalid data found" in (outcome.reason or "")
