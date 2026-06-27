@@ -173,3 +173,59 @@ export interface StorySummary {
   project_id: string;
   summary: Record<string, unknown>;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Virality Engine — viral-potential assessment                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Honest status of a single virality stage. `unavailable` means the stage lacked
+ * the evidence it needs (most need a transcript / story signals) — no score is
+ * fabricated, and the reason is given. `failed` is reserved for genuine errors.
+ */
+export type ViralityStageStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "unavailable"
+  | "failed"
+  | "cancelled";
+
+/** Overall status of a project's virality analysis. */
+export type ViralityStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+/**
+ * One virality stage and its honest result. A completed scoring stage's `data`
+ * carries `score`, `confidence`, `evidence`, and `limitations`.
+ */
+export interface ViralityStage {
+  stage: string;
+  label: string;
+  status: ViralityStageStatus;
+  version: string;
+  progress: number;
+  attempts: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  reason: string | null;
+  data: Record<string, unknown> | null;
+}
+
+/** A project's complete, evolving virality assessment. */
+export interface Virality {
+  project_id: string;
+  pipeline_version: string;
+  status: ViralityStatus;
+  created_at: string;
+  updated_at: string;
+  completed_stages: number;
+  total_stages: number;
+  stages: ViralityStage[];
+}
+
+/** The aggregated virality summary (Virality Summary stage output). */
+export interface ViralitySummary {
+  project_id: string;
+  summary: Record<string, unknown>;
+}

@@ -16,6 +16,8 @@ import type {
   Story,
   StorySummary,
   SystemInfo,
+  Virality,
+  ViralitySummary,
 } from "@/lib/types";
 
 /** Error thrown when the API returns a non-2xx response. */
@@ -99,6 +101,17 @@ export const api = {
   cancelStory: (id: string) =>
     request<{ cancelled: boolean }>(`/projects/${id}/story/cancel`, { method: "POST" }),
   getStorySummary: (id: string) => request<StorySummary>(`/projects/${id}/story/summary`),
+
+  /* Virality Engine — viral-potential assessment. */
+  getVirality: (id: string) => request<Virality>(`/projects/${id}/virality`),
+  runVirality: (id: string) =>
+    request<Virality>(`/projects/${id}/virality/run`, { method: "POST" }),
+  rerunViralityStage: (id: string, stage: string) =>
+    request<Virality>(`/projects/${id}/virality/stages/${stage}/rerun`, { method: "POST" }),
+  cancelVirality: (id: string) =>
+    request<{ cancelled: boolean }>(`/projects/${id}/virality/cancel`, { method: "POST" }),
+  getViralitySummary: (id: string) =>
+    request<ViralitySummary>(`/projects/${id}/virality/summary`),
 
   /** Upload a captured thumbnail frame (multipart; not JSON). */
   uploadThumbnail: async (id: string, blob: Blob): Promise<Project> => {
