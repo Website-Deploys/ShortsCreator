@@ -16,7 +16,12 @@ from __future__ import annotations
 from fastapi import APIRouter, File, Response, UploadFile, status
 from fastapi.responses import FileResponse, RedirectResponse
 
-from olympus.api.dependencies import AnalysisServiceDep, ProjectServiceDep, StorageDep
+from olympus.api.dependencies import (
+    AnalysisServiceDep,
+    ProjectServiceDep,
+    StorageDep,
+    StoryServiceDep,
+)
 from olympus.api.v1.schemas.projects import (
     CreateProjectRequest,
     ProjectResponse,
@@ -94,10 +99,14 @@ async def process_project(project_id: str, projects: ProjectServiceDep) -> Proje
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project(
-    project_id: str, projects: ProjectServiceDep, analysis: AnalysisServiceDep
+    project_id: str,
+    projects: ProjectServiceDep,
+    analysis: AnalysisServiceDep,
+    story: StoryServiceDep,
 ) -> Response:
-    """Delete a project, its stored artifacts, and its analysis."""
+    """Delete a project, its stored artifacts, its analysis, and its story."""
 
+    await story.delete(project_id)
     await analysis.delete(project_id)
     await projects.delete(project_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -9,13 +9,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiClientError } from "@/lib/apiClient";
-import type { Analysis, CreateProjectInput, Project } from "@/lib/types";
+import type { Analysis, CreateProjectInput, Project, Story } from "@/lib/types";
 
 export const queryKeys = {
   systemInfo: ["system", "info"] as const,
   projects: ["projects"] as const,
   project: (id: string) => ["projects", id] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
+  story: (id: string) => ["projects", id, "story"] as const,
 };
 
 const TERMINAL: ReadonlySet<string> = new Set(["analyzed", "complete", "failed"]);
@@ -150,6 +151,66 @@ export function useCancelAnalysis(id: string) {
     mutationFn: () => api.cancelAnalysis(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.analysis(id) });
+    },
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Story Engine — narrative understanding                                     */
+/* -------------------------------------------------------------------------- */
+
+const STORY_TERMINAL: ReadonlySet<string> = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * A project's narrative understanding. Polls while the story pipeline is still
+ * running (or while it hasn't started yet — it begins automatically once the
+ * Cognitive Engine finishes), then settles at a terminal state. Returns `null`
+ * when no story analysis exists yet (HTTP 404).
+ */
+export function useStory(id: string) {
+  return useQuery({
+    queryKey: queryKeys.story(id),
+    queryFn: async (): Promise<Story | null> => {
+      try {
+        return await api.getStory(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 3000; // not created yet — keep checking
+      return STORY_TERMINAL.has(data.status) ? false : 2000;
+    },
+  });
+}
+
+/** Start (or resume) the story pipeline. */
+export function useRunStory(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.runStory(id),
+    onSuccess: (story: Story) => qc.setQueryData(queryKeys.story(id), story),
+  });
+}
+
+/** Re-run a single story stage in isolation. */
+export function useRerunStoryStage(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (stage: string) => api.rerunStoryStage(id, stage),
+    onSuccess: (story: Story) => qc.setQueryData(queryKeys.story(id), story),
+  });
+}
+
+/** Request cancellation of an in-flight story run. */
+export function useCancelStory(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.cancelStory(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.story(id) });
     },
   });
 }

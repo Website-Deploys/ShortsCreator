@@ -17,6 +17,7 @@ pipeline, repository, and analyzers are untouched.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from olympus.analysis import AnalysisPipeline, build_default_analyzers
@@ -27,9 +28,13 @@ from olympus.domain.entities.analysis import STAGE_ORDER, Analysis, AnalysisStat
 from olympus.domain.entities.project import Project, ProjectStatus
 from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.platform.logging import get_logger
-from olympus.utils import utc_now
+from olympus.utils import project_write_lock, utc_now
 
 log = get_logger(__name__)
+
+# An optional hook invoked after a run completes successfully. Used to chain the
+# Story Engine after the Cognitive Engine without coupling this service to it.
+CompletionHook = Callable[[Project, Analysis], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -57,11 +62,13 @@ class AnalysisService:
         storage: StoragePort,
         transcription_provider: object | None = None,
         pipeline: AnalysisPipeline | None = None,
+        on_complete: CompletionHook | None = None,
     ) -> None:
         self._analysis_repo = analysis_repo
         self._project_repo = project_repo
         self._storage = storage
         self._transcription_provider = transcription_provider
+        self._on_complete = on_complete
         self._pipeline = pipeline or AnalysisPipeline(
             build_default_analyzers(), analysis_repo
         )
@@ -103,6 +110,14 @@ class AnalysisService:
                 cancel_event=run.cancel_event,
             )
             await self._reflect_status(project.id, analysis)
+            # Chain the next intelligence layer (e.g. the Story Engine) once the
+            # Cognitive Engine has genuinely finished. Failures here never affect
+            # the completed analysis.
+            if self._on_complete is not None and analysis.status is AnalysisStatus.COMPLETED:
+                try:
+                    await self._on_complete(project, analysis)
+                except Exception as exc:  # never let the hook break analysis
+                    log.error("analysis_on_complete_error", project_id=project.id, error=str(exc))
         except asyncio.CancelledError:
             log.info("analysis_task_cancelled", project_id=project.id)
             raise
@@ -178,12 +193,13 @@ class AnalysisService:
     # --------------------------------------------------------------- helpers
 
     async def _set_project_status(self, project_id: str, status: ProjectStatus) -> None:
-        project = await self._project_repo.get(project_id)
-        if project is None or project.status == status:
-            return
-        project.status = status
-        project.updated_at = utc_now()
-        await self._project_repo.save(project)
+        async with project_write_lock(project_id):
+            project = await self._project_repo.get(project_id)
+            if project is None or project.status == status:
+                return
+            project.status = status
+            project.updated_at = utc_now()
+            await self._project_repo.save(project)
 
     async def _reflect_status(self, project_id: str, analysis: Analysis) -> None:
         """Map the overall analysis status onto the project's honest status."""

@@ -16,13 +16,16 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 
 import { AppShell } from "@/components/AppShell";
-import { AlertIcon, ArrowLeftIcon, BrainIcon, SpinnerIcon } from "@/components/icons";
+import { AlertIcon, ArrowLeftIcon, BookIcon, BrainIcon, SpinnerIcon } from "@/components/icons";
 import { AnalysisTimeline } from "@/components/project/AnalysisTimeline";
 import { AnalysisViewer } from "@/components/project/AnalysisViewer";
 import { MetadataGrid } from "@/components/project/MetadataGrid";
 import { ProcessingTimeline } from "@/components/project/ProcessingTimeline";
 import { QuickActions } from "@/components/project/QuickActions";
 import { ResultsSection } from "@/components/project/ResultsSection";
+import { StoryStages } from "@/components/project/StoryStages";
+import { StoryTimeline } from "@/components/project/StoryTimeline";
+import { StoryViewer } from "@/components/project/StoryViewer";
 import { TechnicalDetails } from "@/components/project/TechnicalDetails";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { Button } from "@/components/ui/Button";
@@ -30,10 +33,10 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { useAnalysis, useProject } from "@/lib/queries";
+import { useAnalysis, useProject, useStory } from "@/lib/queries";
 import type { Project } from "@/lib/types";
 
-type Tab = "overview" | "analysis";
+type Tab = "overview" | "analysis" | "story";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -45,6 +48,7 @@ function Tabs({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void 
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
     { id: "analysis", label: "Analysis" },
+    { id: "story", label: "Story" },
   ];
   return (
     <div className="mt-6 flex gap-1 border-b border-white/10" role="tablist">
@@ -70,6 +74,7 @@ function Tabs({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void 
 function ProjectWorkspace({ project }: { project: Project }) {
   const [tab, setTab] = useState<Tab>("overview");
   const { data: analysis, isLoading: analysisLoading } = useAnalysis(project.id);
+  const { data: story, isLoading: storyLoading } = useStory(project.id);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8 animate-fade-in">
@@ -91,7 +96,7 @@ function ProjectWorkspace({ project }: { project: Project }) {
       <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-3">
         {/* Main column */}
         <div className="space-y-10 lg:col-span-2">
-          {tab === "overview" ? (
+          {tab === "overview" && (
             <>
               <section>
                 <VideoPlayer projectId={project.id} hasThumbnail={project.has_thumbnail} />
@@ -119,7 +124,9 @@ function ProjectWorkspace({ project }: { project: Project }) {
                 <ResultsSection clips={[]} />
               </section>
             </>
-          ) : (
+          )}
+
+          {tab === "analysis" && (
             <section>
               <SectionTitle>What Olympus understands</SectionTitle>
               {analysisLoading && !analysis ? (
@@ -139,6 +146,41 @@ function ProjectWorkspace({ project }: { project: Project }) {
                 />
               )}
             </section>
+          )}
+
+          {tab === "story" && (
+            <div className="space-y-10">
+              <section>
+                <SectionTitle>Story understanding</SectionTitle>
+                <Card>
+                  <StoryStages story={story} isLoading={storyLoading} />
+                </Card>
+              </section>
+
+              {story && (
+                <section>
+                  <SectionTitle>Narrative timeline</SectionTitle>
+                  <Card>
+                    <StoryTimeline story={story} durationSeconds={project.duration_seconds} />
+                  </Card>
+                </section>
+              )}
+
+              {storyLoading && !story ? null : story ? (
+                <section>
+                  <SectionTitle>What Olympus understands about the story</SectionTitle>
+                  <StoryViewer story={story} />
+                </section>
+              ) : (
+                !storyLoading && (
+                  <EmptyState
+                    icon={<BookIcon className="h-6 w-6" />}
+                    title="Story analysis hasn't started yet"
+                    description="The Story Engine begins automatically once the video understanding completes. This view fills in as each narrative signal is derived."
+                  />
+                )
+              )}
+            </div>
           )}
         </div>
 

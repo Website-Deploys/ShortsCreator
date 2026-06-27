@@ -120,3 +120,56 @@ export interface Analysis {
   total_stages: number;
   stages: AnalysisStage[];
 }
+
+/* -------------------------------------------------------------------------- */
+/* Story Engine — narrative understanding                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Honest status of a single story stage. `unavailable` means the stage lacked
+ * the inputs it needs (most need a transcript) — nothing is fabricated, and the
+ * reason is given. `failed` is reserved for genuine errors.
+ */
+export type StoryStageStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "unavailable"
+  | "failed"
+  | "cancelled";
+
+/** Overall status of a project's story analysis. */
+export type StoryStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+/** One story stage and its honest result (data carries confidence + evidence). */
+export interface StoryStage {
+  stage: string;
+  label: string;
+  status: StoryStageStatus;
+  version: string;
+  progress: number;
+  attempts: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  reason: string | null;
+  data: Record<string, unknown> | null;
+}
+
+/** A project's complete, evolving narrative understanding. */
+export interface Story {
+  project_id: string;
+  pipeline_version: string;
+  status: StoryStatus;
+  created_at: string;
+  updated_at: string;
+  completed_stages: number;
+  total_stages: number;
+  stages: StoryStage[];
+}
+
+/** The engineering story summary (Story Summary stage output). */
+export interface StorySummary {
+  project_id: string;
+  summary: Record<string, unknown>;
+}
