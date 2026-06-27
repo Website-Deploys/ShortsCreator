@@ -14,6 +14,7 @@ from olympus.api.v1.routes import (
     editing,
     health,
     library,
+    monitoring,
     optimization,
     planning,
     projects,
@@ -40,3 +41,4 @@ api_v1_router.include_router(optimization.router)
 api_v1_router.include_router(workflow.router)
 api_v1_router.include_router(workflow.ops_router)
 api_v1_router.include_router(library.router)
+api_v1_router.include_router(monitoring.router)

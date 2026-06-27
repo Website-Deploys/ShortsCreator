@@ -935,3 +935,210 @@ export interface LibraryMetaResponse {
     assets: Record<string, unknown>;
   };
 }
+
+
+/* -------------------------------------------------------------------------- */
+/* Production Monitoring & Analytics                                          */
+/* -------------------------------------------------------------------------- */
+
+/** Measured per-engine performance metrics. `null` means UNKNOWN (unmeasured). */
+export interface EngineMetricsItem {
+  engine: string;
+  runs: number;
+  stage_executions: number;
+  completed: number;
+  failed: number;
+  unavailable: number;
+  cancelled: number;
+  retries: number;
+  avg_execution_ms: number | null;
+  p95_execution_ms: number | null;
+  total_execution_ms: number;
+  avg_wait_ms: number | null;
+  avg_queue_delay_ms: number | null;
+  avg_confidence: number | null;
+  throughput_per_hour: number | null;
+  concurrent_executions: number;
+  completion_rate: number | null;
+  failure_rate: number | null;
+  cancellation_rate: number | null;
+}
+
+/** A coarse health verdict for one engine. */
+export interface EngineHealthItem {
+  engine: string;
+  status: string;
+  detail: string;
+  failure_rate: number | null;
+}
+
+/** Measured host metrics; `null` fields are genuinely unavailable here. */
+export interface SystemMetrics {
+  cpu_count: number | null;
+  load_avg_1m: number | null;
+  load_avg_5m: number | null;
+  load_avg_15m: number | null;
+  process_cpu_seconds: number | null;
+  process_max_rss_bytes: number | null;
+  system_memory_total_bytes: number | null;
+  system_memory_available_bytes: number | null;
+  disk_total_bytes: number | null;
+  disk_used_bytes: number | null;
+  disk_free_bytes: number | null;
+  disk_used_pct: number | null;
+  source: string;
+  unavailable: string[];
+}
+
+/** A live snapshot of the workflow queue and worker pool. */
+export interface QueueSnapshot {
+  queued: number;
+  running: number;
+  delayed: number;
+  completed: number;
+  failed: number;
+  dead: number;
+  blocked: number;
+  cancelled: number;
+  active_workflows: number;
+  worker_count: number;
+  busy_workers: number;
+  idle_workers: number;
+  offline_workers: number;
+  pool_running: boolean;
+  worker_utilization: number | null;
+  stuck_jobs: Record<string, unknown>[];
+  dead_jobs: Record<string, unknown>[];
+  avg_queue_latency_ms: number | null;
+  workers: Record<string, unknown>[];
+}
+
+/** Aggregate workflow analytics across all project workflows. */
+export interface WorkflowAnalytics {
+  total_workflows: number;
+  completed: number;
+  failed: number;
+  running: number;
+  avg_duration_ms: number | null;
+  avg_idle_ms: number | null;
+  critical_path: Record<string, unknown>[];
+  engine_bottlenecks: Record<string, unknown>[];
+  slowest_projects: Record<string, unknown>[];
+  fastest_projects: Record<string, unknown>[];
+}
+
+/** One captured point in the storage time series. */
+export interface StoragePoint {
+  ts: string;
+  total_bytes: number;
+  namespaces: Record<string, number>;
+}
+
+/** Current storage usage by namespace plus the captured trend series. */
+export interface StorageAnalytics {
+  total_bytes: number;
+  namespaces: Record<string, number>;
+  trend: StoragePoint[];
+}
+
+/** One observed failure (from a real persisted FAILED stage/job). */
+export interface FailureRecord {
+  engine: string;
+  stage: string;
+  project_id: string;
+  ts: string | null;
+  error: string | null;
+  attempts: number;
+}
+
+/** Aggregated failure analytics (measured, never fabricated causes). */
+export interface FailureSummary {
+  total_failures: number;
+  by_engine: Record<string, number>;
+  by_exception: Record<string, number>;
+  by_project: Record<string, number>;
+  recent: FailureRecord[];
+}
+
+/** Measured platform usage totals. */
+export interface UsageStats {
+  projects: number;
+  videos_processed: number;
+  minutes_analyzed: number;
+  clips: number;
+  renders: number;
+  exports: number;
+  workflows_run: number;
+  total_stage_executions: number;
+  busiest_engine: string | null;
+}
+
+/** One cost line: the measured quantity, the rate, and the estimated cost. */
+export interface CostLine {
+  item: string;
+  quantity: number | null;
+  unit: string;
+  rate_usd: number;
+  estimated_usd: number | null;
+  note: string;
+}
+
+/** An estimate (never billing) of operational cost from measured work. */
+export interface CostEstimate {
+  lines: CostLine[];
+  total_usd: number;
+  disclaimer: string;
+}
+
+/** One immutable, append-only audit entry. */
+export interface AuditEntry {
+  id: string;
+  ts: string;
+  action: string;
+  message: string;
+  project_id: string | null;
+  source: string;
+  detail: Record<string, unknown>;
+}
+
+/** An informational alert derived from measured state (no notifications). */
+export interface Alert {
+  id: string;
+  severity: "info" | "warning" | "critical";
+  category: string;
+  message: string;
+  evidence: Record<string, unknown>;
+}
+
+/* -- response envelopes ----------------------------------------------------- */
+export interface MonitoringHealthResponse {
+  overall: string;
+  engines: EngineHealthItem[];
+  system: SystemMetrics;
+  queue: QueueSnapshot;
+}
+export interface EnginesResponse {
+  engines: EngineMetricsItem[];
+}
+export interface FailuresResponse extends FailureSummary {}
+export interface AuditResponse {
+  count: number;
+  entries: AuditEntry[];
+}
+export interface AlertsResponse {
+  count: number;
+  alerts: Alert[];
+}
+
+/** The combined admin dashboard payload (all real, measured). */
+export interface AdminSnapshot {
+  overall_health: string;
+  engine_health: EngineHealthItem[];
+  system: SystemMetrics | null;
+  queue: QueueSnapshot | null;
+  usage: UsageStats | null;
+  storage_total_bytes: number;
+  alerts: Alert[];
+  recent_failures: FailureRecord[];
+  recent_audit: AuditEntry[];
+}

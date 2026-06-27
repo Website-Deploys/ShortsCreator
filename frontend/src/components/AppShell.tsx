@@ -13,6 +13,7 @@ import {
   FolderIcon,
   LayersIcon,
   PlusIcon,
+  ServerIcon,
   SettingsIcon,
   UserIcon,
 } from "@/components/icons";
@@ -25,6 +26,7 @@ const NAV = [
   { href: "/", label: "New Upload", icon: PlusIcon },
   { href: "/projects", label: "Projects", icon: FolderIcon },
   { href: "/library", label: "Library", icon: LayersIcon },
+  { href: "/admin", label: "Admin", icon: ServerIcon },
 ];
 
 function Brand() {
