@@ -17,6 +17,7 @@ This adapter is structurally complete; it is exercised only when
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from olympus.domain.contracts.storage import StorageObject, StoragePort
@@ -66,6 +67,44 @@ class S3Storage(StoragePort):
             raise StorageError("Failed to write object to S3.", details={"key": key}) from exc
         return StorageObject(key=key, size_bytes=len(data), content_type=content_type)
 
+    async def put_stream(
+        self,
+        key: str,
+        chunks: AsyncIterator[bytes],
+        *,
+        content_type: str | None = None,
+    ) -> StorageObject:
+        import os
+        import tempfile
+
+        # Buffer the stream to a temp file on disk (bounded memory), then upload
+        # with boto3's multipart-capable upload_fileobj.
+        fd, tmp_path = tempfile.mkstemp(prefix="olympus-upload-")
+        size = 0
+        try:
+            handle = os.fdopen(fd, "w+b")
+            try:
+                async for chunk in chunks:
+                    if not chunk:
+                        continue
+                    await asyncio.to_thread(handle.write, chunk)
+                    size += len(chunk)
+                await asyncio.to_thread(handle.flush)
+                await asyncio.to_thread(handle.seek, 0)
+
+                def _upload() -> None:
+                    extra = {"ContentType": content_type} if content_type else {}
+                    self._get_client().upload_fileobj(handle, self._bucket, key, ExtraArgs=extra)
+
+                await asyncio.to_thread(_upload)
+            finally:
+                await asyncio.to_thread(handle.close)
+        except Exception as exc:
+            raise StorageError("Failed to stream object to S3.", details={"key": key}) from exc
+        finally:
+            await asyncio.to_thread(lambda: os.path.exists(tmp_path) and os.unlink(tmp_path))
+        return StorageObject(key=key, size_bytes=size, content_type=content_type)
+
     async def get(self, key: str) -> bytes:
         def _get() -> bytes:
             response = self._get_client().get_object(Bucket=self._bucket, Key=key)
@@ -95,6 +134,20 @@ class S3Storage(StoragePort):
             await asyncio.to_thread(_delete)
         except Exception as exc:
             raise StorageError("Failed to delete object from S3.", details={"key": key}) from exc
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        def _list() -> list[str]:
+            keys: list[str] = []
+            paginator = self._get_client().get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+                for obj in page.get("Contents", []):
+                    keys.append(obj["Key"])
+            return keys
+
+        try:
+            return await asyncio.to_thread(_list)
+        except Exception as exc:
+            raise StorageError("Failed to list objects in S3.", details={"prefix": prefix}) from exc
 
     async def generate_access_url(self, key: str, *, expires_in: int = 3600) -> str:
         def _presign() -> str:

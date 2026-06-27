@@ -32,6 +32,27 @@ const config: Config = {
           "sans-serif",
         ],
       },
+      keyframes: {
+        "toast-in": {
+          "0%": { opacity: "0", transform: "translateY(8px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "fade-in": {
+          "0%": { opacity: "0", transform: "translateY(6px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        shimmer: {
+          "100%": { transform: "translateX(100%)" },
+        },
+        "pulse-soft": {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.4" },
+        },
+      },
+      animation: {
+        "fade-in": "fade-in 240ms ease-out both",
+        "pulse-soft": "pulse-soft 1.8s ease-in-out infinite",
+      },
     },
   },
   plugins: [],
