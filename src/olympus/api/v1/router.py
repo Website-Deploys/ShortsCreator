@@ -21,6 +21,7 @@ from olympus.api.v1.routes import (
     system,
     uploads,
     virality,
+    workflow,
 )
 
 api_v1_router = APIRouter()
@@ -35,3 +36,5 @@ api_v1_router.include_router(planning.router)
 api_v1_router.include_router(editing.router)
 api_v1_router.include_router(rendering.router)
 api_v1_router.include_router(optimization.router)
+api_v1_router.include_router(workflow.router)
+api_v1_router.include_router(workflow.ops_router)

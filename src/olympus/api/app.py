@@ -22,6 +22,7 @@ from olympus.api.middleware import RequestContextMiddleware
 from olympus.api.v1.router import api_v1_router
 from olympus.data.database.engine import create_engine, dispose_engine
 from olympus.platform.config import Settings, get_settings
+from olympus.platform.config.settings import Environment
 from olympus.platform.errors import register_exception_handlers
 from olympus.platform.logging import configure_logging, get_logger
 
@@ -35,9 +36,31 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     log.info("api_startup", environment=settings.environment.value, version=__version__)
     create_engine(settings)
+    # Start the Workflow Engine's worker pool and recover any in-flight workflows
+    # after a restart. Skipped under TESTING so unit tests drive their own
+    # workflow service instances deterministically (no stray background pool).
+    workflow_started = False
+    if settings.environment is not Environment.TESTING:
+        try:
+            from olympus.api.dependencies import workflow_service_provider
+
+            service = workflow_service_provider()
+            await service.recover()
+            service.start_pool()
+            workflow_started = True
+            log.info("workflow_pool_started")
+        except Exception as exc:  # never let orchestration startup block the API
+            log.error("workflow_startup_error", error=str(exc))
     try:
         yield
     finally:
+        if workflow_started:
+            try:
+                from olympus.api.dependencies import workflow_service_provider
+
+                await workflow_service_provider().stop_pool()
+            except Exception as exc:
+                log.error("workflow_shutdown_error", error=str(exc))
         await dispose_engine()
         log.info("api_shutdown")
 

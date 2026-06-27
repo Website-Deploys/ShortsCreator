@@ -625,3 +625,149 @@ export interface RenderLogs {
     error: string | null;
   }[];
 }
+
+
+/* -------------------------------------------------------------------------- */
+/* Workflow Orchestration Engine - the central nervous system                 */
+/* -------------------------------------------------------------------------- */
+
+/** Honest lifecycle status of a single job (never fabricated). */
+export type JobStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "dead"
+  | "blocked";
+
+/** Overall status of a project's workflow. */
+export type WorkflowStatus =
+  | "pending"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+/** Worker health status. */
+export type WorkerStatus = "idle" | "busy" | "offline";
+
+/** A structured log line attached to a job. */
+export interface JobLogLine {
+  ts: string;
+  level: string;
+  message: string;
+}
+
+/** One orchestrated job, bound to a single engine stage. */
+export interface WorkflowJob {
+  job_id: string;
+  workflow_id: string;
+  project_id: string;
+  engine: string;
+  stage: string;
+  priority: number;
+  status: JobStatus;
+  depends_on: string[];
+  attempts: number;
+  max_attempts: number;
+  worker_id: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  available_at: string | null;
+  scheduled_for: string | null;
+  duration_ms: number | null;
+  error: string | null;
+  result: Record<string, unknown>;
+  logs: JobLogLine[];
+}
+
+/** An entry on the workflow's execution history / event stream. */
+export interface WorkflowEvent {
+  ts: string;
+  type: string;
+  message: string;
+  stage: string | null;
+  job_id: string | null;
+  detail: Record<string, unknown>;
+}
+
+/** The dependency DAG (nodes + edges) for the dashboard graph. */
+export interface ExecutionGraph {
+  nodes: {
+    stage: string;
+    engine: string;
+    label: string;
+    status: JobStatus;
+    attempts: number;
+    duration_ms: number | null;
+  }[];
+  edges: { from: string; to: string }[];
+}
+
+/** A project's complete, recoverable workflow state. */
+export interface Workflow {
+  workflow_id: string;
+  project_id: string;
+  status: WorkflowStatus;
+  created_at: string;
+  updated_at: string;
+  current_stage: string | null;
+  overall_progress: number;
+  completed_stages: string[];
+  failed_stages: string[];
+  pending_stages: string[];
+  estimated_remaining_seconds: number;
+  retry_count: number;
+  total_retries: number;
+  jobs: WorkflowJob[];
+  history: WorkflowEvent[];
+  execution_graph: ExecutionGraph;
+}
+
+/** A worker's registration and health snapshot. */
+export interface WorkflowWorker {
+  worker_id: string;
+  status: WorkerStatus;
+  registered_at: string | null;
+  last_heartbeat: string | null;
+  current_job_id: string | null;
+  jobs_completed: number;
+  jobs_failed: number;
+}
+
+export interface WorkersResponse {
+  workers: WorkflowWorker[];
+}
+
+/** Queue/scheduler snapshot. */
+export interface SchedulerStatus {
+  queue: {
+    ready: number;
+    running: number;
+    pending: number;
+    delayed: number;
+    completed: number;
+    failed: number;
+    dead: number;
+    blocked: number;
+    cancelled: number;
+    active_workflows: number;
+  };
+  pool_running: boolean;
+  worker_count: number;
+}
+
+export interface WorkflowHistoryResponse {
+  project_id: string;
+  history: WorkflowEvent[];
+}
+
+export interface JobLogsResponse {
+  project_id: string;
+  job_id: string;
+  logs: JobLogLine[];
+}
