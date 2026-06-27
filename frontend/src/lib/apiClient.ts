@@ -12,6 +12,10 @@ import type {
   Analysis,
   ApiError,
   CreateProjectInput,
+  PlanList,
+  Planning,
+  PlanningSummary,
+  PlanResponse,
   Project,
   Story,
   StorySummary,
@@ -112,6 +116,20 @@ export const api = {
     request<{ cancelled: boolean }>(`/projects/${id}/virality/cancel`, { method: "POST" }),
   getViralitySummary: (id: string) =>
     request<ViralitySummary>(`/projects/${id}/virality/summary`),
+
+  /* Clip Planner — editing blueprints. */
+  getPlanning: (id: string) => request<Planning>(`/projects/${id}/planning`),
+  runPlanning: (id: string) =>
+    request<Planning>(`/projects/${id}/planning/run`, { method: "POST" }),
+  rerunPlanningStage: (id: string, stage: string) =>
+    request<Planning>(`/projects/${id}/planning/stages/${stage}/rerun`, { method: "POST" }),
+  cancelPlanning: (id: string) =>
+    request<{ cancelled: boolean }>(`/projects/${id}/planning/cancel`, { method: "POST" }),
+  getPlanningSummary: (id: string) =>
+    request<PlanningSummary>(`/projects/${id}/planning/summary`),
+  listPlans: (id: string) => request<PlanList>(`/projects/${id}/planning/plans`),
+  getPlan: (id: string, planId: string) =>
+    request<PlanResponse>(`/projects/${id}/planning/plans/${planId}`),
 
   /** Upload a captured thumbnail frame (multipart; not JSON). */
   uploadThumbnail: async (id: string, blob: Blob): Promise<Project> => {

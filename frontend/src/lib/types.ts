@@ -229,3 +229,93 @@ export interface ViralitySummary {
   project_id: string;
   summary: Record<string, unknown>;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Clip Planner — editing blueprints                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Honest status of a single planning stage. `unavailable` means the stage lacked
+ * the evidence it needs (no upstream signals) — no clip is fabricated, and the
+ * reason is given. `failed` is reserved for genuine errors.
+ */
+export type PlanningStageStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "unavailable"
+  | "failed"
+  | "cancelled";
+
+/** Overall status of a project's clip planning. */
+export type PlanningStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+/** One planning stage and its honest result. */
+export interface PlanningStage {
+  stage: string;
+  label: string;
+  status: PlanningStageStatus;
+  version: string;
+  progress: number;
+  attempts: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  reason: string | null;
+  data: Record<string, unknown> | null;
+}
+
+/** A project's complete, evolving set of editing plans. */
+export interface Planning {
+  project_id: string;
+  pipeline_version: string;
+  status: PlanningStatus;
+  created_at: string;
+  updated_at: string;
+  completed_stages: number;
+  total_stages: number;
+  stages: PlanningStage[];
+}
+
+/**
+ * One editing plan (a future Short). The blueprint is rich and evolving, so it
+ * is kept as a loose record; `lib/planning.ts` parses the parts the UI renders.
+ */
+export interface ClipPlan {
+  id: string;
+  rank?: number;
+  start: number;
+  end: number;
+  duration: number;
+  start_frame?: number | null;
+  end_frame?: number | null;
+  fps?: number | null;
+  quality_score: number;
+  confidence: number;
+  source?: string;
+  explanation?: string;
+  scores: Record<string, number>;
+  evidence: Record<string, unknown>[];
+  alternatives: Record<string, unknown>[];
+  source_video?: { filename?: string; storage_key?: string };
+  blueprint: Record<string, unknown>;
+}
+
+/** The full ranked plans (each with its complete blueprint). */
+export interface PlanList {
+  project_id: string;
+  plan_count: number;
+  plans: ClipPlan[];
+}
+
+/** A single full editing plan. */
+export interface PlanResponse {
+  project_id: string;
+  plan: ClipPlan;
+}
+
+/** The aggregated planning summary (Planning Summary stage output). */
+export interface PlanningSummary {
+  project_id: string;
+  summary: Record<string, unknown>;
+}

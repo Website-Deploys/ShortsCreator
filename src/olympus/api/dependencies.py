@@ -23,6 +23,7 @@ from olympus.ai import build_transcription_provider
 from olympus.data.database.session import get_session
 from olympus.data.repositories import (
     StorageAnalysisRepository,
+    StoragePlanningRepository,
     StorageProjectRepository,
     StorageStoryRepository,
     StorageViralityRepository,
@@ -33,6 +34,7 @@ from olympus.platform.config import Settings, get_settings
 from olympus.rendering import build_renderer
 from olympus.services.analysis import AnalysisService
 from olympus.services.intake import IntakeService
+from olympus.services.planning import ClipPlannerService
 from olympus.services.projects import ProjectService
 from olympus.services.story import StoryService
 from olympus.services.virality import ViralityService
@@ -82,21 +84,46 @@ def project_service_provider() -> ProjectService:
     return ProjectService(StorageProjectRepository(storage), storage)
 
 
-def virality_service_provider() -> ViralityService:
-    """Provide the virality service (the Virality Engine's application boundary).
+def planning_service_provider() -> ClipPlannerService:
+    """Provide the clip-planner service (the Clip Planner's application boundary).
 
-    Wired to the configured storage; reads the Cognitive Engine's and Story
-    Engine's outputs as its only inputs. The in-flight run registry lives in the
+    Wired to the configured storage; reads the Cognitive, Story, and Virality
+    engines' outputs as its only inputs. The in-flight run registry lives in the
     service module (process-wide), so per-request instances coordinate correctly.
     """
 
     storage = build_storage()
+    return ClipPlannerService(
+        planning_repo=StoragePlanningRepository(storage),
+        virality_repo=StorageViralityRepository(storage),
+        story_repo=StorageStoryRepository(storage),
+        analysis_repo=StorageAnalysisRepository(storage),
+        project_repo=StorageProjectRepository(storage),
+        storage=storage,
+    )
+
+
+def virality_service_provider() -> ViralityService:
+    """Provide the virality service (the Virality Engine's application boundary).
+
+    Wired to the configured storage; reads the Cognitive Engine's and Story
+    Engine's outputs as its only inputs. Its completion hook automatically begins
+    Clip Planning once the Virality Engine finishes, chaining the layers without
+    coupling them.
+    """
+
+    storage = build_storage()
+
+    async def _start_planning(project: object, _virality: object) -> None:
+        await planning_service_provider().start(project)  # type: ignore[arg-type]
+
     return ViralityService(
         virality_repo=StorageViralityRepository(storage),
         story_repo=StorageStoryRepository(storage),
         analysis_repo=StorageAnalysisRepository(storage),
         project_repo=StorageProjectRepository(storage),
         storage=storage,
+        on_complete=_start_planning,
     )
 
 
@@ -158,3 +185,4 @@ ProjectServiceDep = Annotated[ProjectService, Depends(project_service_provider)]
 AnalysisServiceDep = Annotated[AnalysisService, Depends(analysis_service_provider)]
 StoryServiceDep = Annotated[StoryService, Depends(story_service_provider)]
 ViralityServiceDep = Annotated[ViralityService, Depends(virality_service_provider)]
+ClipPlannerServiceDep = Annotated[ClipPlannerService, Depends(planning_service_provider)]
