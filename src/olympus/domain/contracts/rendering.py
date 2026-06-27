@@ -18,6 +18,8 @@ import abc
 from dataclasses import dataclass
 from typing import Any
 
+from olympus.domain.entities.rendering import RenderManifest
+
 
 @dataclass(slots=True)
 class RenderRequest:
@@ -53,3 +55,24 @@ class Renderer(abc.ABC):
         Raises :class:`olympus.platform.errors.ExternalServiceError` (or a
         rendering-specific error) on failure.
         """
+
+
+
+class RenderManifestRepository(abc.ABC):
+    """Read access to a project's render manifest (the Rendering Engine output).
+
+    This is the boundary the Optimization Engine uses to discover the finished
+    MP4s it should optimize. It is intentionally read-only here: the Optimization
+    Engine never produces or mutates renders, it only consumes what the Rendering
+    Engine durably published. A future Rendering Engine writes the manifest; a
+    storage-backed adapter reads it behind this contract, and a database-backed
+    one can replace it later without touching the Optimization Engine.
+
+    ``load`` returns ``None`` when no manifest exists (the Rendering Engine has
+    not run for this project) - the honest signal that there is nothing rendered
+    to optimize yet.
+    """
+
+    @abc.abstractmethod
+    async def load(self, project_id: str) -> RenderManifest | None:
+        """Load the project's render manifest, or ``None`` if none exists."""

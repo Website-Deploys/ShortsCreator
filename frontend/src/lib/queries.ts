@@ -13,9 +13,12 @@ import type {
   Analysis,
   CreateProjectInput,
   Editing,
-  PlanList,
+  Optimization,
+  PackageList,
   Planning,
+  PlanList,
   Project,
+  QualityReport,
   Story,
   TimelineList,
   Virality,
@@ -32,6 +35,11 @@ export const queryKeys = {
   plans: (id: string) => ["projects", id, "plans"] as const,
   editing: (id: string) => ["projects", id, "editing"] as const,
   timelines: (id: string) => ["projects", id, "timelines"] as const,
+  optimization: (id: string) => ["projects", id, "optimization"] as const,
+  quality: (id: string) => ["projects", id, "quality"] as const,
+  variants: (id: string) => ["projects", id, "variants"] as const,
+  music: (id: string) => ["projects", id, "music"] as const,
+  packages: (id: string) => ["projects", id, "packages"] as const,
 };
 
 const TERMINAL: ReadonlySet<string> = new Set(["analyzed", "complete", "failed"]);
@@ -452,6 +460,105 @@ export function useCancelEditing(id: string) {
     mutationFn: () => api.cancelEditing(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.editing(id) });
+    },
+  });
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Optimization Engine — post-render polish                                   */
+/* -------------------------------------------------------------------------- */
+
+const OPTIMIZATION_TERMINAL: ReadonlySet<string> = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * A project's optimization analysis. Polls while the pipeline is still running
+ * (or while it hasn't started yet), then settles at a terminal state. Returns
+ * `null` when no optimization analysis exists yet (HTTP 404) — unlike the
+ * earlier engines, optimization is started explicitly (it needs a render first),
+ * so `null` is the common, honest "not started" state.
+ */
+export function useOptimization(id: string) {
+  return useQuery({
+    queryKey: queryKeys.optimization(id),
+    queryFn: async (): Promise<Optimization | null> => {
+      try {
+        return await api.getOptimization(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false; // not started — do not poll until explicitly run
+      return OPTIMIZATION_TERMINAL.has(data.status) ? false : 2000;
+    },
+  });
+}
+
+/** The quality evaluation report (available once optimization is terminal). */
+export function useQualityReport(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.quality(id),
+    enabled,
+    queryFn: async (): Promise<QualityReport | null> => {
+      try {
+        return await api.getQualityReport(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+  });
+}
+
+/** The publish packages (available once optimization is terminal). */
+export function usePackages(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.packages(id),
+    enabled,
+    queryFn: async (): Promise<PackageList | null> => {
+      try {
+        return await api.listPackages(id);
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) return null;
+        throw err;
+      }
+    },
+  });
+}
+
+/** Start (or resume) the optimization pipeline. */
+export function useRunOptimization(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.runOptimization(id),
+    onSuccess: (optimization: Optimization) =>
+      qc.setQueryData(queryKeys.optimization(id), optimization),
+  });
+}
+
+/** Re-run a single optimization stage in isolation. */
+export function useRerunOptimizationStage(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (stage: string) => api.rerunOptimizationStage(id, stage),
+    onSuccess: (optimization: Optimization) => {
+      qc.setQueryData(queryKeys.optimization(id), optimization);
+      void qc.invalidateQueries({ queryKey: queryKeys.quality(id) });
+      void qc.invalidateQueries({ queryKey: queryKeys.packages(id) });
+    },
+  });
+}
+
+/** Request cancellation of an in-flight optimization run. */
+export function useCancelOptimization(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.cancelOptimization(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.optimization(id) });
     },
   });
 }
