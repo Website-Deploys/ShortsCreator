@@ -24,8 +24,10 @@ from olympus.data.database.session import get_session
 from olympus.data.repositories import (
     StorageAnalysisRepository,
     StorageEditingRepository,
+    StorageOptimizationRepository,
     StoragePlanningRepository,
     StorageProjectRepository,
+    StorageRenderManifestRepository,
     StorageStoryRepository,
     StorageViralityRepository,
 )
@@ -36,6 +38,7 @@ from olympus.rendering import build_renderer
 from olympus.services.analysis import AnalysisService
 from olympus.services.editing import EditingService
 from olympus.services.intake import IntakeService
+from olympus.services.optimization import OptimizationService
 from olympus.services.planning import ClipPlannerService
 from olympus.services.projects import ProjectService
 from olympus.services.story import StoryService
@@ -97,6 +100,35 @@ def editing_service_provider() -> EditingService:
 
     storage = build_storage()
     return EditingService(
+        editing_repo=StorageEditingRepository(storage),
+        planning_repo=StoragePlanningRepository(storage),
+        virality_repo=StorageViralityRepository(storage),
+        story_repo=StorageStoryRepository(storage),
+        analysis_repo=StorageAnalysisRepository(storage),
+        project_repo=StorageProjectRepository(storage),
+        storage=storage,
+    )
+
+
+def optimization_service_provider() -> OptimizationService:
+    """Provide the optimization service (the Optimization Engine's boundary).
+
+    Wired to the configured storage; reads the Rendering Engine's render manifest
+    plus the Cognitive, Story, Virality, Clip Planner, and Editing outputs as its
+    only inputs. It is fully additive and never modifies any of them.
+
+    Note on chaining: this engine intentionally does *not* auto-start after the
+    Editing Engine, because the Rendering Engine must produce a real MP4 between
+    them. It is started explicitly via the API, or - in a future deployment - by
+    the Rendering Engine's own ``on_complete`` hook once that engine exists. The
+    in-flight run registry lives in the service module (process-wide), so
+    per-request instances coordinate correctly. It renders and encodes nothing.
+    """
+
+    storage = build_storage()
+    return OptimizationService(
+        optimization_repo=StorageOptimizationRepository(storage),
+        render_repo=StorageRenderManifestRepository(storage),
         editing_repo=StorageEditingRepository(storage),
         planning_repo=StoragePlanningRepository(storage),
         virality_repo=StorageViralityRepository(storage),
@@ -217,3 +249,4 @@ StoryServiceDep = Annotated[StoryService, Depends(story_service_provider)]
 ViralityServiceDep = Annotated[ViralityService, Depends(virality_service_provider)]
 ClipPlannerServiceDep = Annotated[ClipPlannerService, Depends(planning_service_provider)]
 EditingServiceDep = Annotated[EditingService, Depends(editing_service_provider)]
+OptimizationServiceDep = Annotated[OptimizationService, Depends(optimization_service_provider)]

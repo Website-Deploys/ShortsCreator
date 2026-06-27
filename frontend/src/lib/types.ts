@@ -427,3 +427,100 @@ export interface ValidationReport {
   };
 }
 
+
+
+/* -------------------------------------------------------------------------- */
+/* Optimization Engine — post-render polish                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Honest status of a single optimization stage. `unavailable` means the stage
+ * lacked the rendered media or an enhancement model it needs — no enhancement is
+ * fabricated, and the reason is given. `failed` is reserved for genuine errors.
+ */
+export type OptimizationStageStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "unavailable"
+  | "failed"
+  | "cancelled";
+
+/** Overall status of a project's optimization analysis. */
+export type OptimizationStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+/** One optimization stage and its honest result. */
+export interface OptimizationStage {
+  stage: string;
+  label: string;
+  status: OptimizationStageStatus;
+  version: string;
+  progress: number;
+  attempts: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  reason: string | null;
+  data: Record<string, unknown> | null;
+}
+
+/** A project's complete, evolving optimization result. */
+export interface Optimization {
+  project_id: string;
+  pipeline_version: string;
+  status: OptimizationStatus;
+  created_at: string;
+  updated_at: string;
+  completed_stages: number;
+  total_stages: number;
+  stages: OptimizationStage[];
+}
+
+/** The per-clip quality evaluation (graded dimensions + honest UNKNOWNs). */
+export interface QualityReport {
+  project_id: string;
+  report: Record<string, unknown>;
+}
+
+/** The generated export variants per clip. */
+export interface VariantList {
+  project_id: string;
+  variants: Record<string, unknown>;
+}
+
+/** Copyright-free music recommendations + provider availability. */
+export interface MusicRecommendations {
+  project_id: string;
+  music: Record<string, unknown>;
+}
+
+/** One downloadable (or honestly-unavailable) asset in a publish package. */
+export interface PackageAsset {
+  kind: string;
+  status: "available" | "unavailable";
+  storage_key?: string;
+  reason?: string;
+  note?: string;
+}
+
+/** A single clip's publish package. */
+export interface PublishPackage {
+  clip_id: string;
+  title?: string;
+  assets: PackageAsset[];
+  available_assets: string[];
+  complete: boolean;
+}
+
+/** All publish packages for a project. */
+export interface PackageList {
+  project_id: string;
+  package_count: number;
+  packages: PublishPackage[];
+}
+
+/** A single clip's publish package. */
+export interface PackageResponse {
+  project_id: string;
+  package: PublishPackage;
+}

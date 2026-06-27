@@ -13,6 +13,7 @@ from olympus.api.v1.routes import (
     analysis,
     editing,
     health,
+    optimization,
     planning,
     projects,
     story,
@@ -31,3 +32,4 @@ api_v1_router.include_router(story.router)
 api_v1_router.include_router(virality.router)
 api_v1_router.include_router(planning.router)
 api_v1_router.include_router(editing.router)
+api_v1_router.include_router(optimization.router)

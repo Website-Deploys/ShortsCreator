@@ -3,7 +3,7 @@
 /**
  * The Project Workspace - a spacious, sectioned creator workspace.
  *
- * Loads the project from the backend (survives refresh). Six tabs:
+ * Loads the project from the backend (survives refresh). Seven tabs:
  *   Overview  -> video player, the Cognitive Engine's progress, the (honest,
  *                future) editing pipeline, and Shorts.
  *   Analysis  -> read-only viewer of what Olympus understands (transcript,
@@ -14,6 +14,9 @@
  *   Clip Planner -> ranked editing plans (blueprints) - what to edit, never how.
  *   Editing   -> non-destructive multi-track edit timelines assembled from
  *                approved clips, every decision explained with confidence.
+ *   Optimization -> post-render polish (audio, captions, music, visuals,
+ *                thumbnails, quality, variants, exports) - honest UNAVAILABLE
+ *                when a render or model is absent.
  * Honest throughout: no fabricated processing or results.
  */
 import { useState } from "react";
@@ -29,6 +32,7 @@ import {
   BrainIcon,
   FilmIcon,
   ScissorsIcon,
+  SlidersIcon,
   SpinnerIcon,
   ZapIcon,
 } from "@/components/icons";
@@ -49,6 +53,8 @@ import { ClipPlannerStages } from "@/components/project/ClipPlannerStages";
 import { ClipPlannerView } from "@/components/project/ClipPlannerView";
 import { EditingStages } from "@/components/project/EditingStages";
 import { EditingView } from "@/components/project/EditingView";
+import { OptimizationStages } from "@/components/project/OptimizationStages";
+import { OptimizationView } from "@/components/project/OptimizationView";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -59,14 +65,23 @@ import { parseSummary } from "@/lib/virality";
 import {
   useAnalysis,
   useEditing,
+  useOptimization,
   useProject,
   usePlanning,
+  useRunOptimization,
   useStory,
   useVirality,
 } from "@/lib/queries";
 import type { Project } from "@/lib/types";
 
-type Tab = "overview" | "analysis" | "story" | "virality" | "clip-planner" | "editing";
+type Tab =
+  | "overview"
+  | "analysis"
+  | "story"
+  | "virality"
+  | "clip-planner"
+  | "editing"
+  | "optimization";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -82,6 +97,7 @@ function Tabs({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void 
     { id: "virality", label: "Virality" },
     { id: "clip-planner", label: "Clip Planner" },
     { id: "editing", label: "Editing" },
+    { id: "optimization", label: "Optimization" },
   ];
   return (
     <div className="mt-6 flex gap-1 border-b border-white/10" role="tablist">
@@ -112,6 +128,8 @@ function ProjectWorkspace({ project }: { project: Project }) {
   const viralitySummary = virality ? parseSummary(virality) : null;
   const { data: planning, isLoading: planningLoading } = usePlanning(project.id);
   const { data: editing, isLoading: editingLoading } = useEditing(project.id);
+  const { data: optimization, isLoading: optimizationLoading } = useOptimization(project.id);
+  const runOptimization = useRunOptimization(project.id);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8 animate-fade-in">
@@ -304,6 +322,45 @@ function ProjectWorkspace({ project }: { project: Project }) {
                     icon={<FilmIcon className="h-6 w-6" />}
                     title="Editing hasn't started yet"
                     description="The Editing Engine begins automatically once the Clip Planner completes. It assembles non-destructive edit timelines from approved clips — it never renders or exports video."
+                  />
+                )
+              )}
+            </div>
+          )}
+
+          {tab === "optimization" && (
+            <div className="space-y-10">
+              <section>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <SectionTitle>Optimization pipeline</SectionTitle>
+                  {!optimization && !optimizationLoading && (
+                    <Button
+                      onClick={() => runOptimization.mutate()}
+                      disabled={runOptimization.isPending}
+                    >
+                      {runOptimization.isPending ? "Starting…" : "Run optimization"}
+                    </Button>
+                  )}
+                </div>
+                <Card>
+                  <OptimizationStages
+                    optimization={optimization}
+                    isLoading={optimizationLoading}
+                  />
+                </Card>
+              </section>
+
+              {optimization ? (
+                <section>
+                  <SectionTitle>Optimized output</SectionTitle>
+                  <OptimizationView optimization={optimization} />
+                </section>
+              ) : (
+                !optimizationLoading && (
+                  <EmptyState
+                    icon={<SlidersIcon className="h-6 w-6" />}
+                    title="Optimization hasn't run yet"
+                    description="The Optimization Engine polishes a finished render — enhancing audio, captions, visuals, music, thumbnails, and exports. It runs after the Rendering Engine produces an MP4; start it with “Run optimization”. Where a render or model is absent, it reports honestly rather than fabricating results."
                   />
                 )
               )}

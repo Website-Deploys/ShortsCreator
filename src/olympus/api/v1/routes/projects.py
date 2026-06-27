@@ -20,6 +20,7 @@ from olympus.api.dependencies import (
     AnalysisServiceDep,
     ClipPlannerServiceDep,
     EditingServiceDep,
+    OptimizationServiceDep,
     ProjectServiceDep,
     StorageDep,
     StoryServiceDep,
@@ -109,9 +110,11 @@ async def delete_project(
     virality: ViralityServiceDep,
     planning: ClipPlannerServiceDep,
     editing: EditingServiceDep,
+    optimization: OptimizationServiceDep,
 ) -> Response:
     """Delete a project, its stored artifacts, and all engine analyses."""
 
+    await optimization.delete(project_id)
     await editing.delete(project_id)
     await planning.delete(project_id)
     await virality.delete(project_id)

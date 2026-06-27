@@ -13,11 +13,16 @@ import type {
   ApiError,
   CreateProjectInput,
   Editing,
+  MusicRecommendations,
+  Optimization,
+  PackageList,
+  PackageResponse,
   PlanList,
   Planning,
   PlanningSummary,
   PlanResponse,
   Project,
+  QualityReport,
   Story,
   StorySummary,
   SystemInfo,
@@ -25,6 +30,7 @@ import type {
   TimelineEvent,
   TimelineList,
   ValidationReport,
+  VariantList,
   Virality,
   ViralitySummary,
 } from "@/lib/types";
@@ -156,6 +162,25 @@ export const api = {
   getValidationReport: (id: string) =>
     request<ValidationReport>(`/projects/${id}/editing/validation`),
 
+  /* Optimization Engine — post-render polish. */
+  getOptimization: (id: string) => request<Optimization>(`/projects/${id}/optimization`),
+  runOptimization: (id: string) =>
+    request<Optimization>(`/projects/${id}/optimization/run`, { method: "POST" }),
+  rerunOptimizationStage: (id: string, stage: string) =>
+    request<Optimization>(`/projects/${id}/optimization/stages/${stage}/rerun`, {
+      method: "POST",
+    }),
+  cancelOptimization: (id: string) =>
+    request<{ cancelled: boolean }>(`/projects/${id}/optimization/cancel`, { method: "POST" }),
+  getQualityReport: (id: string) =>
+    request<QualityReport>(`/projects/${id}/optimization/quality`),
+  getVariants: (id: string) => request<VariantList>(`/projects/${id}/optimization/variants`),
+  getMusicRecommendations: (id: string) =>
+    request<MusicRecommendations>(`/projects/${id}/optimization/music`),
+  listPackages: (id: string) => request<PackageList>(`/projects/${id}/optimization/packages`),
+  getPackage: (id: string, clipId: string) =>
+    request<PackageResponse>(`/projects/${id}/optimization/packages/${clipId}`),
+
   /** Upload a captured thumbnail frame (multipart; not JSON). */
   uploadThumbnail: async (id: string, blob: Blob): Promise<Project> => {
     const form = new FormData();
@@ -176,4 +201,9 @@ export const mediaUrls = {
   source: (id: string) => `${API_V1}/projects/${id}/source`,
   download: (id: string) => `${API_V1}/projects/${id}/source?download=true`,
   thumbnail: (id: string) => `${API_V1}/projects/${id}/thumbnail`,
+  /** Download a publish-package asset (metadata / captions / mp4) by kind. */
+  packageAsset: (id: string, clipId: string, kind: string) =>
+    `${API_V1}/projects/${id}/optimization/packages/${clipId}/assets/${kind}`,
+  packageMetadata: (id: string, clipId: string) =>
+    `${API_V1}/projects/${id}/optimization/packages/${clipId}/metadata`,
 };
