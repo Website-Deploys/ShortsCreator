@@ -771,3 +771,167 @@ export interface JobLogsResponse {
   job_id: string;
   logs: JobLogLine[];
 }
+
+
+/* -------------------------------------------------------------------------- */
+/* Project Management & Asset Library                                         */
+/* -------------------------------------------------------------------------- */
+
+/** Global dashboard statistics across everything Olympus has produced. */
+export interface LibraryDashboard {
+  total_projects: number;
+  videos_processed: number;
+  minutes_analyzed: number;
+  clips_generated: number;
+  renders_completed: number;
+  exports: number;
+  average_viral_score: number | null;
+  storage_bytes: number;
+  archived_projects: number;
+}
+
+export type AssetKind = "source_video" | "clip" | "render" | "export" | "thumbnail";
+
+/** One managed asset in the asset library. */
+export interface LibraryAsset {
+  id: string;
+  project_id: string;
+  project_name: string;
+  kind: AssetKind;
+  name: string;
+  created_at: string | null;
+  storage_key: string | null;
+  size_bytes: number | null;
+  content_type: string | null;
+  tags: string[];
+  favorite: boolean;
+  archived: boolean;
+  metadata: Record<string, unknown>;
+}
+
+/** One clip Olympus produced, with its real per-clip facts. */
+export interface LibraryClip {
+  clip_id: string;
+  project_id: string;
+  project_name: string;
+  title: string;
+  duration: number | null;
+  viral_score: number | null;
+  platform: string | null;
+  status: string;
+  thumbnail_key: string | null;
+  render_version: string | null;
+  created_at: string | null;
+  tags: string[];
+  favorite: boolean;
+}
+
+/** One rendered export, with the renderer's real measured media facts. */
+export interface LibraryExport {
+  id: string;
+  project_id: string;
+  project_name: string;
+  clip_id: string;
+  platform: string | null;
+  resolution: string | null;
+  codec: string | null;
+  bitrate_kbps: number | null;
+  file_size: number | null;
+  render_time_ms: number | null;
+  download_status: string;
+  storage_key: string | null;
+  checksum: string | null;
+  created_at: string | null;
+}
+
+/** One activity-feed event. */
+export interface LibraryActivityEvent {
+  id: string;
+  ts: string;
+  type: string;
+  message: string;
+  project_id: string | null;
+  detail: Record<string, unknown>;
+}
+
+/** Per-project storage consumption broken down by namespace. */
+export interface StorageBreakdown {
+  project_id: string;
+  project_name: string;
+  namespaces: Record<string, number>;
+  total: number;
+}
+
+/** A captured version snapshot of one engine's output. */
+export interface LibraryVersion {
+  project_id: string;
+  engine: string;
+  version: number;
+  created_at: string;
+  checksum: string;
+  status: string | null;
+  summary: Record<string, unknown>;
+}
+
+/** One global-search hit. */
+export interface LibrarySearchHit {
+  kind: string;
+  id: string;
+  project_id: string;
+  title: string;
+  subtitle: string;
+  detail: Record<string, unknown>;
+}
+
+export interface AssetsResponse {
+  count: number;
+  assets: LibraryAsset[];
+}
+export interface ClipsResponse {
+  count: number;
+  clips: LibraryClip[];
+}
+export interface ExportsResponse {
+  count: number;
+  exports: LibraryExport[];
+}
+export interface ActivityFeedResponse {
+  count: number;
+  events: LibraryActivityEvent[];
+}
+export interface SearchResponse {
+  query: string;
+  count: number;
+  hits: LibrarySearchHit[];
+}
+export interface StorageResponse {
+  total_bytes: number;
+  breakdowns: StorageBreakdown[];
+}
+export interface VersionEnginesResponse {
+  project_id: string;
+  engines: string[];
+}
+export interface VersionsResponse {
+  project_id: string;
+  engine: string;
+  versions: LibraryVersion[];
+}
+export interface CleanupResultResponse {
+  result: {
+    operation: string;
+    deleted_count: number;
+    deleted_keys: string[];
+    freed_bytes: number;
+    note: string;
+  };
+}
+export interface LibraryMetaResponse {
+  meta: {
+    project_id: string;
+    archived: boolean;
+    favorite: boolean;
+    tags: string[];
+    assets: Record<string, unknown>;
+  };
+}

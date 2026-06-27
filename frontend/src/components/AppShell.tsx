@@ -11,6 +11,7 @@ import type { ReactNode } from "react";
 
 import {
   FolderIcon,
+  LayersIcon,
   PlusIcon,
   SettingsIcon,
   UserIcon,
@@ -23,6 +24,7 @@ import { useProjects, useSystemInfo } from "@/lib/queries";
 const NAV = [
   { href: "/", label: "New Upload", icon: PlusIcon },
   { href: "/projects", label: "Projects", icon: FolderIcon },
+  { href: "/library", label: "Library", icon: LayersIcon },
 ];
 
 function Brand() {
