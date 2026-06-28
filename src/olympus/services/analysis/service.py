@@ -28,6 +28,7 @@ from olympus.domain.entities.analysis import STAGE_ORDER, Analysis, AnalysisStat
 from olympus.domain.entities.project import Project, ProjectStatus
 from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.platform.logging import get_logger
+from olympus.services.runs import begin_or_reuse_run
 from olympus.utils import project_write_lock, utc_now
 
 log = get_logger(__name__)
@@ -83,17 +84,20 @@ class AnalysisService:
         currently stands (freshly initialized to ``RUNNING`` on a new start).
         """
 
-        if project.id in _RUNS and not restart and _RUNS[project.id].task is not None:
-            existing = await self._analysis_repo.load(project.id)
-            if existing is not None:
-                return existing
-
-        run = _Run()
-        _RUNS[project.id] = run
+        existing, _run = await begin_or_reuse_run(
+            scope="analysis",
+            project_id=project.id,
+            runs=_RUNS,
+            make_run=_Run,
+            loader=lambda: self._analysis_repo.load(project.id),
+            spawn=lambda r: asyncio.create_task(self._run(project, r)),
+            restart=restart,
+        )
+        if existing is not None:
+            return existing
 
         await self._set_project_status(project.id, ProjectStatus.ANALYZING)
 
-        run.task = asyncio.create_task(self._run(project, run))
         # Yield once so the task starts and the index exists before we return.
         await asyncio.sleep(0)
         analysis = await self._analysis_repo.load(project.id)

@@ -31,6 +31,7 @@ from olympus.domain.entities.project import Project
 from olympus.planning import ClipPlanningPipeline, build_default_planning_analyzers
 from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.platform.logging import get_logger
+from olympus.services.runs import begin_or_reuse_run
 
 log = get_logger(__name__)
 
@@ -83,14 +84,17 @@ class ClipPlannerService:
     async def start(self, project: Project, *, restart: bool = False) -> ClipPlanningAnalysis:
         """Begin (or resume) clip planning for ``project`` as a background task."""
 
-        if project.id in _RUNS and not restart and _RUNS[project.id].task is not None:
-            existing = await self._planning_repo.load(project.id)
-            if existing is not None:
-                return existing
-
-        run = _Run()
-        _RUNS[project.id] = run
-        run.task = asyncio.create_task(self._run(project, run))
+        existing, _run = await begin_or_reuse_run(
+            scope="planning",
+            project_id=project.id,
+            runs=_RUNS,
+            make_run=_Run,
+            loader=lambda: self._planning_repo.load(project.id),
+            spawn=lambda r: asyncio.create_task(self._run(project, r)),
+            restart=restart,
+        )
+        if existing is not None:
+            return existing
         await asyncio.sleep(0)  # let the task persist its initial index
         planning = await self._planning_repo.load(project.id)
         if planning is not None:
