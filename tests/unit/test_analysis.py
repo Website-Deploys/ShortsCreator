@@ -658,3 +658,27 @@ async def test_delete_drains_inflight_run_then_removes_artifacts(storage: LocalS
     assert await service.get_analysis(project.id) is None
     # The on-disk analysis directory must be gone (no orphan).
     assert not (Path(storage._root) / "analysis" / project.id).exists()  # type: ignore[attr-defined]
+
+
+
+async def test_audio_extraction_degrades_on_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A long/slow source that exceeds the FFmpeg time limit degrades to
+    UNAVAILABLE (not FAILED), so the analysis still completes and the chain is
+    not blocked or retried wastefully."""
+
+    from olympus.analysis import analyzers
+
+    monkeypatch.setattr(analyzers.shutil, "which", lambda binary: f"/usr/bin/{binary}")
+
+    async def timing_out_run(*args: str, timeout: float = 120.0) -> tuple[int, bytes, bytes]:
+        raise TimeoutError("ffmpeg timed out")
+
+    monkeypatch.setattr(analyzers, "_run", timing_out_run)
+    store = LocalStorage(root=str(tmp_path))
+    ctx = await _audio_ctx(store)
+
+    outcome = await analyzers.AudioExtractionAnalyzer().analyze(ctx, lambda _v: None)
+    assert outcome.status is StageStatus.UNAVAILABLE
+    assert "time limit" in (outcome.reason or "")

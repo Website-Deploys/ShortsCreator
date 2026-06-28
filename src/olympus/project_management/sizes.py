@@ -8,6 +8,7 @@ media files into memory or fabricating a number - honest by construction.
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 from olympus.domain.contracts.storage import StoragePort
@@ -33,13 +34,21 @@ async def measure_prefix(
     Keys whose path starts with any entry in ``exclude`` are skipped (used to keep
     nested namespaces - e.g. export packages within optimization - from being
     double-counted).
+
+    The per-object ``stat`` loop is run on a worker thread so summing a large
+    storage tree never blocks the event loop.
     """
 
-    total = 0
-    for key in await storage.list_keys(prefix):
-        if any(key.startswith(ex) for ex in exclude):
-            continue
-        size = size_of(storage, key)
-        if size is not None:
-            total += size
-    return total
+    keys = await storage.list_keys(prefix)
+
+    def _sum() -> int:
+        total = 0
+        for key in keys:
+            if any(key.startswith(ex) for ex in exclude):
+                continue
+            size = size_of(storage, key)
+            if size is not None:
+                total += size
+        return total
+
+    return await asyncio.to_thread(_sum)

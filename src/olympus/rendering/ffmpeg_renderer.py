@@ -38,6 +38,13 @@ log = get_logger(__name__)
 
 _MAX_LOG_LINES = 40
 
+# Bounded execution timeouts so a hung or runaway FFmpeg can never block a worker
+# forever (the worker's heartbeat keepalive would otherwise mask the stall, so the
+# health monitor would never recover it). On timeout ``subprocess.run`` kills the
+# child process, preventing a zombie FFmpeg.
+_RENDER_TIMEOUT_SECONDS = 1800.0
+_PROBE_TIMEOUT_SECONDS = 60.0
+
 
 class FfmpegClipRenderer(ClipRenderer):
     """Render a clip's timeline to a real MP4 via FFmpeg."""
@@ -92,7 +99,7 @@ class FfmpegClipRenderer(ClipRenderer):
                     details={"clip_id": spec.clip_id},
                 )
 
-            data = output_path.read_bytes()
+            data = await asyncio.to_thread(output_path.read_bytes)
             await storage.put(spec.output_key, data, content_type="video/mp4")
             probe = await self._probe(output_path)
             return self._build_output(spec, data, probe, logs)
@@ -112,7 +119,7 @@ class FfmpegClipRenderer(ClipRenderer):
             )
         data = await storage.get(source_key)
         dest = tmp_dir / "source"
-        dest.write_bytes(data)
+        await asyncio.to_thread(dest.write_bytes, data)
         return dest
 
     def _write_srt(self, timeline: dict[str, Any], tmp_dir: Path) -> Path | None:
@@ -131,9 +138,20 @@ class FfmpegClipRenderer(ClipRenderer):
         # event loops without subprocess support (e.g. a Windows
         # SelectorEventLoop). The threaded path works on every platform/loop.
         def _exec() -> subprocess.CompletedProcess[bytes]:
-            return subprocess.run(list(args), capture_output=True, check=False)
+            return subprocess.run(
+                list(args), capture_output=True, check=False, timeout=_RENDER_TIMEOUT_SECONDS
+            )
 
-        completed = await asyncio.to_thread(_exec)
+        try:
+            completed = await asyncio.to_thread(_exec)
+        except subprocess.TimeoutExpired as exc:
+            # subprocess.run has already killed the child here, so no FFmpeg
+            # process is left running.
+            raise ExternalServiceError(
+                f"{label} timed out after {_RENDER_TIMEOUT_SECONDS:.0f}s and was terminated.",
+                code="render_timeout",
+                details={"timeout_seconds": _RENDER_TIMEOUT_SECONDS, "arg0": args[0]},
+            ) from exc
         tail = (completed.stderr or b"").decode("utf-8", "replace").splitlines()[-_MAX_LOG_LINES:]
         if completed.returncode != 0:
             raise ExternalServiceError(
@@ -149,9 +167,15 @@ class FfmpegClipRenderer(ClipRenderer):
         args = C.build_ffprobe_command(binary=self._ffprobe, path=str(path))
 
         def _exec() -> subprocess.CompletedProcess[bytes]:
-            return subprocess.run(list(args), capture_output=True, check=False)
+            return subprocess.run(
+                list(args), capture_output=True, check=False, timeout=_PROBE_TIMEOUT_SECONDS
+            )
 
-        completed = await asyncio.to_thread(_exec)
+        try:
+            completed = await asyncio.to_thread(_exec)
+        except subprocess.TimeoutExpired:
+            log.warning("ffprobe_timeout", path=str(path), timeout_seconds=_PROBE_TIMEOUT_SECONDS)
+            return {}
         if completed.returncode != 0:
             return {}
         try:

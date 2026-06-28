@@ -86,3 +86,41 @@ async def test_delete_prunes_empty_parent_dirs_but_preserves_siblings(tmp_path: 
     assert not (tmp_path / "analysis" / "p1").exists()  # pruned
     assert (tmp_path / "analysis" / "p2" / "index.json").exists()  # sibling kept
     assert tmp_path.exists()  # root never removed
+
+
+
+async def test_put_stream_cleans_up_partial_on_producer_error(tmp_path: Path) -> None:
+    """An interrupted/cancelled upload (producer raises mid-stream) must not leave
+    an orphaned partial file behind, and the original error must propagate."""
+
+    storage = LocalStorage(root=str(tmp_path))
+
+    class _BoomError(RuntimeError):
+        pass
+
+    async def _chunks():
+        yield b"first-chunk-"
+        raise _BoomError("client disconnected")
+
+    with pytest.raises(_BoomError):  # original exception preserved, not wrapped
+        await storage.put_stream("uploads/u1/source.mp4", _chunks(), content_type="video/mp4")
+
+    assert not await storage.exists("uploads/u1/source.mp4")  # no orphaned partial
+    assert not (tmp_path / "uploads" / "u1" / "source.mp4").exists()
+
+
+async def test_put_stream_cleans_up_partial_on_cancellation(tmp_path: Path) -> None:
+    """Cancellation mid-stream is also cleaned up and re-raised as CancelledError."""
+
+    import asyncio
+
+    storage = LocalStorage(root=str(tmp_path))
+
+    async def _chunks():
+        yield b"partial"
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await storage.put_stream("uploads/u2/source.mp4", _chunks())
+
+    assert not await storage.exists("uploads/u2/source.mp4")

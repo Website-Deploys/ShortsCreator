@@ -30,6 +30,12 @@ from olympus.platform.logging import get_logger
 
 log = get_logger(__name__)
 
+# A generous ceiling for audio extraction. FFmpeg audio extraction runs much
+# faster than real time, so this covers multi-hour videos; if it is exceeded
+# (e.g. a pathological or very slow source) the stage degrades honestly to
+# UNAVAILABLE rather than failing the whole analysis or wasting retries.
+_AUDIO_EXTRACTION_TIMEOUT_SECONDS = 900.0
+
 
 def _has(binary: str) -> bool:
     return shutil.which(binary) is not None
@@ -206,7 +212,7 @@ class VideoInspectionAnalyzer(Analyzer):
 def _from_ffprobe(probe: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
     fmt = probe.get("format", {})
     streams = probe.get("streams", [])
-    video = next((s for s in streams if s.get("codec_type") == "video"), {})
+    video: dict[str, Any] = next((s for s in streams if s.get("codec_type") == "video"), {})
     audios = [s for s in streams if s.get("codec_type") == "audio"]
     return {
         **base,
@@ -274,7 +280,8 @@ class AudioExtractionAnalyzer(Analyzer):
             out_path = str(Path(tmp) / "audio.wav")
             try:
                 code, _, err = await _run(
-                    "ffmpeg", "-y", "-i", src_path, "-vn", "-ac", "1", "-ar", "16000", out_path
+                    "ffmpeg", "-y", "-i", src_path, "-vn", "-ac", "1", "-ar", "16000", out_path,
+                    timeout=_AUDIO_EXTRACTION_TIMEOUT_SECONDS,
                 )
             except SubprocessUnavailableError as exc:
                 # FFmpeg is present, but this event loop cannot spawn it. Report
@@ -284,6 +291,20 @@ class AudioExtractionAnalyzer(Analyzer):
                     f"{exc} Audio extraction needs to run FFmpeg as a subprocess; "
                     "run the backend on an event loop that supports subprocesses "
                     "to enable it."
+                )
+            except TimeoutError:
+                # A legitimately too-long/slow source: degrade honestly instead of
+                # failing the whole analysis or retrying the same slow work.
+                log.warning(
+                    "audio_extraction_timeout",
+                    source=src_path,
+                    timeout_seconds=_AUDIO_EXTRACTION_TIMEOUT_SECONDS,
+                )
+                return StageOutcome.unavailable(
+                    "FFmpeg did not finish extracting audio within the time limit "
+                    f"({_AUDIO_EXTRACTION_TIMEOUT_SECONDS:.0f}s), so audio is unavailable "
+                    "for this video. The analysis still completes; audio-dependent "
+                    "stages are reported unavailable rather than failing the pipeline."
                 )
             if code != 0:
                 stderr_text = (err or b"").decode(errors="ignore").strip()
