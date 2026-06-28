@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -94,41 +95,48 @@ async def _materialize_source(
 
 
 class SubprocessUnavailableError(RuntimeError):
-    """The running event loop cannot spawn subprocesses.
+    """Subprocess execution is not supported in this environment.
 
-    ``asyncio.create_subprocess_exec`` raises a bare ``NotImplementedError`` on
-    event loops without child-process support (e.g. a Windows
-    ``SelectorEventLoop``, or other restricted/custom loops). We convert it into
-    this explicit, catchable error so analyzers can degrade *honestly* - exactly
-    as they do when FFmpeg is absent - instead of crashing the stage with an
-    opaque ``NotImplementedError``.
+    Kept as a defensive, catchable signal so analyzers can degrade *honestly*
+    (exactly as they do when FFmpeg is absent) rather than crashing a stage with
+    an opaque error, should any platform refuse to spawn a child process.
     """
 
 
 async def _run(*args: str, timeout: float = 120.0) -> tuple[int, bytes, bytes]:
-    """Run a subprocess, returning (returncode, stdout, stderr).
+    """Run an external command, returning ``(returncode, stdout, stderr)``.
 
-    Raises :class:`SubprocessUnavailableError` if the running event loop cannot
-    create subprocesses, and :class:`TimeoutError` if the process exceeds
-    ``timeout``. Other failures (e.g. a missing binary) surface as ``OSError``.
+    Executes via a blocking :func:`subprocess.run` dispatched to a worker thread
+    (:func:`asyncio.to_thread`) rather than ``asyncio.create_subprocess_exec``.
+    The latter delegates child-process creation to the *running event loop*,
+    which on some loops - notably a Windows ``SelectorEventLoop`` - raises a bare
+    ``NotImplementedError``. That was the real cause of ``video_inspection`` and
+    ``audio_extraction`` failing on Windows: ffprobe/ffmpeg could never be
+    spawned. Running the command in a thread works identically on every platform
+    and event-loop policy, while keeping the async event loop responsive.
+
+    Raises :class:`TimeoutError` if the process exceeds ``timeout``. A missing
+    binary surfaces as ``OSError`` (``FileNotFoundError``), exactly as before.
     """
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-    except NotImplementedError as exc:
-        raise SubprocessUnavailableError(
-            "The running asyncio event loop does not support spawning "
-            "subprocesses, so external tools (FFmpeg/ffprobe) cannot be run in "
-            "this environment."
-        ) from exc
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError:
-        proc.kill()
-        raise
-    return proc.returncode or 0, stdout, stderr
+    def _exec() -> tuple[int, bytes, bytes]:
+        try:
+            completed = subprocess.run(
+                list(args),
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(f"{args[0]!r} timed out after {timeout:.0f}s") from exc
+        except NotImplementedError as exc:  # defensive: the threaded path should never hit this
+            raise SubprocessUnavailableError(
+                "Subprocess execution is not supported in this environment, so "
+                "external tools (FFmpeg/ffprobe) cannot be run."
+            ) from exc
+        return completed.returncode or 0, completed.stdout or b"", completed.stderr or b""
+
+    return await asyncio.to_thread(_exec)
 
 
 def _parse_fps(rate: str | None) -> float | None:

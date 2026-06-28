@@ -437,19 +437,70 @@ async def _no_subprocess_run(*_args: str, timeout: float = 120.0):
     )
 
 
-async def test_run_converts_notimplemented_to_subprocess_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`_run` turns asyncio's bare NotImplementedError into a catchable error."""
+async def test_run_executes_a_real_subprocess(tmp_path: Path) -> None:
+    """`_run` genuinely executes an external command via subprocess.run-in-thread.
+
+    Uses the Python interpreter as a portable stand-in for ffprobe/ffmpeg. This is
+    the path that previously raised NotImplementedError on Windows event loops;
+    it must now work regardless of the running event loop.
+    """
+
+    import sys
 
     from olympus.analysis import analyzers
 
-    async def _raise_notimplemented(*_a, **_k):
+    code, out, _err = await analyzers._run(sys.executable, "-c", "print('olympus-ok')")
+    assert code == 0
+    assert b"olympus-ok" in out
+
+
+async def test_run_works_even_when_event_loop_cannot_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the Windows failure mode is structurally eliminated.
+
+    Previously `_run` used `asyncio.create_subprocess_exec`, which raises
+    NotImplementedError on event loops without subprocess support (e.g. a Windows
+    SelectorEventLoop) - crashing video_inspection/audio_extraction. `_run` now
+    runs the command in a thread, so even if that asyncio API is broken, `_run`
+    still works.
+    """
+
+    import sys
+
+    from olympus.analysis import analyzers
+
+    async def _broken(*_a, **_k):  # what a Windows SelectorEventLoop effectively does
         raise NotImplementedError
 
-    monkeypatch.setattr(analyzers.asyncio, "create_subprocess_exec", _raise_notimplemented)
+    monkeypatch.setattr(analyzers.asyncio, "create_subprocess_exec", _broken)
+    code, out, _err = await analyzers._run(sys.executable, "-c", "print('still-works')")
+    assert code == 0
+    assert b"still-works" in out
+
+
+async def test_run_translates_notimplemented_defensively(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the platform itself refuses to spawn, `_run` raises a catchable error."""
+
+    from olympus.analysis import analyzers
+
+    def _raise_notimplemented(*_a, **_k):
+        raise NotImplementedError
+
+    monkeypatch.setattr(analyzers.subprocess, "run", _raise_notimplemented)
     with pytest.raises(analyzers.SubprocessUnavailableError):
         await analyzers._run("ffprobe", "-version")
+
+
+async def test_run_missing_binary_raises_oserror() -> None:
+    """A genuinely missing binary surfaces as OSError (caught by callers)."""
+
+    from olympus.analysis import analyzers
+
+    with pytest.raises(OSError):
+        await analyzers._run("definitely-not-a-real-binary-olympus", "-x")
 
 
 async def test_video_inspection_completes_when_subprocess_unavailable(
