@@ -287,17 +287,24 @@ class AudioExtractionAnalyzer(Analyzer):
                 )
             if code != 0:
                 stderr_text = (err or b"").decode(errors="ignore").strip()
-                # Capture the complete FFmpeg stderr for diagnosis (full, not
-                # truncated, in the logs), and surface a bounded tail to the user.
+                # Capture the complete FFmpeg stderr for diagnosis (full, in the
+                # logs). A decode failure here is specific to THIS input file
+                # (corrupt/unsupported/zero-audio source), not an internal error,
+                # so we report it honestly as UNAVAILABLE rather than FAILED. That
+                # keeps a single bad input from poisoning the whole analysis and
+                # blocking every downstream engine, and avoids pointless retries.
                 log.warning(
                     "audio_extraction_ffmpeg_failed",
                     return_code=code,
                     source=src_path,
                     stderr=stderr_text,
                 )
-                return StageOutcome(
-                    status=StageStatus.FAILED,
-                    reason=stderr_text[-500:] or f"FFmpeg exited with code {code}.",
+                detail = stderr_text[-400:] if stderr_text else f"exit code {code}"
+                return StageOutcome.unavailable(
+                    "FFmpeg could not extract audio from this source file, so audio "
+                    "is unavailable for this video. The analysis still completes; "
+                    "audio-dependent stages are reported unavailable rather than "
+                    f"failing the whole pipeline. FFmpeg: {detail}"
                 )
             audio_bytes = await asyncio.to_thread(Path(out_path).read_bytes)
         audio_key = f"analysis/{ctx.project.id}/audio.wav"

@@ -400,10 +400,15 @@ async def test_audio_extraction_reports_source_missing_distinctly(
     assert "FFmpeg" not in (outcome.reason or "")  # not misattributed to FFmpeg
 
 
-async def test_audio_extraction_captures_ffmpeg_failure(
+async def test_audio_extraction_degrades_on_ffmpeg_decode_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A real FFmpeg non-zero exit surfaces as FAILED carrying its stderr."""
+    """A non-zero FFmpeg exit (corrupt/unsupported input) degrades to UNAVAILABLE.
+
+    It must NOT return FAILED: an input-specific decode failure should not poison
+    the whole analysis or block downstream engines. The real FFmpeg stderr is
+    surfaced honestly in the reason.
+    """
 
     from olympus.analysis import analyzers
 
@@ -417,7 +422,7 @@ async def test_audio_extraction_captures_ffmpeg_failure(
     ctx = await _audio_ctx(store)
 
     outcome = await analyzers.AudioExtractionAnalyzer().analyze(ctx, lambda _v: None)
-    assert outcome.status is StageStatus.FAILED
+    assert outcome.status is StageStatus.UNAVAILABLE
     assert "Invalid data found" in (outcome.reason or "")
 
 
