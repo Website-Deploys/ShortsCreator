@@ -94,6 +94,12 @@ class LocalStorage(StoragePort):
             # Clean up a partial file so we never leave corrupt artifacts.
             await asyncio.to_thread(path.unlink, True)
             raise StorageError("Failed to stream object.", details={"key": key}) from exc
+        except BaseException:
+            # Producer error, client disconnect, or cancellation mid-stream: never
+            # leave an orphaned partial object behind. Re-raise the original
+            # exception unchanged (preserving its type and traceback).
+            await asyncio.to_thread(path.unlink, True)
+            raise
         return StorageObject(key=key, size_bytes=size, content_type=content_type)
 
     async def get(self, key: str) -> bytes:
