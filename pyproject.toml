@@ -70,6 +70,13 @@ plugins = ["pydantic.mypy"]
 mypy_path = "src"
 packages = ["olympus"]
 
+# Third-party libraries that ship no type stubs / py.typed marker. Treating their
+# imports as untyped here keeps `strict` honest for our own code without polluting
+# the report with unactionable missing-stub noise.
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*", "celery.*", "psutil.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

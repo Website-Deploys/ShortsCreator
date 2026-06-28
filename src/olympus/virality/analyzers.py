@@ -113,7 +113,8 @@ class HookStrengthAnalyzer(ViralityAnalyzer):
         hconf = S.as_float(hook.get("confidence"), 0.5)
         weight = self._TYPE_WEIGHT.get(htype, 0.6)
         score = S.clamp01(weight * (0.55 + 0.45 * hconf))
-        window = hook.get("window") if isinstance(hook.get("window"), dict) else {}
+        raw_window = hook.get("window")
+        window = raw_window if isinstance(raw_window, dict) else {}
         report(1.0)
         return ViralityOutcome.completed(
             {
@@ -1001,12 +1002,8 @@ def _assess(
     emotion, info_v = score("emotion"), score("information")
     if emotion is not None and hook is not None and emotion >= 0.6 and hook <= 0.4:
         missed.append({"evidence": "strong emotional content is undercut by a weak opening hook"})
-    if (
-        info_v is not None
-        and score("sharing") is not None
-        and info_v >= 0.6
-        and score("sharing") <= 0.4
-    ):
+    sharing = score("sharing")
+    if info_v is not None and sharing is not None and info_v >= 0.6 and sharing <= 0.4:
         missed.append({"evidence": "high information value is not being packaged for sharing"})
     return strengths, weaknesses, risks, missed
 
@@ -1066,7 +1063,8 @@ def _build_timeline(ctx: ViralityStageContext) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     hook = ctx.story_data("hook_detection") or {}
     if hook.get("has_hook"):
-        window = hook.get("window") if isinstance(hook.get("window"), dict) else {}
+        raw_window = hook.get("window")
+        window = raw_window if isinstance(raw_window, dict) else {}
         events.append(
             {
                 "timestamp": S.as_float(window.get("start")),

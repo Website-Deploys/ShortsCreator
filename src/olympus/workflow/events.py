@@ -34,4 +34,12 @@ class InMemoryEventBus(EventBus):
             try:
                 await handler(event)
             except Exception as exc:  # one bad subscriber must not break the rest
-                log.warning("event_handler_error", event=event.type.value, error=str(exc))
+                # NOTE: do not pass ``event=`` here - it collides with structlog's
+                # positional event name and raises TypeError, which would defeat
+                # the very isolation this block provides.
+                log.warning(
+                    "event_handler_error",
+                    event_type=event.type.value,
+                    error=str(exc),
+                    exc_info=True,
+                )

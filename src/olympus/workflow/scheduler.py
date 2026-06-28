@@ -22,6 +22,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from olympus.domain.entities.workflow import (
+    Job,
     JobStatus,
     Workflow,
     WorkflowStatus,
@@ -49,7 +50,7 @@ class Scheduler:
     def backoff_seconds(self, attempts: int) -> float:
         """Exponential backoff for the given (1-based) attempt count, capped."""
 
-        return min(self._backoff_cap, self._backoff_base * (2 ** max(0, attempts - 1)))
+        return float(min(self._backoff_cap, self._backoff_base * (2 ** max(0, attempts - 1))))
     def reconcile(self, workflow: Workflow, *, now: datetime) -> None:
         """Advance job statuses based on dependencies and timers (in place).
 
@@ -85,7 +86,7 @@ class Scheduler:
             return False
         return not (scheduled_for is not None and now < scheduled_for)
 
-    def runnable(self, workflow: Workflow, *, now: datetime) -> list:
+    def runnable(self, workflow: Workflow, *, now: datetime) -> list[Job]:
         """Return this workflow's claimable jobs, best-first (priority, then FIFO)."""
 
         if workflow.status is not WorkflowStatus.RUNNING:
@@ -99,7 +100,7 @@ class Scheduler:
         ready.sort(key=lambda j: (-j.priority, j.created_at or now))
         return ready
 
-    def on_failure(self, job, *, now: datetime) -> bool:
+    def on_failure(self, job: Job, *, now: datetime) -> bool:
         """Apply a failure to a job. Returns ``True`` if it will retry, else dead.
 
         The job's ``attempts`` is assumed already incremented for this run.

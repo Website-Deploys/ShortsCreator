@@ -399,7 +399,7 @@ class Workflow:
             {
                 "stage": j.stage,
                 "engine": j.engine,
-                "label": STAGE_BY_NAME.get(j.stage).label if j.stage in STAGE_BY_NAME else j.stage,
+                "label": STAGE_BY_NAME[j.stage].label if j.stage in STAGE_BY_NAME else j.stage,
                 "status": j.status.value,
                 "attempts": j.attempts,
                 "duration_ms": j.duration_ms,

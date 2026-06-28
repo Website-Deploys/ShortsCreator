@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -81,7 +81,7 @@ def configure_logging(settings: Settings | None = None) -> None:
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     """Return a structured logger bound to ``name`` (typically ``__name__``)."""
 
-    return structlog.get_logger(name)
+    return cast("structlog.stdlib.BoundLogger", structlog.get_logger(name))
 
 
 def bind_context(**kwargs: Any) -> None:

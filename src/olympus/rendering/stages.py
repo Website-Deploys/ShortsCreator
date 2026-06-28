@@ -19,6 +19,7 @@ The engine performs execution only; it never changes the creative decisions.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from olympus.domain.contracts.render_pipeline import (
@@ -221,7 +222,7 @@ class BuildAudioTimelineStage(RenderStageAnalyzer):
 class _ApplyStage(RenderStageAnalyzer):
     """Base for the deterministic 'apply' planning stages."""
 
-    op_fn = staticmethod(lambda timeline: [])  # type: ignore[assignment]
+    op_fn: Callable[[dict[str, Any]], list[dict[str, Any]]] = staticmethod(lambda timeline: [])
     op_key = "ops"
     depends_on = ("build_video_timeline",)
 

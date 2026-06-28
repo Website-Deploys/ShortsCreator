@@ -233,7 +233,7 @@ class OptimizationService:
         if package is None:
             return None
         for asset in package.get("assets", []):
-            if asset.get("kind") == kind:
+            if isinstance(asset, dict) and asset.get("kind") == kind:
                 return asset
         return None
 

@@ -15,6 +15,7 @@ implementation can replace this without changing workers or the service.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 from olympus.domain.contracts.workflow import (
@@ -87,7 +88,7 @@ class RepositoryJobQueue(JobQueue):
         return claimed
 
     @staticmethod
-    def _better(candidate: Job, current: Job, now: object) -> bool:
+    def _better(candidate: Job, current: Job, now: datetime) -> bool:
         ckey = (-candidate.priority, candidate.created_at or now)
         bkey = (-current.priority, current.created_at or now)
         return ckey < bkey
@@ -187,7 +188,7 @@ class RepositoryJobQueue(JobQueue):
             return s
 
     @staticmethod
-    def _tally(s: QueueStats, job: Job, now: object) -> None:
+    def _tally(s: QueueStats, job: Job, now: datetime) -> None:
         match job.status:
             case JobStatus.READY:
                 s.ready += 1

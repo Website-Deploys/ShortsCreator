@@ -17,6 +17,7 @@ ones. The engines and their APIs are untouched.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from olympus.domain.contracts.projects import ProjectRepository
@@ -87,7 +88,7 @@ class WorkflowService:
         )
 
     # -- event subscription (plugins) ----------------------------------------
-    def subscribe(self, handler) -> None:
+    def subscribe(self, handler: Callable[[WorkflowEvent], Awaitable[None]]) -> None:
         self._bus.subscribe(handler)
 
     # -- pool lifecycle -------------------------------------------------------
