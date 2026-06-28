@@ -29,6 +29,7 @@ from olympus.domain.entities.project import Project
 from olympus.domain.entities.story import STORY_STAGE_ORDER, StoryAnalysis
 from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.platform.logging import get_logger
+from olympus.services.runs import begin_or_reuse_run
 from olympus.story import StoryPipeline, build_default_story_analyzers
 
 log = get_logger(__name__)
@@ -81,14 +82,17 @@ class StoryService:
         rather than starting a duplicate.
         """
 
-        if project.id in _RUNS and not restart and _RUNS[project.id].task is not None:
-            existing = await self._story_repo.load(project.id)
-            if existing is not None:
-                return existing
-
-        run = _Run()
-        _RUNS[project.id] = run
-        run.task = asyncio.create_task(self._run(project, run))
+        existing, _run = await begin_or_reuse_run(
+            scope="story",
+            project_id=project.id,
+            runs=_RUNS,
+            make_run=_Run,
+            loader=lambda: self._story_repo.load(project.id),
+            spawn=lambda r: asyncio.create_task(self._run(project, r)),
+            restart=restart,
+        )
+        if existing is not None:
+            return existing
         await asyncio.sleep(0)  # let the task persist its initial index
         story = await self._story_repo.load(project.id)
         if story is not None:

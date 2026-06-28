@@ -114,7 +114,17 @@ class LocalStorage(StoragePort):
             raise StorageError("Failed to read object.", details={"key": key}) from exc
 
     async def exists(self, key: str) -> bool:
-        return await asyncio.to_thread(self._path_for(key).exists)
+        def _exists() -> bool:
+            try:
+                return self._path_for(key).exists()
+            except (OSError, StorageError):
+                # An invalid, oversized (ENAMETOOLONG), or otherwise un-stattable
+                # key cannot name an existing object. exists() is a boolean query,
+                # so answer it honestly (False) instead of raising - a hostile or
+                # malformed key must never turn a presence check into a 5xx.
+                return False
+
+        return await asyncio.to_thread(_exists)
 
     async def delete(self, key: str) -> None:
         def _delete() -> None:
@@ -136,14 +146,19 @@ class LocalStorage(StoragePort):
 
     async def list_keys(self, prefix: str) -> list[str]:
         def _walk() -> list[str]:
-            start = self._path_for(prefix) if prefix else self._root
-            if not start.exists():
+            try:
+                start = self._path_for(prefix) if prefix else self._root
+                if not start.exists():
+                    return []
+                keys: list[str] = []
+                for path in start.rglob("*"):
+                    if path.is_file():
+                        keys.append(path.relative_to(self._root).as_posix())
+                return sorted(keys)
+            except (OSError, StorageError):
+                # Invalid/oversized prefix lists nothing - never raise (a hostile
+                # key must not turn a listing into a 5xx).
                 return []
-            keys: list[str] = []
-            for path in start.rglob("*"):
-                if path.is_file():
-                    keys.append(path.relative_to(self._root).as_posix())
-            return sorted(keys)
 
         return await asyncio.to_thread(_walk)
 
@@ -155,5 +170,11 @@ class LocalStorage(StoragePort):
     def local_path(self, key: str) -> str | None:
         """Return the on-disk path for ``key`` if it exists, else ``None``."""
 
-        path = self._path_for(key)
-        return str(path) if path.exists() else None
+        try:
+            path = self._path_for(key)
+            return str(path) if path.exists() else None
+        except (OSError, StorageError):
+            # Invalid or un-stattable key: no local path exists. Never raise here -
+            # callers (e.g. file-serving routes) treat None as "not available" and
+            # fall back, so a hostile key yields a clean 404, not a 5xx.
+            return None

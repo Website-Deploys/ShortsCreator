@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -36,7 +37,12 @@ log = get_logger(__name__)
 def _envelope(request: Request, code: str, message: str, details: Any = None) -> dict[str, Any]:
     body: dict[str, Any] = {"error": {"code": code, "message": message}}
     if details:
-        body["error"]["details"] = details
+        # Coerce dynamic detail payloads (which may contain non-JSON-serializable
+        # objects - e.g. pydantic v2 validation ``ctx`` carrying a ValueError) into
+        # plain JSON-safe structures. Without this the error handler itself raises
+        # a TypeError while rendering its own response, turning a clean 4xx into an
+        # unhandled 500.
+        body["error"]["details"] = jsonable_encoder(details)
     request_id = getattr(request.state, "request_id", None)
     if request_id:
         body["request_id"] = request_id

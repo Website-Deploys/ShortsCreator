@@ -115,3 +115,126 @@ async def test_repeated_cancel_and_delete_are_idempotent(storage: LocalStorage) 
     await service.delete(project.id)
     await service.delete(project.id)
     assert await service.get_analysis(project.id) is None
+
+
+
+class _SlowPipeline:
+    """A controllable pipeline that records concurrent invocations.
+
+    Persists a RUNNING index, then blocks until ``release`` is set or the run's
+    ``cancel_event`` fires. ``concurrent_peak`` is the maximum number of pipeline
+    runs that were ever executing simultaneously - it must never exceed 1 for a
+    single project.
+    """
+
+    def __init__(self, repo: StorageAnalysisRepository, release: asyncio.Event) -> None:
+        self._repo = repo
+        self._release = release
+        self.invocations = 0
+        self.concurrent_peak = 0
+        self._active = 0
+
+    async def run(self, project, storage, **kwargs):  # type: ignore[no-untyped-def]
+        self.invocations += 1
+        self._active += 1
+        self.concurrent_peak = max(self.concurrent_peak, self._active)
+        analysis = Analysis(
+            project_id=project.id,
+            pipeline_version="1",
+            status=AnalysisStatus.RUNNING,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+            stages=[],
+        )
+        await self._repo.save_index(analysis)
+        cancel_event = kwargs.get("cancel_event")
+        try:
+            while not self._release.is_set():
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                await asyncio.sleep(0.005)
+        finally:
+            self._active -= 1
+        analysis.status = AnalysisStatus.COMPLETED
+        await self._repo.save_index(analysis)
+        return analysis
+
+
+async def test_concurrent_starts_never_duplicate_the_pipeline(storage: LocalStorage) -> None:
+    """Many simultaneous start() calls for one project run the pipeline once.
+
+    Regression for the check-then-act race in start(): a concurrent start that
+    observed a half-initialized registry entry (task not yet assigned) used to
+    bypass the duplicate guard and spawn a second pipeline.
+    """
+
+    repo = StorageAnalysisRepository(storage)
+    project_repo = StorageProjectRepository(storage)
+    project = await _project(storage)
+    release = asyncio.Event()
+    pipe = _SlowPipeline(repo, release)
+    service = AnalysisService(
+        analysis_repo=repo,
+        project_repo=project_repo,
+        storage=storage,
+        pipeline=pipe,  # type: ignore[arg-type]
+    )
+
+    await asyncio.gather(*[service.start(project) for _ in range(16)])
+    await asyncio.sleep(0.02)
+    assert pipe.invocations == 1, "duplicate pipeline execution under concurrent start()"
+    assert pipe.concurrent_peak == 1
+
+    release.set()
+    for _ in range(300):
+        if not service.is_running(project.id):
+            break
+        await asyncio.sleep(0.01)
+    assert not service.is_running(project.id)
+
+
+async def test_restart_cancels_prior_run_and_never_orphans_a_task(
+    storage: LocalStorage,
+) -> None:
+    """restart=True cancels and drains the in-flight run before replacing it.
+
+    Regression for the orphaned-run defect: restart used to overwrite the
+    registry without cancelling the prior task, so two pipelines executed
+    concurrently and the first became untracked (uncancellable).
+    """
+
+    from olympus.services.analysis.service import _RUNS
+
+    repo = StorageAnalysisRepository(storage)
+    project_repo = StorageProjectRepository(storage)
+    project = await _project(storage)
+    release = asyncio.Event()
+    pipe = _SlowPipeline(repo, release)
+    service = AnalysisService(
+        analysis_repo=repo,
+        project_repo=project_repo,
+        storage=storage,
+        pipeline=pipe,  # type: ignore[arg-type]
+    )
+
+    await service.start(project, restart=True)
+    first_run = _RUNS[project.id]
+    first_task = first_run.task
+    await asyncio.sleep(0.02)  # let the first pipeline enter run()
+
+    await service.start(project, restart=True)  # restart while the first is in flight
+    second_task = _RUNS[project.id].task
+
+    # The prior run was cancelled, and its task is no longer alive-and-untracked.
+    assert first_run.cancel_event.is_set()
+    assert first_task is not second_task
+    assert first_task is None or first_task.done()
+    # The two pipelines never executed at the same time.
+    assert pipe.concurrent_peak == 1
+
+    release.set()
+    for _ in range(300):
+        if not service.is_running(project.id):
+            break
+        await asyncio.sleep(0.01)
+    assert not service.is_running(project.id)

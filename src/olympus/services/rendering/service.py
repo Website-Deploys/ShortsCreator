@@ -36,6 +36,7 @@ from olympus.domain.entities.rendering import RenderManifest
 from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.platform.logging import get_logger
 from olympus.rendering import RenderPipeline, build_default_render_stages
+from olympus.services.runs import begin_or_reuse_run
 
 log = get_logger(__name__)
 
@@ -92,14 +93,17 @@ class RenderingService:
     async def start(self, project: Project, *, restart: bool = False) -> RenderRun:
         """Begin (or resume) rendering for ``project`` as a background task."""
 
-        if project.id in _RUNS and not restart and _RUNS[project.id].task is not None:
-            existing = await self._run_repo.load(project.id)
-            if existing is not None:
-                return existing
-
-        run = _Run()
-        _RUNS[project.id] = run
-        run.task = asyncio.create_task(self._run(project, run))
+        existing, _run = await begin_or_reuse_run(
+            scope="rendering",
+            project_id=project.id,
+            runs=_RUNS,
+            make_run=_Run,
+            loader=lambda: self._run_repo.load(project.id),
+            spawn=lambda r: asyncio.create_task(self._run(project, r)),
+            restart=restart,
+        )
+        if existing is not None:
+            return existing
         await asyncio.sleep(0)
         existing = await self._run_repo.load(project.id)
         return existing if existing is not None else await self._wait_for_index(project.id)

@@ -18,6 +18,7 @@ import asyncio
 from collections import defaultdict
 
 _project_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+_start_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 def project_write_lock(project_id: str) -> asyncio.Lock:
@@ -28,3 +29,22 @@ def project_write_lock(project_id: str) -> asyncio.Lock:
     """
 
     return _project_locks[project_id]
+
+
+def engine_start_lock(scope: str, project_id: str) -> asyncio.Lock:
+    """Return the per-(engine, project) lock that serializes ``start()``.
+
+    An engine service's ``start()`` performs a check-then-act on its in-flight
+    run registry (decide whether a run already exists, then register a new one
+    and spawn its task). Without serialization, two concurrent ``start()`` calls
+    for the same project can both pass the "no run yet" check and each spawn a
+    pipeline (duplicate execution), and a ``restart`` can overwrite the registry
+    without cancelling the prior run (orphaning an uncancellable task). Holding
+    this lock around the whole critical section makes that sequence atomic.
+
+    It is intentionally distinct from :func:`project_write_lock` so a service may
+    update the project document (which takes the write lock) while holding the
+    start lock, without deadlocking on a non-reentrant lock.
+    """
+
+    return _start_locks[f"{scope}:{project_id}"]
