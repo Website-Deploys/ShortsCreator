@@ -25,6 +25,7 @@ from olympus.domain.contracts.analysis import (
 )
 from olympus.domain.entities.analysis import (
     STAGE_ORDER,
+    Analysis,
     AnalysisStatus,
     StageStatus,
 )
@@ -545,3 +546,115 @@ async def test_audio_extraction_unavailable_when_subprocess_unavailable(
     outcome = await analyzers.AudioExtractionAnalyzer().analyze(ctx, lambda _v: None)
     assert outcome.status is StageStatus.UNAVAILABLE
     assert "subprocess" in (outcome.reason or "").lower()
+
+
+
+# --------------------------------------------------------------------------- #
+# Regression: AnalysisService.start() must not spawn a duplicate run while one
+# is already in flight (the guard was inverted, double-firing the engine chain).
+# --------------------------------------------------------------------------- #
+class _BlockingPipeline:
+    """A pipeline whose run blocks on a release event, so we can observe the
+    'already running' window deterministically and count invocations."""
+
+    def __init__(self, repo: StorageAnalysisRepository, release) -> None:
+        self._repo = repo
+        self._release = release
+        self.calls = 0
+
+    async def run(self, project, storage, *, cancel_event=None, **_kwargs):
+        self.calls += 1
+        analysis = Analysis(
+            project_id=project.id,
+            pipeline_version="1",
+            status=AnalysisStatus.RUNNING,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+            stages=[],
+        )
+        await self._repo.save_index(analysis)  # so start() can load the index
+        # Block until released, but honor cooperative cancellation promptly so
+        # delete()'s drain does not have to wait for the full timeout.
+        import asyncio as _asyncio
+
+        while not self._release.is_set():
+            if cancel_event is not None and cancel_event.is_set():
+                analysis.status = AnalysisStatus.CANCELLED
+                analysis.updated_at = utc_now()
+                await self._repo.save_index(analysis)
+                return analysis
+            await _asyncio.sleep(0.01)
+        analysis.status = AnalysisStatus.COMPLETED
+        analysis.updated_at = utc_now()
+        await self._repo.save_index(analysis)
+        return analysis
+
+
+async def test_service_start_does_not_duplicate_inflight_run(storage: LocalStorage) -> None:
+    import asyncio
+
+    repo = StorageAnalysisRepository(storage)
+    project_repo = StorageProjectRepository(storage)
+    project = await _make_project(storage)
+    await project_repo.save(project)
+
+    release = asyncio.Event()
+    pipeline = _BlockingPipeline(repo, release)
+    service = AnalysisService(
+        analysis_repo=repo,
+        project_repo=project_repo,
+        storage=storage,
+        pipeline=pipeline,  # type: ignore[arg-type]
+    )
+
+    await service.start(project)
+    assert service.is_running(project.id)
+
+    # A second start while the first is in flight must return the existing
+    # analysis WITHOUT launching a second pipeline run.
+    await service.start(project)
+    assert pipeline.calls == 1
+
+    release.set()
+    for _ in range(300):
+        if not service.is_running(project.id):
+            break
+        await asyncio.sleep(0.01)
+
+    assert pipeline.calls == 1  # still exactly one run, even after completion
+    analysis = await service.get_analysis(project.id)
+    assert analysis is not None and analysis.status is AnalysisStatus.COMPLETED
+
+
+
+async def test_delete_drains_inflight_run_then_removes_artifacts(storage: LocalStorage) -> None:
+    """Deleting a project while its analysis is running must wait for the task to
+    stop, then remove artifacts cleanly (no orphaned directory, no StorageError
+    from a write racing the deletion)."""
+
+    import asyncio
+
+    repo = StorageAnalysisRepository(storage)
+    project_repo = StorageProjectRepository(storage)
+    project = await _make_project(storage)
+    await project_repo.save(project)
+
+    release = asyncio.Event()  # never set: the run only ends via cancellation
+    pipeline = _BlockingPipeline(repo, release)
+    service = AnalysisService(
+        analysis_repo=repo,
+        project_repo=project_repo,
+        storage=storage,
+        pipeline=pipeline,  # type: ignore[arg-type]
+    )
+
+    await service.start(project)
+    assert service.is_running(project.id)
+
+    # Delete mid-run: should cancel, drain the task, then delete artifacts.
+    await service.delete(project.id)
+
+    assert not service.is_running(project.id)
+    assert await service.get_analysis(project.id) is None
+    # The on-disk analysis directory must be gone (no orphan).
+    assert not (Path(storage._root) / "analysis" / project.id).exists()  # type: ignore[attr-defined]

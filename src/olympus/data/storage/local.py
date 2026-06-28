@@ -33,9 +33,11 @@ class LocalStorage(StoragePort):
         log.info("local_storage_init", root=str(self._root))
 
     def _path_for(self, key: str) -> Path:
-        # Prevent path traversal: the resolved path must stay within root.
+        # Prevent path traversal: the resolved path must stay within root. A
+        # string ``startswith`` check is unsafe (a sibling like ``<root>_evil``
+        # shares the prefix), so we verify true path containment instead.
         candidate = (self._root / key).resolve()
-        if not str(candidate).startswith(str(self._root)):
+        if candidate != self._root and self._root not in candidate.parents:
             raise StorageError("Invalid storage key.", details={"key": key})
         return candidate
 
@@ -110,7 +112,19 @@ class LocalStorage(StoragePort):
 
     async def delete(self, key: str) -> None:
         def _delete() -> None:
-            self._path_for(key).unlink(missing_ok=True)
+            path = self._path_for(key)
+            path.unlink(missing_ok=True)
+            # Prune now-empty parent directories up to (but not including) the
+            # root, so deleting all of a project's objects does not leave
+            # orphaned empty directories behind. Stops at the first non-empty
+            # (or already-removed) directory.
+            parent = path.parent
+            while parent != self._root and parent.is_relative_to(self._root):
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
 
         await asyncio.to_thread(_delete)
 

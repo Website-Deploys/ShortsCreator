@@ -46,3 +46,43 @@ async def test_path_traversal_is_blocked(storage: LocalStorage) -> None:
 
     with pytest.raises(StorageError):
         await storage.get("../../etc/passwd")
+
+
+
+async def test_sibling_prefix_key_is_blocked(tmp_path: Path) -> None:
+    """A key resolving to a sibling dir that shares the root's name prefix is
+    rejected. The old ``startswith`` check would have allowed e.g. ``<root>_evil``.
+    """
+
+    storage = LocalStorage(root=str(tmp_path / "store"))
+    sibling_key = f"../{(tmp_path / 'store').name}_evil/secret.txt"
+    with pytest.raises(StorageError):
+        await storage.put(sibling_key, b"x")
+    with pytest.raises(StorageError):
+        await storage.get(sibling_key)
+
+
+async def test_root_itself_is_allowed_and_nested_keys_resolve(tmp_path: Path) -> None:
+    """A normal nested key resolves under the root and round-trips."""
+
+    storage = LocalStorage(root=str(tmp_path))
+    await storage.put("deep/nested/key.bin", b"ok")
+    assert await storage.get("deep/nested/key.bin") == b"ok"
+
+
+
+async def test_delete_prunes_empty_parent_dirs_but_preserves_siblings(tmp_path: Path) -> None:
+    """Deleting all objects under a project prunes its now-empty directories,
+    without removing sibling projects' directories or the root."""
+
+    storage = LocalStorage(root=str(tmp_path))
+    await storage.put("analysis/p1/stages/s1.json", b"{}")
+    await storage.put("analysis/p1/index.json", b"{}")
+    await storage.put("analysis/p2/index.json", b"{}")  # sibling project
+
+    await storage.delete("analysis/p1/stages/s1.json")
+    await storage.delete("analysis/p1/index.json")
+
+    assert not (tmp_path / "analysis" / "p1").exists()  # pruned
+    assert (tmp_path / "analysis" / "p2" / "index.json").exists()  # sibling kept
+    assert tmp_path.exists()  # root never removed
