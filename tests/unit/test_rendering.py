@@ -17,6 +17,7 @@ These verify the *honest* contract of render execution:
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -267,6 +268,8 @@ async def test_pipeline_runs_all_stages(
 async def test_ffmpeg_absent_is_honest(
     storage: LocalStorage, run_repo: StorageRenderRunRepository, manifest_store
 ) -> None:
+    if shutil.which("ffmpeg") is not None:
+        pytest.skip("Validates the FFmpeg-absent path; FFmpeg is installed in this environment.")
     analysis, planning = _analysis(), _planning()
     editing = await _editing(storage, analysis, planning)
     project = _project()

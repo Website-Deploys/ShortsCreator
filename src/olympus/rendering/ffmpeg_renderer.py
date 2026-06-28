@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -123,14 +124,19 @@ class FfmpegClipRenderer(ClipRenderer):
 
     async def _run(self, args: list[str], *, label: str) -> list[str]:
         log.info("render_exec", renderer=self.name, label=label, arg0=args[0])
-        proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        _stdout, stderr = await proc.communicate()
-        tail = stderr.decode("utf-8", "replace").splitlines()[-_MAX_LOG_LINES:]
-        if proc.returncode != 0:
+
+        # Run via a blocking subprocess on a worker thread rather than
+        # asyncio.create_subprocess_exec: the latter raises NotImplementedError on
+        # event loops without subprocess support (e.g. a Windows
+        # SelectorEventLoop). The threaded path works on every platform/loop.
+        def _exec() -> subprocess.CompletedProcess[bytes]:
+            return subprocess.run(list(args), capture_output=True, check=False)
+
+        completed = await asyncio.to_thread(_exec)
+        tail = (completed.stderr or b"").decode("utf-8", "replace").splitlines()[-_MAX_LOG_LINES:]
+        if completed.returncode != 0:
             raise ExternalServiceError(
-                f"{label} exited with code {proc.returncode}.",
+                f"{label} exited with code {completed.returncode}.",
                 code="render_failed",
                 details={"stderr_tail": tail[-5:]},
             )
@@ -140,14 +146,15 @@ class FfmpegClipRenderer(ClipRenderer):
         if shutil.which(self._ffprobe) is None:
             return {}
         args = C.build_ffprobe_command(binary=self._ffprobe, path=str(path))
-        proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        stdout, _stderr = await proc.communicate()
-        if proc.returncode != 0:
+
+        def _exec() -> subprocess.CompletedProcess[bytes]:
+            return subprocess.run(list(args), capture_output=True, check=False)
+
+        completed = await asyncio.to_thread(_exec)
+        if completed.returncode != 0:
             return {}
         try:
-            return json.loads(stdout.decode("utf-8", "replace"))
+            return json.loads((completed.stdout or b"").decode("utf-8", "replace"))
         except (json.JSONDecodeError, ValueError):
             return {}
 

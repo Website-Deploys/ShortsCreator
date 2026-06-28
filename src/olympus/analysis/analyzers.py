@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -93,18 +94,49 @@ async def _materialize_source(
     return src_path, None
 
 
-async def _run(*args: str, timeout: float = 120.0) -> tuple[int, bytes, bytes]:
-    """Run a subprocess, returning (returncode, stdout, stderr)."""
+class SubprocessUnavailableError(RuntimeError):
+    """Subprocess execution is not supported in this environment.
 
-    proc = await asyncio.create_subprocess_exec(
-        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError:
-        proc.kill()
-        raise
-    return proc.returncode or 0, stdout, stderr
+    Kept as a defensive, catchable signal so analyzers can degrade *honestly*
+    (exactly as they do when FFmpeg is absent) rather than crashing a stage with
+    an opaque error, should any platform refuse to spawn a child process.
+    """
+
+
+async def _run(*args: str, timeout: float = 120.0) -> tuple[int, bytes, bytes]:
+    """Run an external command, returning ``(returncode, stdout, stderr)``.
+
+    Executes via a blocking :func:`subprocess.run` dispatched to a worker thread
+    (:func:`asyncio.to_thread`) rather than ``asyncio.create_subprocess_exec``.
+    The latter delegates child-process creation to the *running event loop*,
+    which on some loops - notably a Windows ``SelectorEventLoop`` - raises a bare
+    ``NotImplementedError``. That was the real cause of ``video_inspection`` and
+    ``audio_extraction`` failing on Windows: ffprobe/ffmpeg could never be
+    spawned. Running the command in a thread works identically on every platform
+    and event-loop policy, while keeping the async event loop responsive.
+
+    Raises :class:`TimeoutError` if the process exceeds ``timeout``. A missing
+    binary surfaces as ``OSError`` (``FileNotFoundError``), exactly as before.
+    """
+
+    def _exec() -> tuple[int, bytes, bytes]:
+        try:
+            completed = subprocess.run(
+                list(args),
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(f"{args[0]!r} timed out after {timeout:.0f}s") from exc
+        except NotImplementedError as exc:  # defensive: the threaded path should never hit this
+            raise SubprocessUnavailableError(
+                "Subprocess execution is not supported in this environment, so "
+                "external tools (FFmpeg/ffprobe) cannot be run."
+            ) from exc
+        return completed.returncode or 0, completed.stdout or b"", completed.stderr or b""
+
+    return await asyncio.to_thread(_exec)
 
 
 def _parse_fps(rate: str | None) -> float | None:
@@ -163,6 +195,10 @@ class VideoInspectionAnalyzer(Analyzer):
                     data = _from_ffprobe(probe, data)
             except (OSError, json.JSONDecodeError, TimeoutError) as exc:
                 log.warning("ffprobe_failed", error=str(exc))
+            except SubprocessUnavailableError as exc:
+                # The loop cannot run ffprobe; keep the client-metadata baseline
+                # (this stage must always complete) and note it honestly.
+                log.warning("ffprobe_subprocess_unavailable", error=str(exc))
         report(1.0)
         return StageOutcome.completed(data)
 
@@ -236,22 +272,39 @@ class AudioExtractionAnalyzer(Analyzer):
             assert src_path is not None  # one of the two is always set
 
             out_path = str(Path(tmp) / "audio.wav")
-            code, _, err = await _run(
-                "ffmpeg", "-y", "-i", src_path, "-vn", "-ac", "1", "-ar", "16000", out_path
-            )
+            try:
+                code, _, err = await _run(
+                    "ffmpeg", "-y", "-i", src_path, "-vn", "-ac", "1", "-ar", "16000", out_path
+                )
+            except SubprocessUnavailableError as exc:
+                # FFmpeg is present, but this event loop cannot spawn it. Report
+                # the truth (UNAVAILABLE), never a fabricated success or an opaque
+                # NotImplementedError crash.
+                return StageOutcome.unavailable(
+                    f"{exc} Audio extraction needs to run FFmpeg as a subprocess; "
+                    "run the backend on an event loop that supports subprocesses "
+                    "to enable it."
+                )
             if code != 0:
                 stderr_text = (err or b"").decode(errors="ignore").strip()
-                # Capture the complete FFmpeg stderr for diagnosis (full, not
-                # truncated, in the logs), and surface a bounded tail to the user.
+                # Capture the complete FFmpeg stderr for diagnosis (full, in the
+                # logs). A decode failure here is specific to THIS input file
+                # (corrupt/unsupported/zero-audio source), not an internal error,
+                # so we report it honestly as UNAVAILABLE rather than FAILED. That
+                # keeps a single bad input from poisoning the whole analysis and
+                # blocking every downstream engine, and avoids pointless retries.
                 log.warning(
                     "audio_extraction_ffmpeg_failed",
                     return_code=code,
                     source=src_path,
                     stderr=stderr_text,
                 )
-                return StageOutcome(
-                    status=StageStatus.FAILED,
-                    reason=stderr_text[-500:] or f"FFmpeg exited with code {code}.",
+                detail = stderr_text[-400:] if stderr_text else f"exit code {code}"
+                return StageOutcome.unavailable(
+                    "FFmpeg could not extract audio from this source file, so audio "
+                    "is unavailable for this video. The analysis still completes; "
+                    "audio-dependent stages are reported unavailable rather than "
+                    f"failing the whole pipeline. FFmpeg: {detail}"
                 )
             audio_bytes = await asyncio.to_thread(Path(out_path).read_bytes)
         audio_key = f"analysis/{ctx.project.id}/audio.wav"

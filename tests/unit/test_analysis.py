@@ -400,10 +400,15 @@ async def test_audio_extraction_reports_source_missing_distinctly(
     assert "FFmpeg" not in (outcome.reason or "")  # not misattributed to FFmpeg
 
 
-async def test_audio_extraction_captures_ffmpeg_failure(
+async def test_audio_extraction_degrades_on_ffmpeg_decode_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A real FFmpeg non-zero exit surfaces as FAILED carrying its stderr."""
+    """A non-zero FFmpeg exit (corrupt/unsupported input) degrades to UNAVAILABLE.
+
+    It must NOT return FAILED: an input-specific decode failure should not poison
+    the whole analysis or block downstream engines. The real FFmpeg stderr is
+    surfaced honestly in the reason.
+    """
 
     from olympus.analysis import analyzers
 
@@ -417,5 +422,126 @@ async def test_audio_extraction_captures_ffmpeg_failure(
     ctx = await _audio_ctx(store)
 
     outcome = await analyzers.AudioExtractionAnalyzer().analyze(ctx, lambda _v: None)
-    assert outcome.status is StageStatus.FAILED
+    assert outcome.status is StageStatus.UNAVAILABLE
     assert "Invalid data found" in (outcome.reason or "")
+
+
+
+# --------------------------------------------------------------------------- #
+# Subprocess-incapable event loops (e.g. a Windows SelectorEventLoop) must NOT
+# crash the analyzers with NotImplementedError. _run converts it into a
+# catchable SubprocessUnavailableError; the analyzers then degrade honestly.
+# --------------------------------------------------------------------------- #
+async def _no_subprocess_run(*_args: str, timeout: float = 120.0):
+    """Stand-in for `_run` on a loop that cannot spawn subprocesses."""
+
+    from olympus.analysis.analyzers import SubprocessUnavailableError
+
+    raise SubprocessUnavailableError(
+        "The running asyncio event loop does not support spawning subprocesses."
+    )
+
+
+async def test_run_executes_a_real_subprocess(tmp_path: Path) -> None:
+    """`_run` genuinely executes an external command via subprocess.run-in-thread.
+
+    Uses the Python interpreter as a portable stand-in for ffprobe/ffmpeg. This is
+    the path that previously raised NotImplementedError on Windows event loops;
+    it must now work regardless of the running event loop.
+    """
+
+    import sys
+
+    from olympus.analysis import analyzers
+
+    code, out, _err = await analyzers._run(sys.executable, "-c", "print('olympus-ok')")
+    assert code == 0
+    assert b"olympus-ok" in out
+
+
+async def test_run_works_even_when_event_loop_cannot_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the Windows failure mode is structurally eliminated.
+
+    Previously `_run` used `asyncio.create_subprocess_exec`, which raises
+    NotImplementedError on event loops without subprocess support (e.g. a Windows
+    SelectorEventLoop) - crashing video_inspection/audio_extraction. `_run` now
+    runs the command in a thread, so even if that asyncio API is broken, `_run`
+    still works.
+    """
+
+    import sys
+
+    from olympus.analysis import analyzers
+
+    async def _broken(*_a, **_k):  # what a Windows SelectorEventLoop effectively does
+        raise NotImplementedError
+
+    monkeypatch.setattr(analyzers.asyncio, "create_subprocess_exec", _broken)
+    code, out, _err = await analyzers._run(sys.executable, "-c", "print('still-works')")
+    assert code == 0
+    assert b"still-works" in out
+
+
+async def test_run_translates_notimplemented_defensively(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the platform itself refuses to spawn, `_run` raises a catchable error."""
+
+    from olympus.analysis import analyzers
+
+    def _raise_notimplemented(*_a, **_k):
+        raise NotImplementedError
+
+    monkeypatch.setattr(analyzers.subprocess, "run", _raise_notimplemented)
+    with pytest.raises(analyzers.SubprocessUnavailableError):
+        await analyzers._run("ffprobe", "-version")
+
+
+async def test_run_missing_binary_raises_oserror() -> None:
+    """A genuinely missing binary surfaces as OSError (caught by callers)."""
+
+    from olympus.analysis import analyzers
+
+    with pytest.raises(OSError):
+        await analyzers._run("definitely-not-a-real-binary-olympus", "-x")
+
+
+async def test_video_inspection_completes_when_subprocess_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ffprobe can't be spawned -> still COMPLETED from client metadata."""
+
+    from olympus.analysis import analyzers
+
+    monkeypatch.setattr(analyzers.shutil, "which", lambda binary: f"/usr/bin/{binary}")
+    monkeypatch.setattr(analyzers, "_run", _no_subprocess_run)
+
+    store = LocalStorage(root=str(tmp_path))
+    project = await _make_project(store)
+    ctx = StageContext(project=project, storage=store, results={})
+
+    outcome = await analyzers.VideoInspectionAnalyzer().analyze(ctx, lambda _v: None)
+    assert outcome.status is StageStatus.COMPLETED  # never crashes / never FAILED
+    assert outcome.data["width"] == 1920
+    assert outcome.data["source"] == "client_metadata"
+
+
+async def test_audio_extraction_unavailable_when_subprocess_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FFmpeg present but unspawnable -> honest UNAVAILABLE, not a crash."""
+
+    from olympus.analysis import analyzers
+
+    monkeypatch.setattr(analyzers.shutil, "which", lambda binary: f"/usr/bin/{binary}")
+    monkeypatch.setattr(analyzers, "_run", _no_subprocess_run)
+
+    store = LocalStorage(root=str(tmp_path))
+    project = await _make_project(store)
+    ctx = StageContext(project=project, storage=store, results={})
+
+    outcome = await analyzers.AudioExtractionAnalyzer().analyze(ctx, lambda _v: None)
+    assert outcome.status is StageStatus.UNAVAILABLE
+    assert "subprocess" in (outcome.reason or "").lower()
