@@ -13,7 +13,7 @@ fabricates a metric - unmeasurable values are UNKNOWN.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
 from olympus.domain.contracts.analysis import AnalysisRepository
 from olympus.domain.contracts.editing import EditingRepository
@@ -75,6 +75,18 @@ from olympus.utils import new_id, utc_now
 
 log = get_logger(__name__)
 
+
+class _LoadableAnalysisRepo(Protocol):
+    """Structural type for the per-engine analysis repositories the monitor reads.
+
+    Every engine repository exposes ``async load(project_id) -> <analysis> | None``;
+    this captures exactly that capability so the monitor can hold them uniformly
+    without depending on a common concrete base (their only shared ABC ancestor
+    does not declare ``load``).
+    """
+
+    async def load(self, project_id: str) -> Any | None: ...
+
 # Engine -> the repository attribute that loads its per-project analysis.
 ENGINES: tuple[str, ...] = (
     "cognitive",
@@ -119,7 +131,7 @@ class MonitoringService:
         self._snapshots = snapshot_repo
         self._workflow_service = workflow_service
         self._disk_path = disk_path
-        self._repos = {
+        self._repos: dict[str, _LoadableAnalysisRepo] = {
             "cognitive": analysis_repo,
             "story": story_repo,
             "virality": virality_repo,

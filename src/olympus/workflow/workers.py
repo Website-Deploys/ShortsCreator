@@ -22,6 +22,7 @@ from olympus.domain.contracts.projects import ProjectRepository
 from olympus.domain.contracts.workflow import EngineRunner, EventBus, JobQueue, WorkerRegistry
 from olympus.domain.entities.workflow import (
     EventType,
+    Job,
     WorkerInfo,
     WorkerStatus,
     Workflow,
@@ -114,7 +115,7 @@ class Worker:
             await self._execute(job)
             await self._registry.heartbeat(self.worker_id, current_job_id=None)
 
-    async def _execute(self, job) -> None:
+    async def _execute(self, job: Job) -> None:
         beat = asyncio.create_task(self._keepalive(job.job_id))
         try:
             project = await self._projects.get(job.project_id)
@@ -279,7 +280,7 @@ class WorkerPool:
                 )
             )
 
-    def _find_job(self, job_id: str):
+    def _find_job(self, job_id: str) -> Job | None:
         for wf in self._workflows.values():
             job = wf.job_by_id(job_id)
             if job is not None:

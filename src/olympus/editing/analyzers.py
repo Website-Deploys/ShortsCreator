@@ -582,7 +582,7 @@ class CropPlannerAnalyzer(EditingAnalyzer):
         vertical = bool(height and width and height >= width)
 
         if not (width and height):
-            crop = {
+            crop: dict[str, Any] = {
                 "target_aspect": "9:16",
                 "status": "unknown",
                 "reason": "source dimensions are unavailable (no video inspection); "

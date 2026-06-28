@@ -7,6 +7,8 @@ unavailable data - a metric that is UNKNOWN simply produces no alert.
 
 from __future__ import annotations
 
+from typing import Any
+
 from olympus.domain.entities.monitoring import (
     Alert,
     AlertSeverity,
@@ -27,7 +29,7 @@ HIGH_RETRY_RATE = 0.5
 LOW_CONFIDENCE = 0.3
 
 
-def _alert(severity: AlertSeverity, category: str, message: str, evidence: dict) -> Alert:
+def _alert(severity: AlertSeverity, category: str, message: str, evidence: dict[str, Any]) -> Alert:
     return Alert(
         id=new_id("alert"), severity=severity, category=category, message=message, evidence=evidence
     )

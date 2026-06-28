@@ -14,6 +14,7 @@ operator explicitly requests. Every figure reflects real stored state.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from olympus.domain.contracts.analysis import AnalysisRepository
 from olympus.domain.contracts.editing import EditingRepository
@@ -40,6 +41,7 @@ from olympus.domain.entities.library import (
     AssetRecord,
     CleanupResult,
     ClipRecord,
+    DashboardStats,
     ExportRecord,
     ProjectLibraryMeta,
     SearchHit,
@@ -297,7 +299,7 @@ class LibraryService:
         )
 
     # -- dashboard ------------------------------------------------------------
-    async def dashboard(self):
+    async def dashboard(self) -> DashboardStats:
         projects = await self._projects.list()
         metas = {m.project_id: m for m in await self._meta.list_all()}
         clips: list[ClipRecord] = []
@@ -417,7 +419,9 @@ class LibraryService:
     async def list_versions(self, project_id: str, engine: str) -> list[VersionRecord]:
         return await self._versions.list_versions(project_id, engine)
 
-    async def get_version(self, project_id: str, engine: str, version: int):
+    async def get_version(
+        self, project_id: str, engine: str, version: int
+    ) -> dict[str, Any] | None:
         return await self._versions.get_payload(project_id, engine, version)
 
     # -- activity feed --------------------------------------------------------
@@ -428,7 +432,7 @@ class LibraryService:
         events.extend(await self._derive_activity(project_id))
         events.sort(key=lambda e: e.ts, reverse=True)
         # De-duplicate by (type, project, message, ts) keeping order.
-        seen: set[tuple] = set()
+        seen: set[tuple[Any, ...]] = set()
         deduped: list[ActivityEvent] = []
         for e in events:
             key = (e.type.value, e.project_id, e.message, e.ts.isoformat())
@@ -482,7 +486,7 @@ class LibraryService:
         message: str,
         *,
         project_id: str | None,
-        detail: dict | None = None,
+        detail: dict[str, Any] | None = None,
     ) -> None:
         await self._activity.append(
             ActivityEvent(
@@ -665,20 +669,22 @@ class LibraryService:
         await self._meta.delete(project_id)
 
 
-def _payload(entity: object) -> dict | None:
+def _payload(entity: object) -> dict[str, Any] | None:
     """A stable, serialisable snapshot of an engine output for versioning."""
 
     if entity is None:
         return None
     index = getattr(entity, "index", None)
     if callable(index):
-        return index()
+        result = index()
+        return result if isinstance(result, dict) else None
     to_dict = getattr(entity, "to_dict", None)
     if callable(to_dict):
-        return to_dict()
+        result = to_dict()
+        return result if isinstance(result, dict) else None
     status = getattr(entity, "status", None)
     stages = getattr(entity, "stages", None)
-    payload: dict = {}
+    payload: dict[str, Any] = {}
     if status is not None:
         payload["status"] = getattr(status, "value", str(status))
     if stages is not None:

@@ -37,7 +37,8 @@ def stage_duration_ms(stage: _StageLike) -> float | None:
 
     if stage.started_at is None or stage.completed_at is None:
         return None
-    return (stage.completed_at - stage.started_at).total_seconds() * 1000.0
+    result = (stage.completed_at - stage.started_at).total_seconds() * 1000.0
+    return float(result)
 
 
 def percentile(values: list[float], pct: float) -> float | None:

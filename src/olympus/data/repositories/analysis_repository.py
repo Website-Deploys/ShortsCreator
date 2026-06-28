@@ -18,6 +18,7 @@ behind the same :class:`AnalysisRepository` contract.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from olympus.domain.contracts.analysis import AnalysisRepository
 from olympus.domain.contracts.storage import StoragePort
@@ -103,7 +104,5 @@ class StorageAnalysisRepository(AnalysisRepository):
             await self._storage.delete(key)
 
 
-def _dt(value: str):
-    from datetime import datetime
-
+def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value)

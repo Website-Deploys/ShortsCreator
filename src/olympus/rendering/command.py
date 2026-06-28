@@ -169,7 +169,7 @@ def caption_cues(timeline: dict[str, Any]) -> list[dict[str, Any]]:
         for e in _track(timeline, "caption")
         if _as_str(e.get("text")).strip()
     ]
-    cues.sort(key=lambda c: c["start"])
+    cues.sort(key=lambda c: _as_float(c.get("start")))
     return cues
 
 

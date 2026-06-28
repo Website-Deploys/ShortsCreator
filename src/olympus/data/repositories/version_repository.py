@@ -104,7 +104,8 @@ class StorageVersionRepository(VersionRepository):
         if not await self._storage.exists(key):
             return None
         try:
-            return json.loads(await self._storage.get(key))
+            data = json.loads(await self._storage.get(key))
+            return data if isinstance(data, dict) else None
         except (json.JSONDecodeError, ValueError):
             return None
 

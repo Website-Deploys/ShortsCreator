@@ -25,7 +25,7 @@ from olympus.platform.errors import ConfigurationError, StorageError
 from olympus.platform.logging import get_logger
 
 if TYPE_CHECKING:
-    from olympus.platform.config import StorageSettings
+    from olympus.platform.config.settings import StorageSettings
 
 log = get_logger(__name__)
 
@@ -102,7 +102,9 @@ class S3Storage(StoragePort):
         except Exception as exc:
             raise StorageError("Failed to stream object to S3.", details={"key": key}) from exc
         finally:
-            await asyncio.to_thread(lambda: os.path.exists(tmp_path) and os.unlink(tmp_path))
+            await asyncio.to_thread(
+                lambda: os.unlink(tmp_path) if os.path.exists(tmp_path) else None
+            )
         return StorageObject(key=key, size_bytes=size, content_type=content_type)
 
     async def get(self, key: str) -> bytes:

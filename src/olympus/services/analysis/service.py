@@ -133,6 +133,19 @@ class AnalysisService:
                 error=str(exc),
                 exc_info=True,
             )
+            # A hard pipeline failure (e.g. storage error mid-run) must not leave
+            # the project stuck in ANALYZING forever. Reflect FAILED honestly;
+            # guard the status write so a still-failing backend cannot mask the
+            # original error by raising out of the handler.
+            try:
+                await self._set_project_status(project.id, ProjectStatus.FAILED)
+            except Exception as status_exc:
+                log.error(
+                    "analysis_status_reflect_failed",
+                    project_id=project.id,
+                    error=str(status_exc),
+                    exc_info=True,
+                )
         finally:
             _RUNS.pop(project.id, None)
 

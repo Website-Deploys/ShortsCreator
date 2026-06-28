@@ -14,7 +14,7 @@ from olympus.services.queue.celery_app import celery_app
 log = get_logger(__name__)
 
 
-@celery_app.task(name="olympus.ping")
+@celery_app.task(name="olympus.ping")  # type: ignore[untyped-decorator]  # celery has no stubs
 def ping() -> str:
     """A trivial health task used to verify the queue/worker path is wired up."""
 
