@@ -93,12 +93,36 @@ async def _materialize_source(
     return src_path, None
 
 
-async def _run(*args: str, timeout: float = 120.0) -> tuple[int, bytes, bytes]:
-    """Run a subprocess, returning (returncode, stdout, stderr)."""
+class SubprocessUnavailableError(RuntimeError):
+    """The running event loop cannot spawn subprocesses.
 
-    proc = await asyncio.create_subprocess_exec(
-        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
+    ``asyncio.create_subprocess_exec`` raises a bare ``NotImplementedError`` on
+    event loops without child-process support (e.g. a Windows
+    ``SelectorEventLoop``, or other restricted/custom loops). We convert it into
+    this explicit, catchable error so analyzers can degrade *honestly* - exactly
+    as they do when FFmpeg is absent - instead of crashing the stage with an
+    opaque ``NotImplementedError``.
+    """
+
+
+async def _run(*args: str, timeout: float = 120.0) -> tuple[int, bytes, bytes]:
+    """Run a subprocess, returning (returncode, stdout, stderr).
+
+    Raises :class:`SubprocessUnavailableError` if the running event loop cannot
+    create subprocesses, and :class:`TimeoutError` if the process exceeds
+    ``timeout``. Other failures (e.g. a missing binary) surface as ``OSError``.
+    """
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+    except NotImplementedError as exc:
+        raise SubprocessUnavailableError(
+            "The running asyncio event loop does not support spawning "
+            "subprocesses, so external tools (FFmpeg/ffprobe) cannot be run in "
+            "this environment."
+        ) from exc
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
@@ -163,6 +187,10 @@ class VideoInspectionAnalyzer(Analyzer):
                     data = _from_ffprobe(probe, data)
             except (OSError, json.JSONDecodeError, TimeoutError) as exc:
                 log.warning("ffprobe_failed", error=str(exc))
+            except SubprocessUnavailableError as exc:
+                # The loop cannot run ffprobe; keep the client-metadata baseline
+                # (this stage must always complete) and note it honestly.
+                log.warning("ffprobe_subprocess_unavailable", error=str(exc))
         report(1.0)
         return StageOutcome.completed(data)
 
@@ -236,9 +264,19 @@ class AudioExtractionAnalyzer(Analyzer):
             assert src_path is not None  # one of the two is always set
 
             out_path = str(Path(tmp) / "audio.wav")
-            code, _, err = await _run(
-                "ffmpeg", "-y", "-i", src_path, "-vn", "-ac", "1", "-ar", "16000", out_path
-            )
+            try:
+                code, _, err = await _run(
+                    "ffmpeg", "-y", "-i", src_path, "-vn", "-ac", "1", "-ar", "16000", out_path
+                )
+            except SubprocessUnavailableError as exc:
+                # FFmpeg is present, but this event loop cannot spawn it. Report
+                # the truth (UNAVAILABLE), never a fabricated success or an opaque
+                # NotImplementedError crash.
+                return StageOutcome.unavailable(
+                    f"{exc} Audio extraction needs to run FFmpeg as a subprocess; "
+                    "run the backend on an event loop that supports subprocesses "
+                    "to enable it."
+                )
             if code != 0:
                 stderr_text = (err or b"").decode(errors="ignore").strip()
                 # Capture the complete FFmpeg stderr for diagnosis (full, not
