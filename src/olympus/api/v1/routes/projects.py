@@ -120,6 +120,13 @@ async def delete_project(
 ) -> Response:
     """Delete a project, its stored artifacts, and all engine analyses."""
 
+    # First, signal cancellation to every engine so an in-flight chain stops
+    # propagating (an upstream engine completing must not re-trigger a
+    # downstream one after we have begun deleting). Each delete() below then
+    # waits for its own task to drain before removing artifacts.
+    for service in (analysis, story, virality, planning, editing, optimization, rendering):
+        await service.cancel(project_id)
+
     await library.delete_library_data(project_id)
     await workflow.delete(project_id)
     await optimization.delete(project_id)

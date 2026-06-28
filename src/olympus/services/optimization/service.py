@@ -134,13 +134,21 @@ class OptimizationService:
                     await self._on_complete(project, optimization)
                 except Exception as exc:  # never let the hook break the run
                     log.error(
-                        "optimization_on_complete_error", project_id=project.id, error=str(exc)
+                        "optimization_on_complete_error",
+                        project_id=project.id,
+                        error=str(exc),
+                        exc_info=True,
                     )
         except asyncio.CancelledError:
             log.info("optimization_task_cancelled", project_id=project.id)
             raise
         except Exception as exc:  # background task must not crash silently
-            log.error("optimization_task_error", project_id=project.id, error=str(exc))
+            log.error(
+                "optimization_task_error",
+                project_id=project.id,
+                error=str(exc),
+                exc_info=True,
+            )
         finally:
             _RUNS.pop(project.id, None)
 
@@ -277,5 +285,19 @@ class OptimizationService:
     async def delete(self, project_id: str) -> None:
         """Cancel any run and delete all optimization artifacts (idempotent)."""
 
+        # Capture the in-flight run BEFORE cancelling so we can wait for it to
+        # actually stop. Deleting a project's artifacts while its background
+        # task is still writing would orphan the directory or raise a
+        # StorageError (os.replace into a just-deleted dir).
+        run = _RUNS.get(project_id)
         await self.cancel(project_id)
+        if run is not None and run.task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(run.task), timeout=10.0)
+            except Exception as exc:  # best-effort drain; deletion proceeds
+                log.warning(
+                    "optimization_delete_drain_incomplete",
+                    project_id=project_id,
+                    error=str(exc),
+                )
         await self._optimization_repo.delete(project_id)

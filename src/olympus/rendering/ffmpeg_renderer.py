@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from olympus.domain.contracts.rendering import (
     ClipRenderer,
@@ -114,7 +115,7 @@ class FfmpegClipRenderer(ClipRenderer):
         dest.write_bytes(data)
         return dest
 
-    def _write_srt(self, timeline: dict, tmp_dir: Path) -> Path | None:
+    def _write_srt(self, timeline: dict[str, Any], tmp_dir: Path) -> Path | None:
         cues = C.caption_cues(timeline)
         if not cues:
             return None
@@ -142,7 +143,7 @@ class FfmpegClipRenderer(ClipRenderer):
             )
         return [f"[{label}] {line}" for line in tail]
 
-    async def _probe(self, path: Path) -> dict:
+    async def _probe(self, path: Path) -> dict[str, Any]:
         if shutil.which(self._ffprobe) is None:
             return {}
         args = C.build_ffprobe_command(binary=self._ffprobe, path=str(path))
@@ -154,17 +155,20 @@ class FfmpegClipRenderer(ClipRenderer):
         if completed.returncode != 0:
             return {}
         try:
-            return json.loads((completed.stdout or b"").decode("utf-8", "replace"))
+            parsed: Any = json.loads((completed.stdout or b"").decode("utf-8", "replace"))
         except (json.JSONDecodeError, ValueError):
             return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     @staticmethod
     def _build_output(
-        spec: ClipRenderSpec, data: bytes, probe: dict, logs: list[str]
+        spec: ClipRenderSpec, data: bytes, probe: dict[str, Any], logs: list[str]
     ) -> ClipRenderOutput:
         fmt = probe.get("format", {}) if isinstance(probe, dict) else {}
         streams = probe.get("streams", []) if isinstance(probe, dict) else []
-        video = next((s for s in streams if s.get("codec_type") == "video"), {})
+        video: dict[str, Any] = next(
+            (s for s in streams if s.get("codec_type") == "video"), {}
+        )
         audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
 
         def _to_float(value: object) -> float | None:
