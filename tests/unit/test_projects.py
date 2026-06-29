@@ -235,3 +235,32 @@ async def test_derived_name_falls_back_when_stem_empty(
 
     assert created.name.strip() != ""
     assert len(created.name) <= 200
+
+
+
+async def test_delete_tolerates_corrupt_project_document(
+    service: ProjectService, storage: LocalStorage
+) -> None:
+    """A corrupt project.json must still be deletable, not a permanent 5xx.
+
+    Regression: ProjectService.delete() read the project via repo.get() before
+    deleting, and repo.get() raises StorageError on an unparseable document - so
+    a corrupt project could never be removed and its detail endpoint 5xx'd
+    forever. Delete must purge the broken record regardless.
+    """
+    from olympus.platform.errors import StorageError
+
+    key = "projects/proj_corrupt/project.json"
+    await storage.put(key, b"{ this is not valid json", content_type="application/json")
+    assert await storage.exists(key)
+
+    # get() surfaces the corruption as a mapped StorageError ...
+    with pytest.raises(StorageError):
+        await service.get("proj_corrupt")
+
+    # ... but delete() must succeed and remove the broken document.
+    await service.delete("proj_corrupt")
+    assert not await storage.exists(key)
+
+    # idempotent: deleting again is a no-op, never raises.
+    await service.delete("proj_corrupt")

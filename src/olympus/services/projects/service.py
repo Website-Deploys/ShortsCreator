@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from olympus.domain.contracts.projects import ProjectRepository
 from olympus.domain.contracts.storage import StoragePort
 from olympus.domain.entities.project import Project, ProjectStatus
-from olympus.platform.errors import NotFoundError, ValidationError
+from olympus.platform.errors import NotFoundError, StorageError, ValidationError
 from olympus.platform.logging import get_logger
 from olympus.utils import new_id, project_write_lock, utc_now
 
@@ -150,12 +150,29 @@ class ProjectService:
             return project
 
     async def delete(self, project_id: str) -> None:
-        """Delete a project and its stored artifacts (source + thumbnail)."""
+        """Delete a project and its stored artifacts (source + thumbnail).
+
+        Tolerates a corrupt/unreadable ``project.json``: if the metadata cannot
+        be parsed we can no longer locate the source/thumbnail blobs, but we must
+        still remove the (broken) project record so it stops surfacing as a
+        permanent 5xx on its detail endpoint and cannot be re-listed. Without
+        this, a single corrupt document would be undeletable via the API.
+        """
 
         async with project_write_lock(project_id):
-            project = await self._repo.get(project_id)
+            try:
+                project = await self._repo.get(project_id)
+            except StorageError:
+                # Corrupt/unreadable document: the id is well-formed (only the
+                # stored content is bad), so we cannot locate the source/
+                # thumbnail blobs, but we must still purge the broken record so
+                # it stops 5xx-ing on its detail endpoint and cannot be
+                # re-listed. Without this a corrupt document is undeletable.
+                log.warning("deleting_corrupt_project_record", project_id=project_id)
+                await self._repo.delete(project_id)
+                return
             if project is None:
-                return  # idempotent
+                return  # idempotent: nothing exists for this id (incl. oversized ids)
             await self._storage.delete(project.storage_key)
             if project.thumbnail_key:
                 await self._storage.delete(project.thumbnail_key)
