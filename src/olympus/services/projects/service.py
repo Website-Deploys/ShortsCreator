@@ -36,11 +36,27 @@ class NewProjectInput:
     upload_duration_ms: float | None = None
 
 
+# Maximum length of a project name. Enforced both when deriving a name from an
+# uploaded filename and when a user renames a project, so the two paths cannot
+# diverge. Chosen to comfortably fit real titles while bounding payload/UI size.
+MAX_PROJECT_NAME_LENGTH = 200
+
+
 def _derive_name(filename: str) -> str:
-    """Turn a filename into a friendly project name (drop the extension)."""
+    """Turn a filename into a friendly project name (drop the extension).
+
+    The result is bounded to :data:`MAX_PROJECT_NAME_LENGTH` so that a hostile or
+    accidental multi-thousand-character filename cannot produce an unbounded
+    project name - which would bloat API payloads and persisted state and break
+    the UI layout. This honours the same ceiling enforced by
+    :meth:`ProjectService.rename`, so derived and user-set names are consistent.
+    """
 
     stem = filename.rsplit(".", 1)[0].strip()
-    return stem or filename
+    name = stem or filename.strip() or "Untitled"
+    if len(name) > MAX_PROJECT_NAME_LENGTH:
+        name = name[:MAX_PROJECT_NAME_LENGTH].rstrip()
+    return name
 
 
 class ProjectService:
@@ -108,7 +124,7 @@ class ProjectService:
         cleaned = name.strip()
         if not cleaned:
             raise ValidationError("Project name cannot be empty.")
-        if len(cleaned) > 200:
+        if len(cleaned) > MAX_PROJECT_NAME_LENGTH:
             raise ValidationError("Project name is too long.")
         async with project_write_lock(project_id):
             project = await self.get(project_id)

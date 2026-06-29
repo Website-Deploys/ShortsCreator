@@ -194,3 +194,44 @@ def test_projects_api_roundtrip(app: FastAPI, tmp_path: Path) -> None:
 
         missing = client.get(f"/api/v1/projects/{project['id']}")
         assert missing.status_code == 404
+
+
+
+async def test_derived_name_is_bounded_for_hostile_filename(
+    service: ProjectService, storage: LocalStorage
+) -> None:
+    """A multi-thousand-character filename must not yield an unbounded name.
+
+    Regression: ``_derive_name`` previously returned the full filename stem with
+    no length ceiling, while ``rename`` enforced a 200-char limit - so an
+    accidental or hostile upload filename could produce an enormous project name
+    that bloats API payloads/persisted state and breaks the UI. The derived name
+    must honour the same ceiling as the rename path.
+    """
+    from olympus.services.projects.service import MAX_PROJECT_NAME_LENGTH
+
+    key = await _seed_upload(storage)
+    data = _new_input(key)
+    data.source_filename = "A" * 4000 + ".mp4"
+
+    created = await service.create(data)
+
+    assert len(created.name) <= MAX_PROJECT_NAME_LENGTH
+    assert created.name == "A" * MAX_PROJECT_NAME_LENGTH
+    # And the bound is single-sourced with the rename guard.
+    with pytest.raises(ValidationError):
+        await service.rename(created.id, "B" * (MAX_PROJECT_NAME_LENGTH + 1))
+
+
+async def test_derived_name_falls_back_when_stem_empty(
+    service: ProjectService, storage: LocalStorage
+) -> None:
+    """A filename that is all extension/whitespace yields a safe, non-empty name."""
+    key = await _seed_upload(storage)
+    data = _new_input(key)
+    data.source_filename = "   .mp4"
+
+    created = await service.create(data)
+
+    assert created.name.strip() != ""
+    assert len(created.name) <= 200
