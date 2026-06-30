@@ -363,9 +363,7 @@ class SpeechTranscriptionAnalyzer(Analyzer):
                 "language": result.language,
                 "confidence": result.confidence,
                 "word_count": len(result.text.split()),
-                "has_word_timestamps": any(
-                    s.start is not None for s in result.segments
-                ),
+                "has_word_timestamps": any(s.words for s in result.segments),
                 "segments": [
                     {
                         "start": s.start,
@@ -373,6 +371,7 @@ class SpeechTranscriptionAnalyzer(Analyzer):
                         "text": s.text,
                         "confidence": s.confidence,
                         "speaker": s.speaker,
+                        "words": s.words,
                     }
                     for s in result.segments
                 ],

@@ -41,6 +41,28 @@ The API starts **without** Postgres or Redis (it uses the local-disk storage
 backend and a no-op transcription provider by default). Database-backed
 endpoints and the queue require the infrastructure from `make compose-up`.
 
+### Enable real transcription (required for clip generation)
+
+The default `noop` transcription provider lets the app boot with no model
+weights, but it returns an empty transcript - so the Clip Planner finds no
+clip-worthy moments and **no Shorts are produced**. To generate real clips,
+enable the production speech-to-text adapter (faster-whisper):
+
+```bash
+# Install the optional, heavier transcription dependency
+uv pip install -e ".[transcription]"
+
+# Select the provider (see .env.example for all knobs)
+export OLYMPUS_AI__TRANSCRIPTION_PROVIDER=faster-whisper
+export OLYMPUS_AI__WHISPER_MODEL=base        # tiny|base|small|medium|large-v3
+export OLYMPUS_AI__WHISPER_DEVICE=auto        # auto|cpu|cuda  (auto-detects GPU, falls back to CPU)
+export OLYMPUS_AI__WHISPER_COMPUTE_TYPE=auto  # auto -> int8 on CPU, float16 on GPU
+```
+
+With a real transcript, the downstream Story -> Virality -> Clip Planner ->
+Editing -> Rendering stages produce actual Shorts. The model weights download
+on first use (cache them with `OLYMPUS_AI__WHISPER_DOWNLOAD_ROOT`).
+
 ### Verify it works
 
 ```bash

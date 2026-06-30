@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -31,6 +32,10 @@ class TranscriptSegment:
     text: str
     confidence: float | None = None
     speaker: str | None = None
+    # Optional per-word timings ``[{"start","end","word","confidence"}]`` when the
+    # provider supplies them. Additive and optional: existing consumers that read
+    # only segment-level fields are unaffected.
+    words: list[dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)

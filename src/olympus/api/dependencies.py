@@ -80,7 +80,7 @@ def storage_provider() -> StoragePort:
 def transcription_provider() -> TranscriptionProvider:
     """Provide the configured transcription provider (typed as the contract)."""
 
-    return build_transcription_provider()
+    return build_transcription_provider(storage=build_storage())
 
 
 def renderer_provider() -> Renderer:
@@ -294,7 +294,7 @@ def analysis_service_provider() -> AnalysisService:
         analysis_repo=StorageAnalysisRepository(storage),
         project_repo=StorageProjectRepository(storage),
         storage=storage,
-        transcription_provider=build_transcription_provider(),
+        transcription_provider=build_transcription_provider(storage=storage),
         on_complete=_start_story,
     )
 

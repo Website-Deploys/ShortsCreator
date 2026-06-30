@@ -111,11 +111,28 @@ class AiSettings(BaseModel):
     """AI service abstraction settings.
 
     ``noop`` providers let the application start and run end-to-end wiring tests
-    without any model credentials. Real providers are selected in deployed
-    environments.
+    without any model weights. Real providers (e.g. ``faster-whisper``) are
+    selected in deployed environments via ``OLYMPUS_AI__TRANSCRIPTION_PROVIDER``.
     """
 
     transcription_provider: str = "noop"
+
+    # --- faster-whisper provider tuning (only used when the provider is selected) ---
+    # Model size/name (e.g. "tiny", "base", "small", "medium", "large-v3") or a
+    # path/HF repo id. "base" balances quality and CPU speed for the foundation.
+    whisper_model: str = "base"
+    # "auto" picks CUDA when available and falls back to CPU; or force "cpu"/"cuda".
+    whisper_device: str = "auto"
+    # "auto" -> int8 on CPU, float16 on GPU; or force e.g. "int8"/"float16"/"float32".
+    whisper_compute_type: str = "auto"
+    # Decoding beam size (higher = more accurate, slower).
+    whisper_beam_size: int = 5
+    # Optional ISO language hint (e.g. "en"); empty -> auto-detect per audio.
+    whisper_language: str | None = None
+    # Optional directory to cache downloaded model weights (defaults to HF cache).
+    whisper_download_root: str | None = None
+    # Hard ceiling (seconds) on a single transcription before it is aborted.
+    whisper_timeout_seconds: float = 1800.0
 
 
 class RenderingSettings(BaseModel):
