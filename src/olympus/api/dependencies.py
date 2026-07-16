@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from olympus.ai import build_transcription_provider
 from olympus.boba import BobaIntegration, BobaMemoryStore
+from olympus.boba.creator_memory import build_and_save_creator_memory
+from olympus.boba.memory_learning import BobaMemoryLearner
 from olympus.data.database.session import get_session
 from olympus.data.repositories import (
     StorageActivityRepository,
@@ -134,15 +136,41 @@ def personalization_service_provider() -> CreatorPersonalizationService:
     """Provide the local-only creator profile and explicit-feedback service."""
 
     settings = get_settings().creator_personalization
+    profile_store = ProfileStore(
+        settings.storage_dir,
+        max_profiles=settings.max_profiles,
+        max_note_chars=settings.max_feedback_notes_chars,
+        learning_enabled_by_default=settings.learning_enabled_by_default,
+    )
+    memory_settings = get_settings().boba_memory
+    memory_callback = None
+    if memory_settings.enabled and memory_settings.allow_creator_memory:
+        boba_settings = get_settings().boba
+        memory_store = BobaMemoryStore(
+            boba_settings.storage_dir,
+            max_excerpt_chars=memory_settings.max_excerpt_chars,
+            max_decisions_per_project=boba_settings.max_decisions_per_project,
+            memory_root=memory_settings.storage_dir,
+            max_records_per_project=memory_settings.max_records_per_project,
+            max_records_per_creator=memory_settings.max_records_per_creator,
+            max_global_records=memory_settings.max_global_records,
+            allow_import_export=memory_settings.allow_import_export,
+            backup_before_reset=memory_settings.backup_before_reset,
+        )
+
+        def memory_callback(feedback: object, profile: object) -> None:
+            BobaMemoryLearner(memory_store).learn_from_feedback(feedback)  # type: ignore[arg-type]
+            build_and_save_creator_memory(
+                memory_store,
+                profile,  # type: ignore[arg-type]
+                profile_store.list_feedback(profile.profile_id),  # type: ignore[attr-defined]
+            )
+
     return CreatorPersonalizationService(
-        ProfileStore(
-            settings.storage_dir,
-            max_profiles=settings.max_profiles,
-            max_note_chars=settings.max_feedback_notes_chars,
-            learning_enabled_by_default=settings.learning_enabled_by_default,
-        ),
+        profile_store,
         conservative_until_feedback_count=settings.conservative_until_feedback_count,
         enabled=settings.enabled,
+        memory_feedback_callback=memory_callback,
     )
 
 
@@ -150,14 +178,23 @@ def boba_integration_provider() -> BobaIntegration:
     """Provide BOBA's local, offline advisory integration layer."""
 
     settings = get_settings().boba
+    memory_settings = get_settings().boba_memory
     return BobaIntegration(
         build_storage(),
         BobaMemoryStore(
             settings.storage_dir,
             max_excerpt_chars=settings.max_excerpt_chars,
             max_decisions_per_project=settings.max_decisions_per_project,
+            memory_root=memory_settings.storage_dir,
+            max_records_per_project=memory_settings.max_records_per_project,
+            max_records_per_creator=memory_settings.max_records_per_creator,
+            max_global_records=memory_settings.max_global_records,
+            allow_import_export=memory_settings.allow_import_export,
+            backup_before_reset=memory_settings.backup_before_reset,
         ),
         mode=settings.mode,
+        memory_enabled=memory_settings.enabled,
+        allow_global_memory=memory_settings.allow_global_memory,
     )
 
 

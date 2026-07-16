@@ -41,6 +41,22 @@ def compact_boba_summary(
         *list(ranking.get("warnings") or []),
         *list(policy.get("warnings") or []),
     ]
+    applications = [
+        item
+        for item in (
+            ranking.get("memory_application_v1"),
+            policy.get("memory_application_v1"),
+        )
+        if isinstance(item, dict)
+    ]
+    memory_used = list(
+        dict.fromkeys(
+            str(memory_id)
+            for application in applications
+            for memory_id in application.get("memory_used", [])
+            if memory_id
+        )
+    )
     return {
         "brain_version": str(brain.get("version") or "1"),
         "mode": str(brain.get("mode") or "advise"),
@@ -54,6 +70,8 @@ def compact_boba_summary(
         "confidence": float(policy.get("confidence") or brain.get("confidence") or 0.0),
         "missing_signals": list(source.get("missing_signals") or []),
         "warnings": list(dict.fromkeys(str(item) for item in warnings if item)),
+        "memory_used": memory_used[:20],
+        "memory_application_count": len(applications),
         "advisory_only": True,
         "applied": False,
     }

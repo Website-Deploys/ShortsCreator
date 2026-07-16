@@ -137,4 +137,17 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection.toLowerCase()).not.toContain("boba guarantees");
     expect(resultsSection.toLowerCase()).not.toContain("boba fully controls");
   });
+
+  it("shows bounded local BOBA memory summaries", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Memory");
+    expect(resultsSection).toContain("What BOBA remembers:");
+    expect(resultsSection).toContain("Selected / rejected:");
+    expect(resultsSection).toContain("Known limitations:");
+    expect(resultsSection).toContain("Creator memory");
+    expect(resultsSection).toContain("explicit feedback item(s)");
+    expect(resultsSection).toContain("Memory used:");
+    expect(resultsSection).toContain("No cloud sync or passive learning.");
+  });
 });

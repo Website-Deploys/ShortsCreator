@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from olympus.personalization.contracts import (
@@ -25,10 +26,12 @@ class CreatorPersonalizationService:
         *,
         conservative_until_feedback_count: int = 5,
         enabled: bool = True,
+        memory_feedback_callback: Callable[[ClipFeedbackV2, CreatorProfileV2], None] | None = None,
     ) -> None:
         self.store = store
         self.conservative_until_feedback_count = conservative_until_feedback_count
         self.enabled = enabled
+        self.memory_feedback_callback = memory_feedback_callback
 
     def initialize(self) -> CreatorProfileV2:
         return self.store.initialize_default()
@@ -113,6 +116,8 @@ class CreatorPersonalizationService:
         feedback.applied_to_profile = applied
         self.store.save_profile(updated)
         self.store.record_feedback(feedback)
+        if self.memory_feedback_callback is not None:
+            self.memory_feedback_callback(feedback, updated)
         return feedback
 
     def summary(self) -> dict[str, Any]:

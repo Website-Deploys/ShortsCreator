@@ -425,6 +425,30 @@ class BobaSettings(BaseModel):
     explain_every_decision: bool = True
 
 
+class BobaMemorySettings(BaseModel):
+    """Local, explicit, privacy-safe controls for BOBA Memory System V1."""
+
+    enabled: bool = True
+    storage_dir: str = "work/boba/memory"
+    local_only: Literal[True] = True
+    max_excerpt_chars: int = Field(default=300, ge=80, le=800)
+    max_records_per_project: int = Field(default=1000, ge=1, le=10000)
+    max_records_per_creator: int = Field(default=5000, ge=1, le=50000)
+    max_global_records: int = Field(default=10000, ge=1, le=100000)
+    explicit_feedback_only: Literal[True] = True
+    allow_creator_memory: bool = True
+    allow_global_memory: bool = True
+    allow_import_export: bool = True
+    backup_before_reset: bool = True
+    reject_secret_like_text: Literal[True] = True
+    reject_large_copyrighted_text: Literal[True] = True
+    retrieval_limit_default: int = Field(default=20, ge=1, le=100)
+    min_confidence_default: float = Field(default=0.2, ge=0.0, le=1.0)
+    memory_decay_enabled: bool = True
+    auto_learn_from_validation_reports: bool = True
+    auto_learn_from_passive_viewing: Literal[False] = False
+
+
 class DurableJobsSettings(BaseModel):
     """Local durable Workflow Engine persistence and recovery controls."""
 
@@ -488,6 +512,7 @@ class Settings(BaseSettings):
         default_factory=CreatorPersonalizationSettings
     )
     boba: BobaSettings = Field(default_factory=BobaSettings)
+    boba_memory: BobaMemorySettings = Field(default_factory=BobaMemorySettings)
     durable_jobs: DurableJobsSettings = Field(default_factory=DurableJobsSettings)
 
     @property
