@@ -895,6 +895,49 @@ export interface RenderedVideo {
   };
 }
 
+export interface BobaBrainStateV1 {
+  brain_id: string;
+  project_id: string;
+  created_at: string;
+  updated_at: string;
+  version: "1";
+  mode: "observe_only" | "advise" | "influence_planning" | "influence_editing" | "full_brain";
+  confidence: number;
+  source_understanding: {
+    source_type: string;
+    duration_seconds?: number | null;
+    transcript_available: boolean;
+    visual_signals_available: boolean;
+    speaker_signals_available: boolean;
+    trend_signals_available: boolean;
+    safety_signals_available: boolean;
+    personalization_signals_available: boolean;
+    missing_signals: string[];
+    warnings: string[];
+  };
+  project_memory_summary: {
+    main_topics: string[];
+    story_threads: string[];
+    unused_opportunities: string[];
+    warnings: string[];
+  };
+  decision_context: {
+    content_niche: string;
+    safety_status: string;
+    trend_provider_status: string;
+    personalization_status: string;
+    known_limitations: string[];
+  };
+  decisions: Array<Record<string, unknown>>;
+  result: {
+    ready_for_planning: boolean;
+    ready_for_editing: boolean;
+    ready_for_rendering: boolean;
+    blockers: string[];
+    warnings: string[];
+  };
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

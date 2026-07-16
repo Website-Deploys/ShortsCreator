@@ -47,6 +47,7 @@ import type {
   AdminSnapshot,
   AlertsResponse,
   AuditResponse,
+  BobaBrainStateV1,
   CostEstimate,
   EnginesResponse,
   FailuresResponse,
@@ -62,6 +63,7 @@ export const queryKeys = {
   systemInfo: ["system", "info"] as const,
   projects: ["projects"] as const,
   project: (id: string) => ["projects", id] as const,
+  bobaBrain: (id: string) => ["boba", "projects", id, "brain"] as const,
   creatorProfiles: ["personalization", "profiles"] as const,
   creatorPersonalizationSummary: ["personalization", "summary"] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
@@ -130,6 +132,22 @@ export function useProject(id: string) {
       const status = query.state.data?.status;
       return status && TERMINAL.has(status) ? false : 5000;
     },
+  });
+}
+
+export function useBobaBrain(id: string) {
+  return useQuery<BobaBrainStateV1 | null>({
+    queryKey: queryKeys.bobaBrain(id),
+    queryFn: async () => {
+      try {
+        return await api.getBobaBrain(id);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    staleTime: 30_000,
+    retry: 1,
   });
 }
 

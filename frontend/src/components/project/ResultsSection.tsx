@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { mediaUrls } from "@/lib/apiClient";
 import {
   useActivateCreatorProfile,
+  useBobaBrain,
   useCreateCreatorProfile,
   useCreatorProfiles,
   useExportCreatorProfile,
@@ -19,6 +20,7 @@ import {
 import { formatBytes, formatDuration, isTerminal } from "@/lib/rendering";
 import type {
   ClipFeedbackInput,
+  BobaBrainStateV1,
   ClipPlan,
   CreatorProfileV2,
   RenderRun,
@@ -995,6 +997,62 @@ function personalizationSummary(render: RenderedVideo) {
   };
 }
 
+function bobaClipSummary(render: RenderedVideo) {
+  const unified = asRecord(asRecord(render.metadata).unified_clip_intelligence);
+  const boba = asRecord(unified.boba);
+  return {
+    available: Object.keys(boba).length > 0,
+    mode: asString(boba.mode) || "advise",
+    confidence: asNumber(boba.confidence),
+    rankingExplanation: asString(boba.ranking_explanation),
+    editorialPolicy: asString(boba.editorial_policy_summary),
+    missingSignals: asArray(boba.missing_signals).map(asString).filter(Boolean),
+    warnings: asArray(boba.warnings).map(asString).filter(Boolean),
+    applied: boba.applied === true,
+  };
+}
+
+function BobaBrainPanel({ brain }: { brain: BobaBrainStateV1 | null | undefined }) {
+  return (
+    <section className="rounded-xl border border-violet-300/20 bg-violet-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Brain Summary</p>
+          <p className="text-xs text-muted">
+            BOBA observes and advises; existing Olympus engines still make and execute decisions.
+          </p>
+        </div>
+        <span className="rounded bg-violet-300/10 px-2 py-1 text-[11px] text-violet-100">
+          Mode: {brain?.mode?.replace(/_/g, " ") ?? "Not available"}
+        </span>
+      </div>
+      {brain ? (
+        <div className="mt-3 grid gap-2 text-xs text-muted sm:grid-cols-2">
+          <p>
+            BOBA confidence: {formatPercent(brain.confidence)} · Niche: {brain.decision_context.content_niche}
+          </p>
+          <p>
+            Ready: planning {brain.result.ready_for_planning ? "yes" : "no"}, editing {brain.result.ready_for_editing ? "yes" : "no"}, rendering {brain.result.ready_for_rendering ? "yes" : "no"}
+          </p>
+          <p className="sm:col-span-2">
+            BOBA noticed: {brain.project_memory_summary.main_topics.slice(0, 4).join(", ") || "No bounded topic summary is available."}
+          </p>
+          <p className="sm:col-span-2">
+            Missing signals: {brain.source_understanding.missing_signals.join(", ") || "None reported"}
+          </p>
+          {(brain.result.blockers.length > 0 || brain.result.warnings.length > 0) && (
+            <p className="sm:col-span-2 text-amber-100">
+              Warning: {[...brain.result.blockers, ...brain.result.warnings].slice(0, 3).join("; ")}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">BOBA project reasoning is not available.</p>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -1022,6 +1080,7 @@ function ClipCard({
   const unified = unifiedSummary(render, plan, effects, viral);
   const safety = copyrightSafetySummary(render);
   const personalization = personalizationSummary(render);
+  const boba = bobaClipSummary(render);
   const safetyBadgeClass =
     safety.riskLevel === "blocked" || safety.riskLevel === "high"
       ? "bg-red-500/10 text-red-300"
@@ -1128,6 +1187,32 @@ function ClipCard({
             {!unified.available && (
               <p className="mt-1 text-[11px] text-muted">
                 Showing fallback Story/Virality/Render fields from older metadata.
+              </p>
+            )}
+          </div>
+          <div className="rounded-lg border border-violet-300/20 bg-violet-300/[0.04] px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-100/80">
+              BOBA reasoning
+            </p>
+            {boba.available ? (
+              <div className="mt-1 space-y-1 text-xs leading-relaxed text-muted">
+                <p>
+                  BOBA recommends: {boba.rankingExplanation || boba.editorialPolicy || "Review the advisory project reasoning."}
+                </p>
+                <p>
+                  BOBA confidence: {formatPercent(boba.confidence)} · Mode: {boba.mode.replace(/_/g, " ")}
+                </p>
+                <p>Applied to editing: {boba.applied ? "Yes" : "No, advisory only"}</p>
+                {boba.missingSignals.length > 0 && (
+                  <p>Missing signals: {boba.missingSignals.slice(0, 5).join(", ")}</p>
+                )}
+                {boba.warnings.length > 0 && (
+                  <p className="text-amber-100">Warning: {boba.warnings.slice(0, 2).join("; ")}</p>
+                )}
+              </div>
+            ) : (
+              <p className="mt-1 text-xs text-muted">
+                BOBA reasoning is not available for this older render.
               </p>
             )}
           </div>
@@ -1642,6 +1727,7 @@ export function ResultsSection({
   const manifestQuery = useRenderManifest(projectId, terminal);
   const plansQuery = usePlans(projectId, terminal);
   const profilesQuery = useCreatorProfiles();
+  const bobaQuery = useBobaBrain(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -1652,6 +1738,7 @@ export function ResultsSection({
     return (
       <div className="space-y-4">
         <PersonalizationPanel />
+        <BobaBrainPanel brain={bobaQuery.data} />
         {renders.map((rendered) => (
           <ClipCard
             key={rendered.clip_id}
@@ -1669,6 +1756,7 @@ export function ResultsSection({
     return (
       <div className="space-y-4">
         <PersonalizationPanel />
+        <BobaBrainPanel brain={bobaQuery.data} />
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
           title="Generating clips from the full video"
@@ -1682,6 +1770,7 @@ export function ResultsSection({
     return (
       <div className="space-y-4">
         <PersonalizationPanel />
+        <BobaBrainPanel brain={bobaQuery.data} />
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
           title="Rendering selected clips"
@@ -1695,6 +1784,7 @@ export function ResultsSection({
   return (
     <div className="space-y-4">
       <PersonalizationPanel />
+      <BobaBrainPanel brain={bobaQuery.data} />
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}
         title="No rendered clips yet"

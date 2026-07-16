@@ -329,6 +329,7 @@ def unified_clip_intelligence(
     existing_safety = as_dict(existing.get("copyright_safety"))
     existing_upload_metadata = as_dict(existing.get("upload_metadata"))
     existing_personalization = as_dict(existing.get("personalization"))
+    existing_boba = as_dict(existing.get("boba"))
     caption_intelligence = as_dict(
         render_metadata.get("caption_intelligence_v2")
         or editing_v2.get("caption_intelligence_v2")
@@ -849,5 +850,12 @@ def unified_clip_intelligence(
             "warnings": as_list(personalization_applied.get("warnings")),
             "reasons": as_list(personalization_applied.get("reasons")),
         },
+        "boba": as_dict(
+            render_metadata.get("boba")
+            or editing_v2.get("boba")
+            or plan.get("boba")
+            or blueprint.get("boba")
+            or existing_boba
+        ),
         "rendering": rendering,
     }
