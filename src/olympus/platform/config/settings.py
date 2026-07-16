@@ -401,6 +401,30 @@ class CreatorPersonalizationSettings(BaseModel):
     allow_export_import: bool = True
 
 
+class BobaSettings(BaseModel):
+    """Safe, local, advisory defaults for BOBA Core Brain V1."""
+
+    enabled: bool = True
+    mode: Literal[
+        "observe_only",
+        "advise",
+        "influence_planning",
+        "influence_editing",
+        "full_brain",
+    ] = "advise"
+    storage_dir: str = "work/boba"
+    max_excerpt_chars: int = Field(default=300, ge=80, le=800)
+    max_decisions_per_project: int = Field(default=500, ge=1, le=5000)
+    enable_project_memory: bool = True
+    enable_candidate_ranking: bool = True
+    enable_editorial_policy: bool = True
+    enable_frontend_display: bool = True
+    enable_global_learning: Literal[False] = False
+    enable_autonomous_scout: Literal[False] = False
+    require_user_approval_for_sources: bool = True
+    explain_every_decision: bool = True
+
+
 class DurableJobsSettings(BaseModel):
     """Local durable Workflow Engine persistence and recovery controls."""
 
@@ -463,6 +487,7 @@ class Settings(BaseSettings):
     creator_personalization: CreatorPersonalizationSettings = Field(
         default_factory=CreatorPersonalizationSettings
     )
+    boba: BobaSettings = Field(default_factory=BobaSettings)
     durable_jobs: DurableJobsSettings = Field(default_factory=DurableJobsSettings)
 
     @property

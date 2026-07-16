@@ -68,6 +68,7 @@ import type {
   AdminSnapshot,
   AlertsResponse,
   AuditResponse,
+  BobaBrainStateV1,
   CostEstimate,
   EnginesResponse,
   FailuresResponse,
@@ -144,6 +145,8 @@ export const api = {
 
   listProjects: () => request<Project[]>("/projects"),
   getProject: (id: string) => request<Project>(`/projects/${id}`),
+  getBobaBrain: (id: string) =>
+    request<BobaBrainStateV1>(`/boba/projects/${id}/brain`),
   createProject: (input: CreateProjectInput) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify(input) }),
   createProjectFromLink: (input: CreateProjectFromLinkInput) =>

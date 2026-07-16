@@ -122,4 +122,19 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("trackPageView");
     expect(resultsSection).not.toContain("implicitFeedback");
   });
+
+  it("shows advisory BOBA reasoning without autonomy claims", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Brain Summary");
+    expect(resultsSection).toContain("BOBA reasoning");
+    expect(resultsSection).toContain("BOBA noticed:");
+    expect(resultsSection).toContain("BOBA recommends:");
+    expect(resultsSection).toContain("BOBA confidence:");
+    expect(resultsSection).toContain("Missing signals:");
+    expect(resultsSection).toContain("No, advisory only");
+    expect(resultsSection).toContain("BOBA reasoning is not available for this older render.");
+    expect(resultsSection.toLowerCase()).not.toContain("boba guarantees");
+    expect(resultsSection.toLowerCase()).not.toContain("boba fully controls");
+  });
 });

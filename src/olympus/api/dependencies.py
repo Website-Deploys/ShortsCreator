@@ -20,6 +20,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from olympus.ai import build_transcription_provider
+from olympus.boba import BobaIntegration, BobaMemoryStore
 from olympus.data.database.session import get_session
 from olympus.data.repositories import (
     StorageActivityRepository,
@@ -142,6 +143,21 @@ def personalization_service_provider() -> CreatorPersonalizationService:
         ),
         conservative_until_feedback_count=settings.conservative_until_feedback_count,
         enabled=settings.enabled,
+    )
+
+
+def boba_integration_provider() -> BobaIntegration:
+    """Provide BOBA's local, offline advisory integration layer."""
+
+    settings = get_settings().boba
+    return BobaIntegration(
+        build_storage(),
+        BobaMemoryStore(
+            settings.storage_dir,
+            max_excerpt_chars=settings.max_excerpt_chars,
+            max_decisions_per_project=settings.max_decisions_per_project,
+        ),
+        mode=settings.mode,
     )
 
 
@@ -482,6 +498,7 @@ ProjectServiceDep = Annotated[ProjectService, Depends(project_service_provider)]
 PersonalizationServiceDep = Annotated[
     CreatorPersonalizationService, Depends(personalization_service_provider)
 ]
+BobaIntegrationDep = Annotated[BobaIntegration, Depends(boba_integration_provider)]
 AnalysisServiceDep = Annotated[AnalysisService, Depends(analysis_service_provider)]
 StoryServiceDep = Annotated[StoryService, Depends(story_service_provider)]
 ViralityServiceDep = Annotated[ViralityService, Depends(virality_service_provider)]
