@@ -100,6 +100,7 @@ function JobRow({ projectId, job }: { projectId: string; job: WorkflowJob }) {
   const [open, setOpen] = useState(false);
   const retry = useRetryWorkflowJob(projectId);
   const meta = jobStatusMeta(job.status);
+  const checkpoint = job.checkpoint ?? {};
   return (
     <li className="rounded-lg border border-white/10">
       <div className="flex items-center justify-between gap-3 px-3 py-2">
@@ -150,7 +151,14 @@ function JobRow({ projectId, job }: { projectId: string; job: WorkflowJob }) {
             )}
             <span>started: <span className="text-white/80">{clockTime(job.started_at) || "—"}</span></span>
             <span>finished: <span className="text-white/80">{clockTime(job.finished_at) || "—"}</span></span>
+            <span>heartbeat: <span className="text-white/80">{clockTime(job.heartbeat_at) || "—"}</span></span>
           </div>
+          {Object.keys(checkpoint).length > 0 && (
+            <p className="rounded bg-white/[0.03] px-2 py-1 text-muted">
+              Checkpoint: {checkpoint.valid === true ? "validated" : "warning"}
+              {typeof checkpoint.artifact_path === "string" ? ` · ${checkpoint.artifact_path}` : ""}
+            </p>
+          )}
           {job.error && (
             <p className="rounded bg-rose-500/[0.08] px-2 py-1 text-rose-200">{job.error}</p>
           )}
@@ -282,6 +290,13 @@ function Controls({ workflow, projectId }: { workflow: Workflow; projectId: stri
           <PlayIcon className="mr-1.5 h-4 w-4" /> Resume
         </Button>
       )}
+      {workflow.status === "cancelled" &&
+        workflow.durable_job_v2?.status !== "cancel_requested" &&
+        workflow.durable_job_v2?.resume.resumable !== false && (
+        <Button onClick={() => resume.mutate()} disabled={busy}>
+          <PlayIcon className="mr-1.5 h-4 w-4" /> Resume
+        </Button>
+      )}
       {workflow.failed_stages.length > 0 && workflow.status !== "running" && (
         <Button onClick={() => retry.mutate()} disabled={busy}>
           <RefreshIcon className="mr-1.5 h-4 w-4" /> Retry workflow
@@ -301,6 +316,7 @@ function Controls({ workflow, projectId }: { workflow: Workflow; projectId: stri
 export function WorkflowDashboard({ projectId }: { projectId: string }) {
   const { data: workflow, isLoading } = useWorkflow(projectId);
   const start = useStartWorkflow(projectId);
+  const resume = useResumeWorkflow(projectId);
 
   if (isLoading && !workflow) {
     return (
@@ -330,6 +346,8 @@ export function WorkflowDashboard({ projectId }: { projectId: string }) {
   const meta = workflowStatusMeta(workflow.status);
   const tally = jobTally(workflow.jobs);
   const active = ["running", "pending", "paused"].includes(workflow.status);
+  const durable = workflow.durable_job_v2;
+  const stale = durable?.resume.stale_running_detected || durable?.status === "stale";
 
   return (
     <div className="space-y-6">
@@ -350,6 +368,10 @@ export function WorkflowDashboard({ projectId }: { projectId: string }) {
               {workflow.total_retries > 0 && <span> · {workflow.total_retries} retries</span>}
               {active && <span> · est. {formatEstimate(workflow.estimated_remaining_seconds)} left</span>}
             </p>
+            <p className="mt-1 text-[11px] text-muted">
+              Job {(durable?.job_id ?? workflow.workflow_id).slice(-12)}
+              {durable?.heartbeat_at && <> · heartbeat {clockTime(durable.heartbeat_at)}</>}
+            </p>
           </div>
           <Controls workflow={workflow} projectId={projectId} />
         </div>
@@ -367,6 +389,23 @@ export function WorkflowDashboard({ projectId }: { projectId: string }) {
           </p>
         </div>
       </Card>
+
+      {stale && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.08] px-4 py-3 text-sm text-amber-100">
+          <span>
+            <AlertIcon className="mr-2 inline h-5 w-5" />Backend restarted or a worker heartbeat expired. Resume validates checkpoints before continuing.
+          </span>
+          {durable?.resume.resumable !== false && (
+            <Button onClick={() => resume.mutate()} disabled={resume.isPending}>Resume</Button>
+          )}
+        </div>
+      )}
+
+      {durable?.status === "cancel_requested" && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-sm text-amber-200">
+          Cancellation requested. Olympus is waiting for the current stage to reach a safe stop point.
+        </div>
+      )}
 
       {/* Execution graph */}
       <Card>

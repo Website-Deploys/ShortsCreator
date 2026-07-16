@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import cast
 
 from olympus.domain.contracts.storage import StoragePort
 from olympus.domain.contracts.workflow import EngineRunner, EngineRunResult
@@ -29,6 +30,7 @@ log = get_logger(__name__)
 StartFn = Callable[[Project], Awaitable[object]]
 IsRunningFn = Callable[[str], bool]
 StatusFn = Callable[[str], Awaitable[str | None]]
+CancelFn = Callable[[str], Awaitable[object]]
 
 _TERMINAL = {"completed", "failed", "cancelled"}
 
@@ -69,6 +71,7 @@ class ServiceEngineRunner(EngineRunner):
         status: StatusFn,
         poll_interval: float = 0.05,
         timeout_seconds: float = 600.0,
+        cancel: CancelFn | None = None,
     ) -> None:
         self.engine = engine
         self._start = start
@@ -76,6 +79,7 @@ class ServiceEngineRunner(EngineRunner):
         self._status = status
         self._poll = poll_interval
         self._timeout = timeout_seconds
+        self._cancel = cancel
 
     async def run(self, project: Project, job: Job) -> EngineRunResult:
         job.log(f"starting {self.engine} engine")
@@ -84,6 +88,9 @@ class ServiceEngineRunner(EngineRunner):
         # Give the background task a tick to register as running.
         await asyncio.sleep(0)
         while self._is_running(project.id):
+            if job.cancellation_requested and self._cancel is not None:
+                job.log("cooperative cancellation requested")
+                await self._cancel(project.id)
             await asyncio.sleep(self._poll)
             waited += self._poll
             if waited >= self._timeout:
@@ -92,12 +99,19 @@ class ServiceEngineRunner(EngineRunner):
                     error=f"{self.engine} did not finish within {self._timeout:.0f}s",
                 )
         raw = await self._status(project.id)
-        mapped = raw if raw in _TERMINAL else "completed"
+        mapped = raw if raw in _TERMINAL else "failed"
         job.log(f"{self.engine} engine finished with status: {raw or 'no-record'}")
+        error = None
+        if mapped != "completed":
+            error = (
+                f"{self.engine} did not persist a terminal status"
+                if raw not in _TERMINAL
+                else f"{self.engine} status: {raw}"
+            )
         return EngineRunResult(
             status=mapped,
             summary={"engine_status": raw},
-            error=None if mapped == "completed" else f"{self.engine} status: {raw}",
+            error=error,
         )
 
 
@@ -128,6 +142,7 @@ def build_service_runner(
     named ``getter(project_id)`` returning an entity with a ``.status`` enum.
     """
 
+    cancel = getattr(service, "cancel", None)
     return ServiceEngineRunner(
         engine,
         start=lambda project: service.start(project),  # type: ignore[attr-defined]
@@ -135,4 +150,5 @@ def build_service_runner(
         status=_status_getter(getattr(service, getter)),
         poll_interval=poll_interval,
         timeout_seconds=timeout_seconds,
+        cancel=cast(CancelFn, cancel) if callable(cancel) else None,
     )

@@ -28,6 +28,7 @@ from olympus.domain.entities.workflow import (
     Workflow,
     WorkflowEvent,
 )
+from olympus.jobs.checkpoints import CheckpointValidator
 from olympus.platform.logging import get_logger
 from olympus.utils import new_id, utc_now
 
@@ -93,6 +94,7 @@ class Worker:
         stop_event: asyncio.Event,
         idle_sleep: float = 0.02,
         heartbeat_interval: float = 0.5,
+        checkpoint_validator: CheckpointValidator | None = None,
     ) -> None:
         self.worker_id = worker_id
         self._queue = queue
@@ -102,6 +104,7 @@ class Worker:
         self._stop = stop_event
         self._idle = idle_sleep
         self._hb = heartbeat_interval
+        self._checkpoints = checkpoint_validator
 
     async def run_forever(self) -> None:
         await self._registry.register(self.worker_id)
@@ -116,7 +119,7 @@ class Worker:
             await self._registry.heartbeat(self.worker_id, current_job_id=None)
 
     async def _execute(self, job: Job) -> None:
-        beat = asyncio.create_task(self._keepalive(job.job_id))
+        beat = asyncio.create_task(self._keepalive(job))
         try:
             project = await self._projects.get(job.project_id)
             runner = self._runners.get(job.engine)
@@ -129,8 +132,40 @@ class Worker:
                 self._registry.record_completion(self.worker_id, failed=True)
                 return
             result = await runner.run(project, job)
-            if result.ok:
-                await self._queue.complete(job, result.summary)
+            if result.status == "cancelled" or job.cancellation_requested:
+                await self._queue.cancel(job, reason=job.cancellation_reason or "cancel requested")
+                self._registry.record_completion(self.worker_id, failed=False)
+            elif result.ok:
+                summary = dict(result.summary)
+                if self._checkpoints is not None:
+                    try:
+                        checkpoint = await self._checkpoints.inspect(project, job)
+                    except Exception as exc:
+                        checkpoint = {
+                            "valid": False,
+                            "warnings": [
+                                f"Checkpoint inspection failed: {type(exc).__name__}: {exc}"
+                            ],
+                        }
+                    summary["checkpoint"] = checkpoint
+                    if not checkpoint.get("valid"):
+                        job.checkpoint = checkpoint
+                        warnings = [
+                            str(item) for item in checkpoint.get("warnings", []) if item
+                        ]
+                        job.warnings = list(dict.fromkeys(job.warnings + warnings))
+                        detail = warnings[0] if warnings else "artifact could not be validated"
+                        await self._queue.fail(
+                            job,
+                            f"{job.stage} checkpoint validation failed: {detail}",
+                        )
+                        self._registry.record_completion(self.worker_id, failed=True)
+                        return
+                    if job.engine == "rendering":
+                        summary["rendered_clip_count"] = int(
+                            checkpoint.get("rendered_clip_count") or 0
+                        )
+                await self._queue.complete(job, summary)
                 self._registry.record_completion(self.worker_id, failed=False)
             else:
                 await self._queue.fail(job, result.error or "engine reported failure")
@@ -145,10 +180,11 @@ class Worker:
             with contextlib.suppress(asyncio.CancelledError):
                 await beat
 
-    async def _keepalive(self, job_id: str) -> None:
+    async def _keepalive(self, job: Job) -> None:
         while True:
             await asyncio.sleep(self._hb)
-            await self._registry.heartbeat(self.worker_id, current_job_id=job_id)
+            await self._registry.heartbeat(self.worker_id, current_job_id=job.job_id)
+            await self._queue.heartbeat(job, self.worker_id)
 
 
 class WorkerPool:
@@ -166,6 +202,9 @@ class WorkerPool:
         concurrency: int = 2,
         worker_timeout_seconds: float = 30.0,
         health_interval_seconds: float = 1.0,
+        heartbeat_interval_seconds: float = 10.0,
+        idle_sleep: float = 0.02,
+        checkpoint_validator: CheckpointValidator | None = None,
     ) -> None:
         self._queue = queue
         self._runners = runners
@@ -176,6 +215,9 @@ class WorkerPool:
         self._concurrency = max(1, concurrency)
         self._timeout = worker_timeout_seconds
         self._health_interval = health_interval_seconds
+        self._heartbeat_interval = heartbeat_interval_seconds
+        self._idle_sleep = idle_sleep
+        self._checkpoints = checkpoint_validator
         self._stop = asyncio.Event()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._monitor: asyncio.Task[None] | None = None
@@ -204,6 +246,9 @@ class WorkerPool:
             project_repo=self._projects,
             registry=self._registry,
             stop_event=self._stop,
+            idle_sleep=self._idle_sleep,
+            heartbeat_interval=self._heartbeat_interval,
+            checkpoint_validator=self._checkpoints,
         )
         self._tasks[worker_id] = asyncio.create_task(worker.run_forever())
         return worker_id

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from importlib import import_module
 
 from olympus.domain.entities.monitoring import SystemMetrics
 
@@ -26,25 +27,29 @@ def collect_system_metrics(disk_path: str = ".") -> SystemMetrics:
     metrics.cpu_count = os.cpu_count()
 
     # Load average (POSIX only).
-    try:
-        one, five, fifteen = os.getloadavg()
-        metrics.load_avg_1m, metrics.load_avg_5m, metrics.load_avg_15m = (
-            round(one, 2),
-            round(five, 2),
-            round(fifteen, 2),
-        )
-    except (OSError, AttributeError):
+    getloadavg = getattr(os, "getloadavg", None)
+    if getloadavg is not None:
+        try:
+            one, five, fifteen = getloadavg()
+            metrics.load_avg_1m, metrics.load_avg_5m, metrics.load_avg_15m = (
+                round(one, 2),
+                round(five, 2),
+                round(fifteen, 2),
+            )
+        except OSError:
+            unavailable.append("load_average")
+    else:
         unavailable.append("load_average")
 
     # Process CPU time + peak RSS (POSIX).
     try:
-        import resource
+        resource = import_module("resource")
 
         usage = resource.getrusage(resource.RUSAGE_SELF)
         metrics.process_cpu_seconds = round(usage.ru_utime + usage.ru_stime, 3)
         # ru_maxrss is kilobytes on Linux.
         metrics.process_max_rss_bytes = int(usage.ru_maxrss) * 1024
-    except (ImportError, ValueError):
+    except (ImportError, AttributeError, ValueError):
         unavailable.append("process_resource_usage")
 
     # Disk usage (always available).

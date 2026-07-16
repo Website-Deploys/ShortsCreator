@@ -179,8 +179,8 @@ class RenderOutcome:
         return cls(status=RenderStageStatus.UNAVAILABLE, reason=reason, data=data or {})
 
     @classmethod
-    def failed(cls, reason: str) -> RenderOutcome:
-        return cls(status=RenderStageStatus.FAILED, reason=reason)
+    def failed(cls, reason: str, data: dict[str, Any] | None = None) -> RenderOutcome:
+        return cls(status=RenderStageStatus.FAILED, reason=reason, data=data or {})
 
 
 # A progress reporter a stage may call with a value in [0, 1].

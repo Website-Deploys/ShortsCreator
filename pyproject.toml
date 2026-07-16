@@ -30,6 +30,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Real speech-to-text. Heavy (CTranslate2 + model weights), so it is an opt-in
+# extra: deployments that want clip generation install `olympus[transcription]`
+# and set OLYMPUS_AI__TRANSCRIPTION_PROVIDER=faster-whisper. The base image stays
+# lean and starts fine with the default `noop` provider.
+transcription = [
+    "faster-whisper>=1.0,<2.0",
+]
+video-links = [
+    "yt-dlp>=2025.1.15",
+]
 dev = [
     "pytest>=8.2,<9.0",
     "pytest-asyncio>=0.23,<1.0",

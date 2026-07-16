@@ -17,6 +17,7 @@ from olympus.analysis import build_default_analyzers
 from olympus.analysis.pipeline import AnalysisPipeline
 from olympus.data.repositories import StorageAnalysisRepository, StorageProjectRepository
 from olympus.data.storage.local import LocalStorage
+from olympus.domain.contracts.ai import TranscriptResult, TranscriptSegment
 from olympus.domain.contracts.analysis import (
     Analyzer,
     ProgressReporter,
@@ -27,6 +28,7 @@ from olympus.domain.entities.analysis import (
     STAGE_ORDER,
     Analysis,
     AnalysisStatus,
+    StageResult,
     StageStatus,
 )
 from olympus.domain.entities.project import Project, ProjectStatus
@@ -205,6 +207,103 @@ async def test_rerun_only_targets_one_stage(
     kg_rerun = rerun.stage("knowledge_graph")
     assert kg_rerun is not None
     assert kg_rerun.status is StageStatus.COMPLETED
+
+
+async def test_pipeline_persists_speech_transcription_and_continues(
+    storage: LocalStorage,
+    repo: StorageAnalysisRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from olympus.analysis import analyzers
+
+    monkeypatch.setattr(analyzers.shutil, "which", lambda binary: f"C:/tools/{binary}.exe")
+
+    async def fake_run(*args: str, timeout: float = 120.0) -> tuple[int, bytes, bytes]:
+        if args[0] == "ffmpeg":
+            Path(args[-1]).write_bytes(b"RIFFfake-wav-data")
+            return 0, b"", b""
+        return 1, b"", b""
+
+    class _Provider:
+        name = "fake-transcriber"
+
+        async def transcribe(self, audio_key: str) -> TranscriptResult:
+            assert audio_key.endswith("/audio.wav")
+            return TranscriptResult(
+                language="en",
+                segments=[
+                    TranscriptSegment(start=0.0, end=1.2, text="Hello Olympus"),
+                ],
+            )
+
+    monkeypatch.setattr(analyzers, "_run", fake_run)
+    project = await _make_project(storage)
+
+    analysis = await AnalysisPipeline(build_default_analyzers(), repo).run(
+        project,
+        storage,
+        transcription_provider=_Provider(),
+    )
+
+    speech = analysis.stage("speech_transcription")
+    assert speech is not None
+    assert speech.status is StageStatus.COMPLETED
+    assert speech.data["word_count"] == 2
+    assert speech.data["segments"][0]["text"] == "Hello Olympus"
+    assert (
+        Path(storage._root)  # type: ignore[attr-defined]
+        / "analysis"
+        / project.id
+        / "stages"
+        / "speech_transcription.json"
+    ).exists()
+
+    graph = analysis.stage("knowledge_graph")
+    assert graph is not None
+    assert graph.status is StageStatus.COMPLETED
+    assert graph.data["transcript_available"] is True
+    assert graph.data["transcript_word_count"] == 2
+
+
+async def test_pipeline_recovers_stale_running_stage(
+    storage: LocalStorage, repo: StorageAnalysisRepository
+) -> None:
+    project = await _make_project(storage)
+    now = utc_now()
+    stale = Analysis(
+        project_id=project.id,
+        pipeline_version="1",
+        status=AnalysisStatus.RUNNING,
+        created_at=now,
+        updated_at=now,
+        stages=[StageResult(stage=name) for name in STAGE_ORDER],
+    )
+    speech = stale.stage("speech_transcription")
+    assert speech is not None
+    speech.status = StageStatus.RUNNING
+    speech.version = "1"
+    speech.started_at = now
+    speech.progress = 0.4
+    await repo.save_stage(project.id, speech)
+    await repo.save_index(stale)
+
+    result = await AnalysisPipeline(build_default_analyzers(), repo).run(
+        project,
+        storage,
+        only={"video_inspection"},
+    )
+
+    recovered = result.stage("speech_transcription")
+    assert recovered is not None
+    assert recovered.status is StageStatus.FAILED
+    assert recovered.error is not None and "interrupted" in recovered.error
+    assert result.status is AnalysisStatus.FAILED
+
+    reloaded = await repo.load(project.id)
+    assert reloaded is not None
+    persisted = reloaded.stage("speech_transcription")
+    assert persisted is not None
+    assert persisted.status is StageStatus.FAILED
 
 
 # --------------------------------------------------------------------------- #

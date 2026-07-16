@@ -173,7 +173,10 @@ export function ClipPlannerView({
       | null) ?? null,
   );
   const plansQuery = usePlans(planning.project_id, isTerminal(planning));
-  const allPlans = plansQuery.data?.plans ?? [];
+  // Memoised so the empty-fallback array is stable across renders; otherwise a
+  // fresh `[]` on every render would invalidate the useMemo hooks below.
+  const plansData = plansQuery.data;
+  const allPlans = useMemo(() => plansData?.plans ?? [], [plansData]);
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<PlanSortKey>("rank");

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -22,6 +23,10 @@ from olympus.platform.errors import StorageError
 from olympus.platform.logging import get_logger
 
 log = get_logger(__name__)
+
+_WINDOWS_REPLACE_ATTEMPTS = 20
+_WINDOWS_REPLACE_BACKOFF_SECONDS = 0.025
+_WINDOWS_READ_RETRY_ENABLED = os.name == "nt"
 
 
 class LocalStorage(StoragePort):
@@ -58,7 +63,7 @@ class LocalStorage(StoragePort):
                     handle.write(data)
                     handle.flush()
                     os.fsync(handle.fileno())
-                os.replace(tmp, path)
+                _replace_atomic(tmp, path)
             except BaseException:
                 Path(tmp).unlink(missing_ok=True)
                 raise
@@ -80,6 +85,8 @@ class LocalStorage(StoragePort):
         path = self._path_for(key)
         await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
         size = 0
+        started = time.perf_counter()
+        log.info("local_storage_stream_write_started", key=key)
         try:
             handle = await asyncio.to_thread(open, path, "wb")
             try:
@@ -100,11 +107,28 @@ class LocalStorage(StoragePort):
             # exception unchanged (preserving its type and traceback).
             await asyncio.to_thread(path.unlink, True)
             raise
+        log.info(
+            "local_storage_stream_write_completed",
+            key=key,
+            size_bytes=size,
+            duration_ms=round((time.perf_counter() - started) * 1000),
+        )
         return StorageObject(key=key, size_bytes=size, content_type=content_type)
 
     async def get(self, key: str) -> bytes:
         def _read() -> bytes:
-            return self._path_for(key).read_bytes()
+            path = self._path_for(key)
+            for attempt in range(_WINDOWS_REPLACE_ATTEMPTS):
+                try:
+                    return path.read_bytes()
+                except PermissionError:
+                    if (
+                        not _WINDOWS_READ_RETRY_ENABLED
+                        or attempt == _WINDOWS_REPLACE_ATTEMPTS - 1
+                    ):
+                        raise
+                    time.sleep(_WINDOWS_REPLACE_BACKOFF_SECONDS * (attempt + 1))
+            raise RuntimeError("unreachable")
 
         try:
             return await asyncio.to_thread(_read)
@@ -178,3 +202,16 @@ class LocalStorage(StoragePort):
             # callers (e.g. file-serving routes) treat None as "not available" and
             # fall back, so a hostile key yields a clean 404, not a 5xx.
             return None
+
+
+def _replace_atomic(source: str, destination: Path) -> None:
+    """Atomically replace a file, tolerating transient Windows reader locks."""
+
+    for attempt in range(_WINDOWS_REPLACE_ATTEMPTS):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if os.name != "nt" or attempt == _WINDOWS_REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_WINDOWS_REPLACE_BACKOFF_SECONDS * (attempt + 1))

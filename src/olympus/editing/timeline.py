@@ -36,6 +36,25 @@ _WORD_RE = re.compile(r"[a-zA-Z']+")
 _CLAUSE_RE = re.compile(r"[^.!?;,]+[.!?;,]?")
 _MAX_CAPTION_WORDS = 7
 _MAX_CAPTION_CHARS = 42
+HIGHLIGHT_WORDS: frozenset[str] = frozenset(
+    {
+        "always",
+        "best",
+        "changed",
+        "everything",
+        "fear",
+        "impossible",
+        "mistake",
+        "money",
+        "never",
+        "remember",
+        "secret",
+        "stop",
+        "success",
+        "truth",
+        "worst",
+    }
+)
 
 
 # -- coercion ----------------------------------------------------------------
@@ -133,6 +152,33 @@ def clip_segments(
         rel_end = round3(min(clip_end, e) - clip_start)
         if rel_end <= rel_start:
             continue
+        words: list[dict[str, Any]] = []
+        for raw_word in as_list(seg.get("words")):
+            word = as_dict(raw_word)
+            word_start = as_float(word.get("start"), -1.0)
+            word_end = as_float(word.get("end"), -1.0)
+            word_text = as_str(word.get("word")).strip()
+            if not word_text or word_start < 0 or word_end <= word_start:
+                continue
+            if word_end <= clip_start or word_start >= clip_end:
+                continue
+            localized_start = round3(max(0.0, word_start - clip_start))
+            localized_end = round3(min(clip_end, word_end) - clip_start)
+            if localized_end <= localized_start:
+                continue
+            words.append(
+                {
+                    "word": word_text,
+                    "start": localized_start,
+                    "end": localized_end,
+                    "confidence": word.get("confidence"),
+                    "source_start": round3(word_start),
+                    "source_end": round3(word_end),
+                    "boundary_clipped": bool(
+                        word_start < clip_start - 0.001 or word_end > clip_end + 0.001
+                    ),
+                }
+            )
         out.append(
             {
                 "start": rel_start,
@@ -141,6 +187,7 @@ def clip_segments(
                 "speaker": as_str(seg.get("speaker")),
                 "source_start": round3(s),
                 "source_end": round3(e),
+                "words": words,
             }
         )
     return out
@@ -156,7 +203,12 @@ def to_clip_relative(timestamp: float, clip_start: float, clip_duration: float) 
 
 
 # -- linguistic caption splitting -------------------------------------------
-def split_caption(text: str) -> list[str]:
+def split_caption(
+    text: str,
+    *,
+    max_words: int = _MAX_CAPTION_WORDS,
+    max_chars: int = _MAX_CAPTION_CHARS,
+) -> list[str]:
     """Split a transcript line into caption-sized chunks at clause boundaries.
 
     Not a fixed time slice: splits at punctuation/clauses first, then packs words
@@ -174,7 +226,7 @@ def split_caption(text: str) -> list[str]:
         current: list[str] = []
         for word in words:
             tentative = [*current, word]
-            if len(tentative) > _MAX_CAPTION_WORDS or len(" ".join(tentative)) > _MAX_CAPTION_CHARS:
+            if len(tentative) > max_words or len(" ".join(tentative)) > max_chars:
                 if current:
                     chunks.append(" ".join(current))
                 current = [word]
@@ -183,6 +235,36 @@ def split_caption(text: str) -> list[str]:
         if current:
             chunks.append(" ".join(current))
     return chunks
+
+
+def highlight_words(text: str) -> list[str]:
+    """Important words worth visual emphasis in styled captions."""
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for word in _WORD_RE.findall(text.lower()):
+        if word in HIGHLIGHT_WORDS and word not in seen:
+            out.append(word)
+            seen.add(word)
+    return out
+
+
+def caption_readability(text: str, start: float, end: float) -> dict[str, Any]:
+    """Caption readability metrics used by the quality report and UI."""
+
+    duration = max(0.001, end - start)
+    cps = len(text) / duration
+    if cps <= 17:
+        comfort = "comfortable"
+    elif cps <= 23:
+        comfort = "brisk"
+    else:
+        comfort = "too_fast"
+    return {
+        "characters_per_second": round3(cps),
+        "word_count": len(text.split()),
+        "comfort": comfort,
+    }
 
 
 def distribute_timing(chunks: list[str], start: float, end: float) -> list[dict[str, Any]]:

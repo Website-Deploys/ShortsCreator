@@ -12,10 +12,33 @@ from __future__ import annotations
 from fastapi import APIRouter, status
 
 from olympus.api.dependencies import ProjectServiceDep, ViralityServiceDep
-from olympus.api.v1.schemas.virality import ViralityResponse, ViralitySummaryResponse
+from olympus.api.v1.schemas.virality import (
+    TrendResearchResponse,
+    ViralityResponse,
+    ViralitySummaryResponse,
+)
 from olympus.platform.errors import NotFoundError
 
 router = APIRouter(prefix="/projects/{project_id}/virality", tags=["virality"])
+
+
+@router.get("/trend-research", response_model=TrendResearchResponse)
+async def get_trend_research(
+    project_id: str, projects: ProjectServiceDep, virality: ViralityServiceDep
+) -> TrendResearchResponse:
+    """Return the project's attributed trend snapshot without rerunning research."""
+
+    await projects.get(project_id)
+    snapshot = await virality.get_trend_research(project_id)
+    if snapshot is None:
+        raise NotFoundError(
+            "No trend research snapshot is available for this project yet.",
+            details={"id": project_id},
+        )
+    return TrendResearchResponse(
+        project_id=project_id,
+        internet_trend_research_v2=snapshot,
+    )
 
 
 @router.get("", response_model=ViralityResponse)

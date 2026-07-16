@@ -91,6 +91,7 @@ export const STAGE_GROUPS: { title: string; stages: string[] }[] = [
       "title_suggestion",
       "description_suggestion",
       "hashtag_recommendation",
+      "upload_metadata_v2",
       "platform_optimization",
       "compression_optimization",
     ],

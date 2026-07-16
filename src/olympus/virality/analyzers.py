@@ -18,6 +18,7 @@ Honesty rules (enforced by construction):
 
 from __future__ import annotations
 
+import json
 from typing import Any, ClassVar
 
 from olympus.domain.contracts.virality import (
@@ -26,6 +27,9 @@ from olympus.domain.contracts.virality import (
     ViralityProgressReporter,
     ViralityStageContext,
 )
+from olympus.integration import clip_intelligence as CI  # noqa: N812 (module alias is intentional)
+from olympus.platform.config import get_settings
+from olympus.trends import TrendResearchEngine, match_trend_patterns
 from olympus.virality import scoring as S  # noqa: N812 (module alias is intentional)
 
 
@@ -70,12 +74,94 @@ _NO_TRANSCRIPT = (
 )
 
 
+async def _link_source_metadata(ctx: ViralityStageContext) -> dict[str, Any]:
+    """Load bounded Link Ingestion metadata when this project has it."""
+
+    ingestion_id = ctx.project.link_ingestion_id or ""
+    compact = ingestion_id.replace("-", "").replace("_", "")
+    if not ingestion_id or len(ingestion_id) > 100 or not compact.isalnum():
+        return {}
+    key = f"link_ingestions/{ingestion_id}/status.json"
+    if not await ctx.storage.exists(key):
+        return {}
+    try:
+        payload = json.loads((await ctx.storage.get(key)).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    metadata = payload.get("video_metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
 # --------------------------------------------------------------------------- #
-# 1. Hook Strength - opening attention / stop-scroll potential.
+# 1. Internet Trend Research V2 - one safe, cached project-level snapshot.
+# --------------------------------------------------------------------------- #
+class TrendResearchAnalyzer(ViralityAnalyzer):
+    name = "trend_research"
+    version = "2"
+
+    async def analyze(
+        self, ctx: ViralityStageContext, report: ViralityProgressReporter
+    ) -> ViralityOutcome:
+        segments = ctx.transcript_segments() or []
+        transcript = " ".join(_seg_text(segment) for segment in segments)
+        story_v2 = ctx.story_data("story_analysis_v2") or {}
+        source_metadata = await _link_source_metadata(ctx)
+        settings = get_settings().trend_research
+        snapshot = await TrendResearchEngine(settings).research(
+            ctx.storage,
+            project_id=ctx.project.id,
+            transcript=transcript,
+            title=str(source_metadata.get("title") or ctx.project.name),
+            description=str(source_metadata.get("description_excerpt_if_allowed") or ""),
+            source_metadata=source_metadata,
+            story_data=story_v2,
+            content_category=ctx.project.content_category,
+        )
+        trend_match = match_trend_patterns(
+            transcript,
+            snapshot,
+            snapshot.get("detected_niche")
+            if isinstance(snapshot.get("detected_niche"), dict)
+            else None,
+        )
+        evidence = [
+            {
+                "type": "trend_source",
+                "source_id": source.get("source_id"),
+                "source_type": source.get("source_type"),
+                "domain": source.get("domain"),
+            }
+            for source in snapshot.get("sources", [])[:5]
+            if isinstance(source, dict)
+        ]
+        report(1.0)
+        return ViralityOutcome.completed(
+            {
+                "score": trend_match["trend_fit_score"],
+                "confidence": trend_match["confidence"],
+                "evidence": evidence,
+                "internet_trend_research_v2": snapshot,
+                "content_niche_v2": snapshot.get("detected_niche"),
+                "trend_match_v2": trend_match,
+                "story_trend_guidance": snapshot.get("story_trend_guidance", []),
+                "limitations": (
+                    "Trend fit is a small advisory pattern signal. It does not predict "
+                    "virality, copy creators, inspect private content, or outrank story, "
+                    "payoff, context, and source truth."
+                ),
+            }
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 2. Hook Strength - opening attention / stop-scroll potential.
 # --------------------------------------------------------------------------- #
 class HookStrengthAnalyzer(ViralityAnalyzer):
     name = "hook_strength"
-    version = "1"
+    version = "2"
+    depends_on = ("trend_research",)
     _TYPE_WEIGHT: ClassVar[dict[str, float]] = {
         "question": 0.9,
         "curiosity": 0.85,
@@ -96,7 +182,8 @@ class HookStrengthAnalyzer(ViralityAnalyzer):
             )
         limitations = (
             "Hook strength is derived from transcript opening cues only; on-screen "
-            "visual hooks and audio energy are not analyzed (no frame/audio models)."
+            "visual hooks and audio energy are not analyzed (no frame/audio models). "
+            "Trend alignment is a small structural adjustment, not a performance claim."
         )
         if not hook.get("has_hook"):
             report(1.0)
@@ -115,12 +202,29 @@ class HookStrengthAnalyzer(ViralityAnalyzer):
         score = S.clamp01(weight * (0.55 + 0.45 * hconf))
         raw_window = hook.get("window")
         window = raw_window if isinstance(raw_window, dict) else {}
+        trend_stage = ctx.virality_data("trend_research") or {}
+        snapshot = trend_stage.get("internet_trend_research_v2")
+        trend_match = match_trend_patterns(
+            S.as_str(hook.get("supporting_excerpt")),
+            snapshot if isinstance(snapshot, dict) else {},
+            hook_category=htype,
+        )
+        hook_patterns = [
+            item
+            for item in trend_match.get("matched_patterns", [])
+            if isinstance(item, dict) and item.get("category") == "hook"
+        ]
+        if hook_patterns:
+            score = S.clamp01(0.95 * score + 0.05 * S.as_float(trend_match.get("score")))
         report(1.0)
         return ViralityOutcome.completed(
             {
                 "score": S.round3(score),
                 "confidence": S.round3(hconf),
                 "hook_type": htype,
+                "hook_category": hook_patterns[0].get("pattern_id") if hook_patterns else htype,
+                "trend_guidance_used": bool(hook_patterns),
+                "trend_match_v2": trend_match,
                 "evidence": [
                     {
                         "type": "hook",
@@ -500,7 +604,7 @@ class MomentumAnalyzer(ViralityAnalyzer):
 # --------------------------------------------------------------------------- #
 class RetentionAnalyzer(ViralityAnalyzer):
     name = "retention"
-    version = "1"
+    version = "2"
 
     async def analyze(
         self, ctx: ViralityStageContext, report: ViralityProgressReporter
@@ -517,6 +621,26 @@ class RetentionAnalyzer(ViralityAnalyzer):
         early_slow = any(S.as_float(w.get("start")) < 0.2 * float(duration) for w in slow)
         slow_ratio = (len(slow) / len(windows)) if windows else 0.0
         score = S.clamp01(1.0 - 0.6 * slow_ratio - (0.2 if early_slow else 0.0))
+        trend_stage = ctx.virality_data("trend_research") or {}
+        trend_match = trend_stage.get("trend_match_v2")
+        retention_matches = [
+            item
+            for item in (
+                trend_match.get("matched_patterns", [])
+                if isinstance(trend_match, dict)
+                else []
+            )
+            if isinstance(item, dict) and item.get("category") == "retention"
+        ]
+        if retention_matches:
+            trend_fit = (
+                S.as_float(trend_match.get("trend_fit_score"))
+                if isinstance(trend_match, dict)
+                else 0.0
+            )
+            score = S.clamp01(
+                0.95 * score + 0.05 * trend_fit
+            )
         drop_points = [
             {
                 "type": "likely_drop_off",
@@ -526,11 +650,20 @@ class RetentionAnalyzer(ViralityAnalyzer):
             }
             for w in slow[:6]
         ]
+        if retention_matches:
+            drop_points.append(
+                {
+                    "type": "trend_pattern",
+                    "detail": f"matched {retention_matches[0].get('label')}",
+                    "why": "candidate wording aligns with an attributed retention pattern",
+                }
+            )
         report(1.0)
         return ViralityOutcome.completed(
             {
                 "score": S.round3(score),
-                "confidence": 0.45,
+                "confidence": 0.48 if retention_matches else 0.45,
+                "trend_guidance_used": bool(retention_matches),
                 "early_drop_risk": early_slow,
                 "drop_point_count": len(slow),
                 "evidence": drop_points,
@@ -547,7 +680,7 @@ class RetentionAnalyzer(ViralityAnalyzer):
 # --------------------------------------------------------------------------- #
 class ReplayPotentialAnalyzer(ViralityAnalyzer):
     name = "replay_potential"
-    version = "1"
+    version = "2"
 
     async def analyze(
         self, ctx: ViralityStageContext, report: ViralityProgressReporter
@@ -555,7 +688,10 @@ class ReplayPotentialAnalyzer(ViralityAnalyzer):
         payoff = ctx.story_data("payoff_detection")
         density = ctx.story_data("information_density")
         etp = ctx.story_data("emotional_turning_points")
-        if payoff is None and density is None and etp is None:
+        story_v2 = ctx.story_data("story_analysis_v2") or {}
+        story_guidance = _story_guidance_summary(ctx)
+        story_available = CI.story_v2_available(story_v2)
+        if payoff is None and density is None and etp is None and not story_available:
             return ViralityOutcome.unavailable(
                 "Requires payoff, information-density, or emotional signals from the "
                 "Story Engine (no transcript), so replay potential cannot be assessed."
@@ -563,24 +699,47 @@ class ReplayPotentialAnalyzer(ViralityAnalyzer):
         payoffs = S.as_list((payoff or {}).get("relationships"))
         dense = S.as_float((density or {}).get("dense_window_count"))
         emo = len(S.as_list((etp or {}).get("turning_points")))
-        score = S.clamp01(
+        base_score = S.clamp01(
             0.4 * min(1.0, len(payoffs) / 2) + 0.4 * min(1.0, dense / 3) + 0.2 * min(1.0, emo / 3)
         )
-        available = sum(x is not None for x in (payoff, density, etp))
+        story_score = S.as_float(story_guidance.get("replay_score"))
+        score = S.clamp01(0.55 * base_score + 0.45 * story_score) if story_available else base_score
+        available = sum(x is not None for x in (payoff, density, etp)) + int(story_available)
         evidence = [
             {"type": "payoff", "detail": f"{len(payoffs)} satisfying payoff(s)"},
             {"type": "dense_info", "detail": f"{int(dense)} dense passage(s)"},
             {"type": "emotional_peaks", "detail": f"{emo} emotional shift(s)"},
         ]
+        if story_available:
+            evidence.append(
+                {
+                    "type": "story_analysis_v2",
+                    "detail": (
+                        "Story V2 completeness "
+                        f"{story_guidance['story_completeness_score']} / payoff "
+                        f"{story_guidance['payoff_strength']} / context risk "
+                        f"{story_guidance['context_risk']}"
+                    ),
+                }
+            )
         report(1.0)
         return ViralityOutcome.completed(
             {
                 "score": S.round3(score),
-                "confidence": S.round3(S.coverage_confidence(available, 3)),
+                "confidence": S.round3(S.coverage_confidence(available, 4)),
                 "evidence": evidence,
+                "story_guidance_used": story_available,
+                "story_guidance_source": "story_analysis_v2" if story_available else "fallback",
+                "story_completeness_score": story_guidance.get("story_completeness_score"),
+                "payoff_strength": story_guidance.get("payoff_strength"),
+                "context_risk": story_guidance.get("context_risk"),
+                "ending_strength": story_guidance.get("ending_strength"),
+                "story_shape": story_guidance.get("story_shape"),
+                "story_reasoning": story_guidance.get("story_reasoning"),
                 "limitations": (
-                    "Replay potential is inferred from payoffs, dense information, and "
-                    "emotional peaks; no actual replay/loop metrics are available."
+                    "Replay potential is inferred from payoffs, dense information, "
+                    "emotional peaks, and Story V2 completeness/context signals when "
+                    "available; no actual replay/loop metrics are available."
                 ),
             }
         )
@@ -660,7 +819,7 @@ class CommentPotentialAnalyzer(ViralityAnalyzer):
 # --------------------------------------------------------------------------- #
 class PlatformFitAnalyzer(ViralityAnalyzer):
     name = "platform_fit"
-    version = "1"
+    version = "2"
     # (ideal_lo, ideal_hi, hard_max) seconds per platform.
     _SPECS: ClassVar[dict[str, tuple[float, float, float]]] = {
         "youtube_shorts": (15.0, 45.0, 180.0),
@@ -697,12 +856,21 @@ class PlatformFitAnalyzer(ViralityAnalyzer):
         if momentum and "score" in momentum:
             content_factors.append(S.as_float(momentum.get("score")))
         content_avg = S.mean(content_factors) if content_factors else None
+        trend_stage = ctx.virality_data("trend_research") or {}
+        trend_match = trend_stage.get("trend_match_v2")
+        trend_score = (
+            S.as_float(trend_match.get("trend_fit_score"))
+            if isinstance(trend_match, dict)
+            else None
+        )
 
         platforms: dict[str, Any] = {}
         for plat, (lo, hi, hard) in self._SPECS.items():
             fmt = _duration_fit(duration, lo, hi, hard)
             base = S.clamp01(fmt + vertical_bonus)
             blended = base if content_avg is None else S.clamp01(0.6 * base + 0.4 * content_avg)
+            if trend_score is not None:
+                blended = S.clamp01(0.95 * blended + 0.05 * trend_score)
             platforms[plat] = {
                 "score": S.round3(blended),
                 "format_fit": S.round3(fmt),
@@ -720,6 +888,13 @@ class PlatformFitAnalyzer(ViralityAnalyzer):
                 "detail": f"{int(width)}x{int(height)}" if width and height else "unknown",
             },
         ]
+        if trend_score is not None:
+            evidence.append(
+                {
+                    "type": "trend_fit",
+                    "detail": f"advisory whole-video trend fit {S.round3(trend_score)}",
+                }
+            )
         limitations = (
             "Platform fit is based on format facts (duration, aspect ratio)"
             + (
@@ -727,13 +902,17 @@ class PlatformFitAnalyzer(ViralityAnalyzer):
                 if content_avg is not None
                 else " only; content factors (hook, pacing) were unavailable (no transcript)"
             )
-            + ". It does not model trends, audio, or each platform's ranking algorithm."
+            + ". Trend research contributes only a small attributed pattern signal; "
+            "audio behavior and each platform's ranking algorithm remain unknown."
         )
         report(1.0)
         return ViralityOutcome.completed(
             {
                 "score": S.round3(overall),
-                "confidence": S.round3(0.5 if content_avg is None else 0.65),
+                "confidence": S.round3(
+                    0.52 if content_avg is None else 0.67 if trend_score is not None else 0.65
+                ),
+                "trend_guidance_used": trend_score is not None,
                 "platforms": platforms,
                 "vertical": vertical,
                 "evidence": evidence,
@@ -873,7 +1052,7 @@ class AudienceFitAnalyzer(ViralityAnalyzer):
 # --------------------------------------------------------------------------- #
 class ViralitySummaryAnalyzer(ViralityAnalyzer):
     name = "virality_summary"
-    version = "1"
+    version = "3"
     depends_on = tuple(S.CATEGORY_FOR_STAGE.keys())
 
     async def analyze(
@@ -909,6 +1088,10 @@ class ViralitySummaryAnalyzer(ViralityAnalyzer):
         recommendations = _recommendations(ctx, category_scores)
         timeline = _build_timeline(ctx)
         heatmap, heat_note = _build_heatmap(ctx)
+        story_guidance = _story_guidance_summary(ctx)
+        trend_stage = ctx.virality_data("trend_research") or {}
+        trend_snapshot = trend_stage.get("internet_trend_research_v2")
+        trend_match = trend_stage.get("trend_match_v2")
 
         report(1.0)
         return ViralityOutcome.completed(
@@ -926,6 +1109,25 @@ class ViralitySummaryAnalyzer(ViralityAnalyzer):
                 "timeline": timeline,
                 "heatmap": heatmap,
                 "heatmap_note": heat_note,
+                "story_guidance_used": story_guidance["story_guidance_used"],
+                "story_guidance_source": story_guidance["story_guidance_source"],
+                "story_completeness_score": story_guidance.get("story_completeness_score"),
+                "payoff_strength": story_guidance.get("payoff_strength"),
+                "context_risk": story_guidance.get("context_risk"),
+                "ending_strength": story_guidance.get("ending_strength"),
+                "story_shape": story_guidance.get("story_shape"),
+                "story_reasoning": story_guidance.get("story_reasoning"),
+                "story_guidance": story_guidance,
+                "internet_trend_research_v2": (
+                    trend_snapshot if isinstance(trend_snapshot, dict) else {}
+                ),
+                "trend_match_v2": trend_match if isinstance(trend_match, dict) else {},
+                "trend_research_used": isinstance(trend_snapshot, dict),
+                "trend_research_fallback": (
+                    trend_snapshot.get("fallback_used")
+                    if isinstance(trend_snapshot, dict)
+                    else None
+                ),
                 "limitations": (
                     "The overall score is a weighted blend of only the categories that "
                     "were available; missing categories are listed as pending and never "
@@ -1012,6 +1214,24 @@ def _recommendations(
     ctx: ViralityStageContext, category_scores: dict[str, Any]
 ) -> list[dict[str, Any]]:
     recs: list[dict[str, Any]] = []
+    story_guidance = _story_guidance_summary(ctx)
+    if story_guidance.get("story_guidance_used") is True:
+        if S.as_float(story_guidance.get("context_risk")) >= 0.55:
+            recs.append(
+                {
+                    "title": "Add context before clipping",
+                    "reason": "Story V2 marked the strongest micro-story as context-dependent.",
+                    "evidence_stage": "story_analysis_v2",
+                }
+            )
+        if S.as_float(story_guidance.get("payoff_strength")) < 0.45:
+            recs.append(
+                {
+                    "title": "Do not end before the payoff",
+                    "reason": "Story V2 found weak or missing payoff evidence in candidate arcs.",
+                    "evidence_stage": "story_analysis_v2",
+                }
+            )
     hook = category_scores.get("hook")
     if hook is not None and hook["score"] < 0.5:
         recs.append(
@@ -1126,8 +1346,115 @@ def _build_timeline(ctx: ViralityStageContext) -> list[dict[str, Any]]:
                     "confidence": S.as_float(w.get("confidence"), 0.4),
                 }
             )
+    story_v2 = ctx.story_data("story_analysis_v2") or {}
+    for story in CI.story_recommendations(story_v2)[:10]:
+        guidance = CI.story_guidance_for_window(
+            story_v2,
+            CI.as_float(story.get("start")),
+            CI.as_float(story.get("end")),
+        )
+        if guidance.get("story_guidance_used") is not True:
+            continue
+        events.append(
+            {
+                "timestamp": CI.as_float(guidance.get("recommended_start")),
+                "type": "story_start",
+                "label": "Story V2 recommended start",
+                "detail": CI.as_str(guidance.get("why_story_works")),
+                "confidence": CI.as_float(guidance.get("completeness_score")),
+                "story_id": guidance.get("story_id"),
+            }
+        )
+        events.append(
+            {
+                "timestamp": CI.as_float(guidance.get("recommended_end")),
+                "type": "story_payoff",
+                "label": "Story V2 payoff / ending",
+                "detail": CI.as_str(guidance.get("payoff")),
+                "confidence": CI.as_float(guidance.get("payoff_strength")),
+                "story_id": guidance.get("story_id"),
+            }
+        )
     events.sort(key=lambda e: e["timestamp"])
     return events
+
+
+def _story_guidance_summary(ctx: ViralityStageContext) -> dict[str, Any]:
+    story_v2 = ctx.story_data("story_analysis_v2") or {}
+    stories = CI.story_recommendations(story_v2)
+    if not stories:
+        return {
+            "story_guidance_used": False,
+            "story_guidance_source": "fallback",
+            "story_completeness_score": None,
+            "payoff_strength": None,
+            "context_risk": None,
+            "ending_strength": None,
+            "story_shape": None,
+            "story_reasoning": "Story V2 output unavailable; Virality used legacy story signals.",
+            "replay_score": 0.0,
+            "recommended_story_count": 0,
+        }
+    guidance_items = [
+        CI.story_guidance_for_window(
+            story_v2,
+            CI.as_float(story.get("start")),
+            CI.as_float(story.get("end")),
+        )
+        for story in stories
+    ]
+    guidance_items = [item for item in guidance_items if item.get("story_guidance_used") is True]
+    if not guidance_items:
+        return {
+            "story_guidance_used": False,
+            "story_guidance_source": "fallback",
+            "story_completeness_score": None,
+            "payoff_strength": None,
+            "context_risk": None,
+            "ending_strength": None,
+            "story_shape": None,
+            "story_reasoning": "Story V2 had no usable overlapping micro-story guidance.",
+            "replay_score": 0.0,
+            "recommended_story_count": len(stories),
+        }
+    best = max(
+        guidance_items,
+        key=lambda item: (
+            CI.as_float(item.get("completeness_score")),
+            CI.as_float(item.get("payoff_strength")),
+            -CI.as_float(item.get("context_risk")),
+        ),
+    )
+    avg_completeness = sum(
+        CI.as_float(item.get("completeness_score")) for item in guidance_items
+    ) / len(guidance_items)
+    avg_payoff = sum(CI.as_float(item.get("payoff_strength")) for item in guidance_items) / len(
+        guidance_items
+    )
+    avg_context = sum(CI.as_float(item.get("context_risk")) for item in guidance_items) / len(
+        guidance_items
+    )
+    avg_ending = sum(CI.as_float(item.get("ending_strength")) for item in guidance_items) / len(
+        guidance_items
+    )
+    replay_score = CI.clamp01(
+        0.35 * avg_completeness + 0.3 * avg_payoff + 0.2 * avg_ending + 0.15 * (1 - avg_context)
+    )
+    return {
+        "story_guidance_used": True,
+        "story_guidance_source": "story_analysis_v2",
+        "story_completeness_score": CI.round3(avg_completeness),
+        "payoff_strength": CI.round3(avg_payoff),
+        "context_risk": CI.round3(avg_context),
+        "ending_strength": CI.round3(avg_ending),
+        "story_shape": best.get("story_shape"),
+        "story_reasoning": best.get("why_story_works") or best.get("story_summary"),
+        "replay_score": CI.round3(replay_score),
+        "recommended_story_count": len(guidance_items),
+        "best_story_id": best.get("story_id"),
+        "best_payoff": best.get("payoff"),
+        "warnings": best.get("warnings") or [],
+    }
 
 
 def _build_heatmap(ctx: ViralityStageContext) -> tuple[list[dict[str, Any]], str]:

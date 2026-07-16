@@ -66,6 +66,7 @@ from olympus.optimization.analyzers import (
     ThumbnailOptimizationAnalyzer,
     TitleSuggestionAnalyzer,
     TypographyImprovementAnalyzer,
+    UploadMetadataV2Analyzer,
     VariantGenerationAnalyzer,
     VisualEnhancementAnalyzer,
     VoiceEnhancementAnalyzer,
@@ -78,7 +79,7 @@ from olympus.utils import utc_now
 log = get_logger(__name__)
 
 #: Bumped when the *set* or *ordering* of optimization stages changes.
-OPTIMIZATION_PIPELINE_VERSION = "1"
+OPTIMIZATION_PIPELINE_VERSION = "3"
 
 #: Retry budget for stages that raise or return FAILED. UNAVAILABLE is never
 #: retried (it is the truth about the render/model, not a failure).
@@ -88,7 +89,7 @@ OptimizationProgressCallback = Callable[[OptimizationAnalysis], None]
 
 
 def build_default_optimization_analyzers() -> list[OptimizationAnalyzer]:
-    """Return the twenty-four optimization stages in pipeline order.
+    """Return the twenty-five optimization stages in pipeline order.
 
     The order mirrors :data:`OPTIMIZATION_STAGE_ORDER`; the pipeline validates
     this on construction so the two can never silently drift apart.
@@ -113,6 +114,7 @@ def build_default_optimization_analyzers() -> list[OptimizationAnalyzer]:
         TitleSuggestionAnalyzer(),
         DescriptionSuggestionAnalyzer(),
         HashtagRecommendationAnalyzer(),
+        UploadMetadataV2Analyzer(),
         PlatformOptimizationAnalyzer(),
         CompressionOptimizationAnalyzer(),
         QualityEvaluationAnalyzer(),

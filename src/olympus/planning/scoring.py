@@ -19,16 +19,23 @@ from typing import Any
 # dimension is never silently counted as zero. ``editing_complexity`` is reported
 # but excluded here (it is a cost, not a quality dimension).
 CLIP_QUALITY_WEIGHTS: dict[str, float] = {
-    "hook": 0.18,
-    "retention": 0.15,
-    "emotion": 0.12,
-    "story": 0.10,
-    "virality": 0.10,
-    "information": 0.08,
-    "novelty": 0.07,
+    "hook": 0.16,
+    "retention": 0.13,
+    "clarity": 0.10,
+    "payoff": 0.10,
+    "emotion": 0.10,
+    "virality": 0.08,
+    "uniqueness": 0.08,
+    "platform": 0.07,
+    "story_completion": 0.07,
+    "ending": 0.06,
     "shareability": 0.06,
-    "conflict": 0.05,
-    "replay": 0.05,
+    "story": 0.05,
+    "trend_fit": 0.04,
+    "information": 0.04,
+    "novelty": 0.03,
+    "conflict": 0.02,
+    "replay": 0.01,
 }
 
 #: All reported quality dimensions (in display order), including the cost one.

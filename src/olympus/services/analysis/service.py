@@ -94,16 +94,25 @@ class AnalysisService:
             restart=restart,
         )
         if existing is not None:
+            log.info("analysis_background_task_reused", project_id=project.id)
             return existing
 
         await self._set_project_status(project.id, ProjectStatus.ANALYZING)
+        log.info(
+            "analysis_background_task_spawned",
+            project_id=project.id,
+            restart=restart,
+        )
 
         # Yield once so the task starts and the index exists before we return.
         await asyncio.sleep(0)
         analysis = await self._analysis_repo.load(project.id)
         if analysis is not None:
+            log.info("analysis_start_returning", project_id=project.id, index_ready=True)
             return analysis
-        return await self._run_until_index(project.id)
+        analysis = await self._run_until_index(project.id)
+        log.info("analysis_start_returning", project_id=project.id, index_ready=True)
+        return analysis
 
     async def _run(self, project: Project, run: _Run) -> None:
         try:

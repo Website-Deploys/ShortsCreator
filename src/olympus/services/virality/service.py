@@ -31,6 +31,7 @@ from olympus.domain.entities.virality import VIRALITY_STAGE_ORDER, ViralityAnaly
 from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.platform.logging import get_logger
 from olympus.services.runs import begin_or_reuse_run
+from olympus.trends import TrendSnapshotStore
 from olympus.virality import ViralityPipeline, build_default_virality_analyzers
 
 log = get_logger(__name__)
@@ -163,6 +164,18 @@ class ViralityService:
         if summary_stage is None or summary_stage.status.value != "completed":
             return None
         return summary_stage.data
+
+    async def get_trend_research(self, project_id: str) -> dict[str, Any] | None:
+        """Return the canonical Trend Research V2 snapshot, including old-project fallback."""
+
+        virality = await self._virality_repo.load(project_id)
+        if virality is not None:
+            stage = virality.stage("trend_research")
+            if stage is not None and stage.status.value == "completed":
+                snapshot = stage.data.get("internet_trend_research_v2")
+                if isinstance(snapshot, dict):
+                    return snapshot
+        return await TrendSnapshotStore(self._storage).load_project(project_id)
 
     def is_running(self, project_id: str) -> bool:
         """Whether a background virality run is currently tracked for the project."""

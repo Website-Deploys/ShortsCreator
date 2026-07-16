@@ -31,6 +31,7 @@ router = APIRouter(prefix="/projects/{project_id}/optimization", tags=["optimiza
 # Content types for downloadable package assets, by asset kind.
 _ASSET_MEDIA_TYPES = {
     "metadata": "application/json",
+    "upload_metadata_v2": "application/json",
     "quality_report": "application/json",
     "captions_srt": "application/x-subrip",
     "captions_vtt": "text/vtt",
@@ -38,6 +39,7 @@ _ASSET_MEDIA_TYPES = {
 }
 _ASSET_FILENAMES = {
     "metadata": "metadata.json",
+    "upload_metadata_v2": "upload_metadata_v2.json",
     "quality_report": "quality_report.json",
     "captions_srt": "captions.srt",
     "captions_vtt": "captions.vtt",

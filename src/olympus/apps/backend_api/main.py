@@ -23,11 +23,22 @@ def run() -> None:
     import uvicorn
 
     settings = get_settings()
+    reload_enabled = not settings.is_production
     uvicorn.run(
         "olympus.apps.backend_api.main:app",
         host=settings.api.host,
         port=settings.api.port,
-        reload=not settings.is_production,
+        reload=reload_enabled,
+        reload_excludes=[
+            "storage_data/*",
+            "work/*",
+            ".venv/*",
+            "frontend/.next/*",
+            "frontend/node_modules/*",
+            "render/*",
+        ]
+        if reload_enabled
+        else None,
         log_config=None,  # our structlog config owns logging.
     )
 

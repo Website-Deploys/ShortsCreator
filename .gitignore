@@ -7,10 +7,15 @@ build/
 dist/
 .venv/
 venv/
+node_modules/
+frontend/.next/
+.next/
 
 # Environment & secrets (never commit real secrets)
 .env
 .env.*
+.env.local
+.env.*.local
 !.env.example
 
 # Test & coverage artifacts
@@ -23,6 +28,18 @@ htmlcov/
 # Local storage root used by the local storage backend in development
 /var/olympus/
 storage_data/
+storage_data_backup_*/
+work/
+assets/
+uploads/
+
+# Generated media must never enter source-control history
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.wav
+*.mp3
 
 # Editor / OS
 .idea/

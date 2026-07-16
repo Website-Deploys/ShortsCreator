@@ -322,6 +322,68 @@ export function parseSummary(story: Story): SummaryView | null {
   };
 }
 
+export interface StoryV2MicroStory {
+  storyId: string;
+  title: string;
+  start: number;
+  end: number;
+  storyShape: string;
+  completeness: number;
+  contextRisk: number;
+  payoff: string;
+  tension: string;
+  endingReason: string;
+  boundaryReason: string;
+  warning: string | null;
+}
+
+export interface StoryV2View {
+  topicCount: number;
+  microStoryCount: number;
+  recommendedCount: number;
+  averageCompleteness: number;
+  topStories: StoryV2MicroStory[];
+  warnings: string[];
+}
+
+export function parseStoryV2(story: Story): StoryV2View | null {
+  const data = completedData(story, "story_analysis_v2");
+  if (!data) return null;
+  const quality = asRecord(data.story_quality_summary);
+  const topStories = asArray(data.recommended_clip_stories)
+    .slice(0, 3)
+    .map((raw) => {
+      const item = asRecord(raw);
+      const tension = asRecord(item.tension);
+      const payoff = asRecord(item.payoff);
+      const ending = asRecord(item.ending);
+      const context = asRecord(item.context);
+      const repair = asRecord(item.boundary_repair);
+      return {
+        storyId: asStr(item.story_id),
+        title: asStr(item.title) || "Micro-story",
+        start: asNum(item.start),
+        end: asNum(item.end),
+        storyShape: asStr(item.story_shape) || "micro story",
+        completeness: asNum(item.completeness_score),
+        contextRisk: asNum(item.context_dependency_score),
+        payoff: asStr(payoff.payoff_text),
+        tension: asStr(tension.viewer_question) || asStr(tension.unresolved_question),
+        endingReason: asStr(ending.end_reason),
+        boundaryReason: asStr(repair.reason) || asStr(item.boundary_reasoning),
+        warning: asStr(item.rejection_reason) || null,
+      };
+    });
+  return {
+    topicCount: asArray(data.topic_sections).length,
+    microStoryCount: asArray(data.micro_stories).length,
+    recommendedCount: asArray(data.recommended_clip_stories).length,
+    averageCompleteness: asNum(quality.average_completeness),
+    topStories,
+    warnings: asStrArray(data.warnings),
+  };
+}
+
 /** Humanize an arc-type id, e.g. `"classic_setup_conflict_resolution"`. */
 export function humanizeArc(arcType: string): string {
   if (!arcType) return "—";

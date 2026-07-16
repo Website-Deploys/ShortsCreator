@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from olympus.domain.contracts.projects import ProjectRepository
 from olympus.domain.contracts.storage import StoragePort
 from olympus.domain.entities.project import Project, ProjectStatus
-from olympus.platform.errors import NotFoundError, ValidationError
+from olympus.platform.errors import NotFoundError, StorageError, ValidationError
 from olympus.platform.logging import get_logger
 from olympus.utils import new_id, project_write_lock, utc_now
 
@@ -34,13 +34,38 @@ class NewProjectInput:
     width: int | None = None
     height: int | None = None
     upload_duration_ms: float | None = None
+    source_type: str = "upload"
+    source_url: str | None = None
+    link_ingestion_id: str | None = None
+    desired_clip_count: int | None = None
+    content_category: str = "auto"
+    editing_intensity: str = "balanced"
+    music_enabled: bool = True
+    sfx_enabled: bool = True
+    captions_enabled: bool = True
+
+
+# Maximum length of a project name. Enforced both when deriving a name from an
+# uploaded filename and when a user renames a project, so the two paths cannot
+# diverge. Chosen to comfortably fit real titles while bounding payload/UI size.
+MAX_PROJECT_NAME_LENGTH = 200
 
 
 def _derive_name(filename: str) -> str:
-    """Turn a filename into a friendly project name (drop the extension)."""
+    """Turn a filename into a friendly project name (drop the extension).
+
+    The result is bounded to :data:`MAX_PROJECT_NAME_LENGTH` so that a hostile or
+    accidental multi-thousand-character filename cannot produce an unbounded
+    project name - which would bloat API payloads and persisted state and break
+    the UI layout. This honours the same ceiling enforced by
+    :meth:`ProjectService.rename`, so derived and user-set names are consistent.
+    """
 
     stem = filename.rsplit(".", 1)[0].strip()
-    return stem or filename
+    name = stem or filename.strip() or "Untitled"
+    if len(name) > MAX_PROJECT_NAME_LENGTH:
+        name = name[:MAX_PROJECT_NAME_LENGTH].rstrip()
+    return name
 
 
 class ProjectService:
@@ -76,6 +101,15 @@ class ProjectService:
             created_at=now,
             updated_at=now,
             upload_duration_ms=data.upload_duration_ms,
+            source_type=data.source_type,
+            source_url=data.source_url,
+            link_ingestion_id=data.link_ingestion_id,
+            desired_clip_count=data.desired_clip_count,
+            content_category=data.content_category,
+            editing_intensity=data.editing_intensity,
+            music_enabled=data.music_enabled,
+            sfx_enabled=data.sfx_enabled,
+            captions_enabled=data.captions_enabled,
         )
         await self._repo.save(project)
         log.info("project_created", project_id=project.id, name=project.name)
@@ -108,7 +142,7 @@ class ProjectService:
         cleaned = name.strip()
         if not cleaned:
             raise ValidationError("Project name cannot be empty.")
-        if len(cleaned) > 200:
+        if len(cleaned) > MAX_PROJECT_NAME_LENGTH:
             raise ValidationError("Project name is too long.")
         async with project_write_lock(project_id):
             project = await self.get(project_id)
@@ -134,12 +168,29 @@ class ProjectService:
             return project
 
     async def delete(self, project_id: str) -> None:
-        """Delete a project and its stored artifacts (source + thumbnail)."""
+        """Delete a project and its stored artifacts (source + thumbnail).
+
+        Tolerates a corrupt/unreadable ``project.json``: if the metadata cannot
+        be parsed we can no longer locate the source/thumbnail blobs, but we must
+        still remove the (broken) project record so it stops surfacing as a
+        permanent 5xx on its detail endpoint and cannot be re-listed. Without
+        this, a single corrupt document would be undeletable via the API.
+        """
 
         async with project_write_lock(project_id):
-            project = await self._repo.get(project_id)
+            try:
+                project = await self._repo.get(project_id)
+            except StorageError:
+                # Corrupt/unreadable document: the id is well-formed (only the
+                # stored content is bad), so we cannot locate the source/
+                # thumbnail blobs, but we must still purge the broken record so
+                # it stops 5xx-ing on its detail endpoint and cannot be
+                # re-listed. Without this a corrupt document is undeletable.
+                log.warning("deleting_corrupt_project_record", project_id=project_id)
+                await self._repo.delete(project_id)
+                return
             if project is None:
-                return  # idempotent
+                return  # idempotent: nothing exists for this id (incl. oversized ids)
             await self._storage.delete(project.storage_key)
             if project.thumbnail_key:
                 await self._storage.delete(project.thumbnail_key)

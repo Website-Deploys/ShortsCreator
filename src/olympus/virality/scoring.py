@@ -18,6 +18,7 @@ from typing import Any
 
 # Maps each scoring analyzer to the public category it contributes to.
 CATEGORY_FOR_STAGE: dict[str, str] = {
+    "trend_research": "trend_fit",
     "hook_strength": "hook",
     "curiosity_gap": "curiosity",
     "emotional_impact": "emotion",
@@ -38,6 +39,7 @@ CATEGORY_FOR_STAGE: dict[str, str] = {
 # Only the *available* categories are used; weights are renormalized over them,
 # so a missing category never silently counts as zero.
 CATEGORY_WEIGHTS: dict[str, float] = {
+    "trend_fit": 0.06,
     "hook": 0.18,
     "retention": 0.15,
     "emotion": 0.12,

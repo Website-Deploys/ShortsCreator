@@ -1,4 +1,4 @@
-"""The twenty-four Optimization Engine stages.
+"""The twenty-five Optimization Engine stages.
 
 Each stage is an isolated, replaceable module behind the
 :class:`OptimizationAnalyzer` contract. None imports another; they communicate
@@ -30,11 +30,17 @@ from olympus.domain.contracts.optimization import (
     OptimizationProgressReporter,
     OptimizationStageContext,
 )
+from olympus.metadata import (
+    UPLOAD_METADATA_V2_VERSION,
+    generate_upload_metadata,
+    unavailable_upload_metadata,
+)
 from olympus.optimization import optimize as O  # noqa: N812 (module alias is intentional)
 from olympus.optimization.export_profiles import (
     ExportProfileRegistry,
     build_default_export_registry,
 )
+from olympus.platform.config import get_settings
 
 _NO_RENDER = (
     "No render manifest exists for this project. The Rendering Engine - a separate, "
@@ -71,6 +77,14 @@ def _markers(timeline: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _meta(timeline: dict[str, Any]) -> dict[str, Any]:
     return O.as_dict(timeline.get("metadata"))
+
+
+def _upload_metadata_by_clip(ctx: OptimizationStageContext) -> dict[str, dict[str, Any]]:
+    return {
+        render.clip_id: O.as_dict(render.metadata.get("upload_metadata_v2"))
+        for render in ctx.rendered_videos()
+        if O.as_dict(render.metadata.get("upload_metadata_v2"))
+    }
 
 
 def _clip_duration(timeline: dict[str, Any]) -> float:
@@ -604,7 +618,7 @@ class ThumbnailOptimizationAnalyzer(OptimizationAnalyzer):
 # --------------------------------------------------------------------------- #
 class TitleSuggestionAnalyzer(OptimizationAnalyzer):
     name = "title_suggestion"
-    version = "1"
+    version = "2"
 
     async def analyze(
         self, ctx: OptimizationStageContext, report: OptimizationProgressReporter
@@ -612,8 +626,39 @@ class TitleSuggestionAnalyzer(OptimizationAnalyzer):
         timelines = ctx.timelines()
         if not timelines:
             return OptimizationOutcome.unavailable(_NO_TIMELINES)
+        upload_metadata = _upload_metadata_by_clip(ctx)
         out: list[dict[str, Any]] = []
         for tl in timelines:
+            clip_id = O.as_str(tl.get("clip_id"))
+            upload = O.as_dict(upload_metadata.get(clip_id))
+            youtube = O.as_dict(upload.get("youtube_shorts"))
+            v2_primary = O.as_str(youtube.get("title")).strip()
+            v2_variants = [
+                O.as_str(O.as_dict(item).get("text") or item).strip()
+                for item in O.as_list(youtube.get("title_variants"))
+            ]
+            if v2_primary:
+                out.append(
+                    {
+                        "clip_id": clip_id,
+                        "primary": v2_primary,
+                        "alternatives": [
+                            title
+                            for title in v2_variants
+                            if title and title.casefold() != v2_primary.casefold()
+                        ][:4],
+                        "confidence": youtube.get("confidence"),
+                        "reason": "canonical title and variants come from Upload Metadata V2",
+                        "evidence": [
+                            {
+                                "type": "upload_metadata_v2",
+                                "detail": O.as_str(upload.get("metadata_id")),
+                            }
+                        ],
+                        "source": "upload_metadata_v2",
+                    }
+                )
+                continue
             base = O.as_str(_meta(tl).get("title")).strip()
             alternatives: list[str] = []
             if base:
@@ -623,7 +668,7 @@ class TitleSuggestionAnalyzer(OptimizationAnalyzer):
             primary = base or "(no title proposed upstream)"
             out.append(
                 {
-                    "clip_id": O.as_str(tl.get("clip_id")),
+                    "clip_id": clip_id,
                     "primary": primary,
                     "alternatives": [a for a in alternatives if a][:3],
                     "confidence": 0.5 if base else None,
@@ -646,7 +691,7 @@ class TitleSuggestionAnalyzer(OptimizationAnalyzer):
 # --------------------------------------------------------------------------- #
 class DescriptionSuggestionAnalyzer(OptimizationAnalyzer):
     name = "description_suggestion"
-    version = "1"
+    version = "2"
     depends_on = ("title_suggestion",)
 
     async def analyze(
@@ -659,10 +704,31 @@ class DescriptionSuggestionAnalyzer(OptimizationAnalyzer):
             O.as_str(c.get("clip_id")): c
             for c in O.as_list((ctx.optimization_data("title_suggestion") or {}).get("clips"))
         }
+        upload_metadata = _upload_metadata_by_clip(ctx)
         transcripts = ctx.transcript_segments()
         out: list[dict[str, Any]] = []
         for tl in timelines:
             cid = O.as_str(tl.get("clip_id"))
+            upload = O.as_dict(upload_metadata.get(cid))
+            youtube = O.as_dict(upload.get("youtube_shorts"))
+            upload_description = O.as_str(youtube.get("description")).strip()
+            if upload_description:
+                out.append(
+                    {
+                        "clip_id": cid,
+                        "description": upload_description,
+                        "confidence": youtube.get("confidence"),
+                        "reason": "canonical description comes from Upload Metadata V2",
+                        "evidence": [
+                            {
+                                "type": "upload_metadata_v2",
+                                "detail": O.as_str(upload.get("metadata_id")),
+                            }
+                        ],
+                        "source": "upload_metadata_v2",
+                    }
+                )
+                continue
             title = O.as_str(O.as_dict(titles.get(cid)).get("primary"))
             opening = ""
             if transcripts:
@@ -694,11 +760,11 @@ class DescriptionSuggestionAnalyzer(OptimizationAnalyzer):
 # --------------------------------------------------------------------------- #
 class HashtagRecommendationAnalyzer(OptimizationAnalyzer):
     name = "hashtag_recommendation"
-    version = "1"
+    version = "2"
 
     _PLATFORM_TAGS: ClassVar[dict[str, str]] = {
         "youtube_shorts": "#shorts",
-        "tiktok": "#fyp",
+        "tiktok": "#tiktok",
         "instagram_reels": "#reels",
     }
 
@@ -707,26 +773,62 @@ class HashtagRecommendationAnalyzer(OptimizationAnalyzer):
     ) -> OptimizationOutcome:
         timelines = ctx.timelines()
         transcripts = ctx.transcript_segments()
-        if not transcripts:
+        upload_metadata = _upload_metadata_by_clip(ctx)
+        if not transcripts and not upload_metadata:
             return OptimizationOutcome.unavailable(
                 "Requires a transcript from the Cognitive Engine to extract topical "
                 "hashtags; it is unavailable, and tags are not invented."
             )
         out: list[dict[str, Any]] = []
         for tl in timelines or [{}]:
+            clip_id = O.as_str(tl.get("clip_id")) if tl else ""
+            upload = O.as_dict(upload_metadata.get(clip_id))
+            if upload:
+                youtube = O.as_dict(upload.get("youtube_shorts"))
+                instagram = O.as_dict(upload.get("instagram_reels"))
+                tiktok = O.as_dict(upload.get("tiktok"))
+                youtube_tags = [
+                    O.as_str(tag) for tag in O.as_list(youtube.get("hashtags")) if O.as_str(tag)
+                ]
+                out.append(
+                    {
+                        "clip_id": clip_id,
+                        "topical": [
+                            tag for tag in youtube_tags if tag.casefold() != "#shorts"
+                        ],
+                        "platform_generic": [
+                            tag for tag in youtube_tags if tag.casefold() == "#shorts"
+                        ],
+                        "platforms": {
+                            "youtube_shorts": youtube_tags,
+                            "instagram_reels": O.as_list(instagram.get("hashtags")),
+                            "tiktok": O.as_list(tiktok.get("hashtags")),
+                        },
+                        "confidence": youtube.get("confidence"),
+                        "reason": "focused platform hashtag plans come from Upload Metadata V2",
+                        "evidence": [
+                            {
+                                "type": "upload_metadata_v2",
+                                "detail": O.as_str(upload.get("metadata_id")),
+                            }
+                        ],
+                        "source": "upload_metadata_v2",
+                    }
+                )
+                continue
             cs = O.as_float(tl.get("source_start")) if tl else 0.0
             ce = O.as_float(tl.get("source_end")) if tl else float("inf")
             texts = [
                 O.as_str(s.get("text"))
-                for s in transcripts
+                for s in transcripts or []
                 if cs <= O.as_float(s.get("start")) < ce
-            ] or [O.as_str(s.get("text")) for s in transcripts]
+            ] or [O.as_str(s.get("text")) for s in transcripts or []]
             keywords = [w for w, _ in O.extract_keywords(texts)]
             tags = O.to_hashtags(keywords)
             generic = list(dict.fromkeys(self._PLATFORM_TAGS.values()))
             out.append(
                 {
-                    "clip_id": O.as_str(tl.get("clip_id")) if tl else None,
+                    "clip_id": clip_id or None,
                     "topical": tags,
                     "platform_generic": generic,
                     "confidence": 0.5 if tags else None,
@@ -742,7 +844,99 @@ class HashtagRecommendationAnalyzer(OptimizationAnalyzer):
 
 
 # --------------------------------------------------------------------------- #
-# 19. Platform Optimization (real export specs)
+# 19. Upload Metadata V2 (canonical manifest data or safe legacy backfill)
+# --------------------------------------------------------------------------- #
+class UploadMetadataV2Analyzer(OptimizationAnalyzer):
+    name = "upload_metadata_v2"
+    version = "2"
+    depends_on = ("title_suggestion", "description_suggestion", "hashtag_recommendation")
+
+    async def analyze(
+        self, ctx: OptimizationStageContext, report: OptimizationProgressReporter
+    ) -> OptimizationOutcome:
+        import json
+
+        timelines = ctx.timelines()
+        if not timelines:
+            return OptimizationOutcome.unavailable(_NO_TIMELINES)
+        renders = {render.clip_id: render for render in ctx.rendered_videos()}
+        canonical = _upload_metadata_by_clip(ctx)
+        outputs: list[dict[str, Any]] = []
+        for timeline in timelines:
+            clip_id = O.as_str(timeline.get("clip_id"))
+            render = renders.get(clip_id)
+            upload: dict[str, Any] = dict(O.as_dict(canonical.get(clip_id)))
+            source = "render_manifest"
+            if not upload:
+                source = "optimization_backfill"
+                render_metadata = dict(render.metadata) if render is not None else {}
+                unified = O.as_dict(
+                    render_metadata.get("unified_clip_intelligence")
+                    or _meta(timeline).get("unified_clip_intelligence")
+                )
+                try:
+                    upload = dict(
+                        generate_upload_metadata(
+                            project_id=ctx.project.id,
+                            clip_id=clip_id,
+                            render_id=ctx.renders.render_id if ctx.renders is not None else None,
+                            unified_clip_intelligence=unified,
+                            timeline=timeline,
+                            render_metadata=render_metadata,
+                            settings=get_settings().upload_metadata,
+                        )
+                    )
+                except Exception as exc:
+                    upload = dict(
+                        unavailable_upload_metadata(
+                            project_id=ctx.project.id,
+                            clip_id=clip_id,
+                            render_id=ctx.renders.render_id if ctx.renders is not None else None,
+                            reason=f"Optimization metadata backfill failed: {exc}",
+                        )
+                    )
+                artifact_key = (
+                    f"optimization/{ctx.project.id}/metadata/{clip_id}/upload_metadata_v2.json"
+                )
+                try:
+                    upload["artifact"] = {
+                        "status": "available",
+                        "storage_key": artifact_key,
+                        "version": UPLOAD_METADATA_V2_VERSION,
+                    }
+                    await ctx.storage.put(
+                        artifact_key,
+                        json.dumps(upload, indent=2).encode("utf-8"),
+                        content_type="application/json",
+                    )
+                except Exception as exc:
+                    upload["artifact"] = {
+                        "status": "unavailable",
+                        "storage_key": None,
+                        "version": UPLOAD_METADATA_V2_VERSION,
+                        "reason": f"Optimization metadata artifact could not be persisted: {exc}",
+                    }
+            outputs.append(
+                {
+                    "clip_id": clip_id,
+                    "upload_metadata_v2": upload,
+                    "source": source,
+                    "artifact": O.as_dict(upload.get("artifact")),
+                }
+            )
+        report(1.0)
+        return OptimizationOutcome.completed(
+            {
+                "version": UPLOAD_METADATA_V2_VERSION,
+                "clips": outputs,
+                "note": "Canonical render-manifest metadata is reused; older manifests are "
+                "backfilled without changing their MP4s.",
+            }
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 20. Platform Optimization (real export specs)
 # --------------------------------------------------------------------------- #
 class PlatformOptimizationAnalyzer(OptimizationAnalyzer):
     name = "platform_optimization"
@@ -788,7 +982,7 @@ class PlatformOptimizationAnalyzer(OptimizationAnalyzer):
 
 
 # --------------------------------------------------------------------------- #
-# 20. Compression Optimization (real targets; execution needs an encoder)
+# 21. Compression Optimization (real targets; execution needs an encoder)
 # --------------------------------------------------------------------------- #
 class CompressionOptimizationAnalyzer(OptimizationAnalyzer):
     name = "compression_optimization"
@@ -845,7 +1039,7 @@ class CompressionOptimizationAnalyzer(OptimizationAnalyzer):
 
 
 # --------------------------------------------------------------------------- #
-# 21. Quality Evaluation (real signals graded; the rest honestly UNKNOWN)
+# 22. Quality Evaluation (real signals graded; the rest honestly UNKNOWN)
 # --------------------------------------------------------------------------- #
 class QualityEvaluationAnalyzer(OptimizationAnalyzer):
     name = "quality_evaluation"
@@ -989,7 +1183,7 @@ class QualityEvaluationAnalyzer(OptimizationAnalyzer):
 
 
 # --------------------------------------------------------------------------- #
-# 22. Variant Generation (real plans referencing the base timeline)
+# 23. Variant Generation (real plans referencing the base timeline)
 # --------------------------------------------------------------------------- #
 class VariantGenerationAnalyzer(OptimizationAnalyzer):
     name = "variant_generation"
@@ -1058,7 +1252,7 @@ class VariantGenerationAnalyzer(OptimizationAnalyzer):
 
 
 # --------------------------------------------------------------------------- #
-# 23. Final Validation
+# 24. Final Validation
 # --------------------------------------------------------------------------- #
 class FinalValidationAnalyzer(OptimizationAnalyzer):
     name = "final_validation"
@@ -1111,16 +1305,17 @@ class FinalValidationAnalyzer(OptimizationAnalyzer):
 
 
 # --------------------------------------------------------------------------- #
-# 24. Publish Package Creation (writes real downloadable text/metadata assets)
+# 25. Publish Package Creation (writes real downloadable text/metadata assets)
 # --------------------------------------------------------------------------- #
 class PublishPackageCreationAnalyzer(OptimizationAnalyzer):
     name = "publish_package_creation"
-    version = "1"
+    version = "2"
     depends_on = (
         "caption_optimization",
         "title_suggestion",
         "description_suggestion",
         "hashtag_recommendation",
+        "upload_metadata_v2",
         "platform_optimization",
         "quality_evaluation",
         "music_recommendation",
@@ -1154,6 +1349,7 @@ class PublishPackageCreationAnalyzer(OptimizationAnalyzer):
         tags_by = _by_clip("hashtag_recommendation")
         quality_by = _by_clip("quality_evaluation")
         music_by = _by_clip("music_recommendation")
+        upload_by = _by_clip("upload_metadata_v2")
         platform_data = ctx.optimization_data("platform_optimization") or {}
 
         packages: list[dict[str, Any]] = []
@@ -1200,6 +1396,15 @@ class PublishPackageCreationAnalyzer(OptimizationAnalyzer):
             description = O.as_str(O.as_dict(desc_by.get(cid)).get("description"))
             tags = O.as_dict(tags_by.get(cid))
             hashtags = O.as_list(tags.get("topical")) + O.as_list(tags.get("platform_generic"))
+            upload_metadata = O.as_dict(
+                O.as_dict(upload_by.get(cid)).get("upload_metadata_v2")
+            )
+            if upload_metadata:
+                youtube = O.as_dict(upload_metadata.get("youtube_shorts"))
+                universal = O.as_dict(upload_metadata.get("universal"))
+                title = O.as_str(universal.get("best_title") or youtube.get("title")) or title
+                description = O.as_str(youtube.get("description")) or description
+                hashtags = O.as_list(youtube.get("hashtags")) or hashtags
             music_recs = O.as_list(O.as_dict(music_by.get(cid)).get("recommendations"))
             top_music = music_recs[0] if music_recs else None
 
@@ -1208,6 +1413,7 @@ class PublishPackageCreationAnalyzer(OptimizationAnalyzer):
                 "title": title,
                 "description": description,
                 "hashtags": hashtags,
+                "upload_metadata_v2": upload_metadata or None,
                 "music": top_music,
                 "quality": O.as_dict(quality_by.get(cid)).get("summary"),
                 "platform_targets": O.as_dict(platform_data.get("profiles")),
@@ -1228,6 +1434,29 @@ class PublishPackageCreationAnalyzer(OptimizationAnalyzer):
             assets.append(
                 {"kind": "metadata", "status": "available", "storage_key": f"{base}/metadata.json"}
             )
+
+            if upload_metadata:
+                upload_key = f"{base}/upload_metadata_v2.json"
+                await ctx.storage.put(
+                    upload_key,
+                    json.dumps(upload_metadata, indent=2).encode("utf-8"),
+                    content_type="application/json",
+                )
+                assets.append(
+                    {
+                        "kind": "upload_metadata_v2",
+                        "status": "available",
+                        "storage_key": upload_key,
+                    }
+                )
+            else:
+                assets.append(
+                    {
+                        "kind": "upload_metadata_v2",
+                        "status": "unavailable",
+                        "reason": "Upload Metadata V2 was unavailable for this legacy clip.",
+                    }
+                )
 
             quality_report = O.as_dict(quality_by.get(cid))
             await ctx.storage.put(

@@ -119,7 +119,7 @@ def story_repo(storage: LocalStorage) -> StorageStoryRepository:
     return StorageStoryRepository(storage)
 
 
-def _project() -> Project:
+def _project(duration_seconds: float = 108.0) -> Project:
     now = utc_now()
     return Project(
         id=new_id("proj"),
@@ -129,7 +129,7 @@ def _project() -> Project:
         size_bytes=1024,
         video_format="mp4",
         content_type="video/mp4",
-        duration_seconds=108.0,
+        duration_seconds=duration_seconds,
         width=1080,
         height=1920,
         status=ProjectStatus.ANALYZED,
@@ -165,6 +165,52 @@ def _analysis(*, with_transcript: bool) -> Analysis:
         updated_at=now,
         stages=stages,
     )
+
+
+def _analysis_from_segments(segments: list[dict[str, object]]) -> Analysis:
+    now = utc_now()
+    word_count = sum(len(str(s["text"]).split()) for s in segments)
+    return Analysis(
+        project_id="placeholder",
+        pipeline_version="1",
+        status=AnalysisStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        stages=[
+            StageResult(
+                stage="speech_transcription",
+                status=StageStatus.COMPLETED,
+                version="1",
+                data={
+                    "language": "en",
+                    "confidence": 0.9,
+                    "word_count": word_count,
+                    "has_word_timestamps": True,
+                    "segments": segments,
+                },
+            )
+        ],
+    )
+
+
+def _long_story_segments(duration: float) -> list[dict[str, object]]:
+    segments: list[dict[str, object]] = []
+    t = 0.0
+    lines = [
+        "Why do creators miss the best story? The problem is they only check the intro.",
+        "For example, one section starts slow but then the real conflict appears.",
+        "But then I realized the payoff was hidden after the topic changed.",
+        "So it turns out the lesson is to preserve setup, tension, and payoff together.",
+    ]
+    index = 0
+    while t < duration:
+        text = f"{lines[index % len(lines)]} Section{index} keyword{index}."
+        segments.append(
+            {"start": t, "end": min(duration, t + 12.0), "speaker": "spk_0", "text": text}
+        )
+        t += 12.0
+        index += 1
+    return segments
 
 
 def _pipeline(repo: StorageStoryRepository, **kw: object) -> StoryPipeline:
@@ -205,6 +251,7 @@ async def test_unavailable_without_transcript(
         "payoff_detection",
         "information_density",
         "context_dependencies",
+        "story_analysis_v2",
     ):
         stage = story.stage(name)
         assert stage is not None
@@ -364,6 +411,99 @@ async def test_context_dependencies_real(
     assert types & {"explicit_backreference", "term_reintroduction"}
 
 
+async def test_story_analysis_v2_micro_stories_and_guidance(
+    storage: LocalStorage, story_repo: StorageStoryRepository
+) -> None:
+    story = await _pipeline(story_repo).run(
+        _project(), storage, analysis=_analysis(with_transcript=True)
+    )
+    v2 = story.stage("story_analysis_v2")
+
+    assert v2 is not None and v2.status is StoryStageStatus.COMPLETED
+    assert v2.data["schema"] == "story_analysis_v2"
+    assert v2.data["topic_sections"]
+    assert v2.data["micro_stories"]
+    assert v2.data["story_quality_summary"]["micro_story_count"] >= 1
+    assert any(ms["payoff"]["payoff_present"] for ms in v2.data["micro_stories"])
+    assert v2.data["virality_story_guidance"]
+    assert v2.data["planning_story_guidance"]
+    assert v2.data["editing_story_guidance"]
+
+    recommended = v2.data["recommended_clip_stories"]
+    assert recommended
+    top = recommended[0]
+    assert top["story_shape"] in {
+        "problem_solution",
+        "question_answer",
+        "setup_payoff",
+        "tension_release",
+        "mistake_lesson",
+    }
+    assert top["story_completeness_score"]["overall"] >= 0.5
+    assert top["boundary_repair"]["repaired_end"] >= top["end"]
+    assert top["context_dependency"]["recommended_action"] in {
+        "accept",
+        "expand_start",
+        "add_context_caption",
+    }
+
+
+async def test_story_analysis_v2_downgrades_missing_payoff_fragments(
+    storage: LocalStorage, story_repo: StorageStoryRepository
+) -> None:
+    weak_segments = [
+        {
+            "start": 0.0,
+            "end": 8.0,
+            "speaker": "spk_0",
+            "text": "So this and that thing was happening with them over there.",
+        },
+        {
+            "start": 8.0,
+            "end": 16.0,
+            "speaker": "spk_0",
+            "text": "Um yeah basically like we kept talking about the same thing.",
+        },
+        {
+            "start": 16.0,
+            "end": 26.0,
+            "speaker": "spk_0",
+            "text": "And then it was kind of more stuff with no real conclusion",
+        },
+    ]
+    story = await _pipeline(story_repo).run(
+        _project(26.0), storage, analysis=_analysis_from_segments(weak_segments)
+    )
+    v2 = story.stage("story_analysis_v2")
+
+    assert v2.status is StoryStageStatus.COMPLETED
+    assert v2.data["micro_stories"]
+    assert all(not ms["payoff"]["payoff_present"] for ms in v2.data["micro_stories"])
+    assert all(ms["completeness_score"] <= 0.54 for ms in v2.data["micro_stories"])
+    assert any(ms["rejection_reason"] == "missing payoff" for ms in v2.data["micro_stories"])
+    assert v2.data["weak_sections"]
+
+
+async def test_story_analysis_v2_long_video_story_map_covers_full_duration(
+    storage: LocalStorage, story_repo: StorageStoryRepository
+) -> None:
+    duration = 2400.0
+    story = await _pipeline(story_repo).run(
+        _project(duration),
+        storage,
+        analysis=_analysis_from_segments(_long_story_segments(duration)),
+    )
+    v2 = story.stage("story_analysis_v2")
+    story_map = v2.data["long_video_story_map"]
+
+    assert v2.status is StoryStageStatus.COMPLETED
+    assert story_map["source_duration"] == duration
+    assert story_map["section_count"] >= 4
+    assert len(story_map["coverage_by_time"]) > 1
+    assert story_map["coverage_by_time"][-1]["end"] == duration
+    assert story_map["strongest_arcs"]
+
+
 async def test_story_graph_and_summary_aggregate_real(
     storage: LocalStorage, story_repo: StorageStoryRepository
 ) -> None:
@@ -381,6 +521,7 @@ async def test_story_graph_and_summary_aggregate_real(
     assert summary.data["story_flow"]
     assert summary.data["confidence"] > 0
     assert "important_moments" in summary.data
+    assert summary.data["story_analysis_v2"]["micro_story_count"] >= 1
 
 
 # --------------------------------------------------------------------------- #

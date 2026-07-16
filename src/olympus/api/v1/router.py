@@ -13,9 +13,11 @@ from olympus.api.v1.routes import (
     analysis,
     editing,
     health,
+    jobs,
     library,
     monitoring,
     optimization,
+    personalization,
     planning,
     projects,
     rendering,
@@ -31,6 +33,8 @@ api_v1_router.include_router(health.router, tags=["health"])
 api_v1_router.include_router(system.router, tags=["system"])
 api_v1_router.include_router(uploads.router, tags=["uploads"])
 api_v1_router.include_router(projects.router)
+api_v1_router.include_router(jobs.router)
+api_v1_router.include_router(jobs.project_router)
 api_v1_router.include_router(analysis.router)
 api_v1_router.include_router(story.router)
 api_v1_router.include_router(virality.router)
@@ -38,6 +42,7 @@ api_v1_router.include_router(planning.router)
 api_v1_router.include_router(editing.router)
 api_v1_router.include_router(rendering.router)
 api_v1_router.include_router(optimization.router)
+api_v1_router.include_router(personalization.router)
 api_v1_router.include_router(workflow.router)
 api_v1_router.include_router(workflow.ops_router)
 api_v1_router.include_router(library.router)

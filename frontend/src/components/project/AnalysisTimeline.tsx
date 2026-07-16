@@ -37,6 +37,33 @@ const STATE_META: Record<
   cancelled: { label: "Cancelled", tone: "text-muted", icon: "pending" },
 };
 
+function formatElapsed(seconds: number) {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+function elapsedSeconds(startedAt: string | null) {
+  if (!startedAt) return null;
+  const started = Date.parse(startedAt);
+  if (Number.isNaN(started)) return null;
+  return Math.max(0, Math.floor((Date.now() - started) / 1000));
+}
+
+function runningDetail(stage: AnalysisStage) {
+  if (stage.status !== "running") return null;
+  const elapsed = elapsedSeconds(stage.started_at);
+  const suffix = elapsed == null ? "" : ` Elapsed ${formatElapsed(elapsed)}.`;
+  if (stage.stage === "speech_transcription") {
+    return `Transcribing audio. This may take several minutes on CPU.${suffix}`;
+  }
+  if (elapsed != null && elapsed >= 90) {
+    return `${stage.label} is still running.${suffix}`;
+  }
+  return null;
+}
+
 function StageIcon({ status }: { status: AnalysisStageStatus }) {
   const kind = STATE_META[status].icon;
   if (kind === "done") {
@@ -87,6 +114,7 @@ function StageRow({
   const rerun = useRerunStage(projectId);
   const meta = STATE_META[stage.status];
   const detail = stage.reason ?? stage.error ?? null;
+  const activeDetail = runningDetail(stage);
 
   return (
     <li className="relative flex gap-4 pb-5 last:pb-0">
@@ -148,6 +176,7 @@ function StageRow({
             />
           </div>
         )}
+        {activeDetail && <p className="mt-2 text-xs leading-relaxed text-muted">{activeDetail}</p>}
         {open && detail && (
           <p className="mt-2 rounded-lg bg-white/[0.03] px-3 py-2 text-xs leading-relaxed text-muted">
             {detail}

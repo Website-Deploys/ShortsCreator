@@ -55,6 +55,7 @@ class ViralityStatus(StrEnum):
 # comment potential) and the final summary build on the per-signal analyzers
 # before them.
 VIRALITY_STAGE_ORDER: tuple[str, ...] = (
+    "trend_research",
     "hook_strength",
     "curiosity_gap",
     "emotional_impact",
@@ -74,6 +75,7 @@ VIRALITY_STAGE_ORDER: tuple[str, ...] = (
 
 # Human-friendly labels for the UI.
 VIRALITY_STAGE_LABELS: dict[str, str] = {
+    "trend_research": "Internet Trend Research V2",
     "hook_strength": "Hook Strength",
     "curiosity_gap": "Curiosity Gap",
     "emotional_impact": "Emotional Impact",

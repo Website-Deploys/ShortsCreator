@@ -424,12 +424,21 @@ async def test_publish_package_writes_real_assets(
     result = await _pipeline(optimization_repo).run(
         project, storage, renders=manifest, analysis=analysis, planning=planning, editing=editing
     )
+    upload_stage = result.stage("upload_metadata_v2").data["clips"][0]
+    assert upload_stage["source"] == "optimization_backfill"
+    assert upload_stage["upload_metadata_v2"]["youtube_shorts"]["title"]
     pkg = result.stage("publish_package_creation").data
     assert pkg["package_count"] == 1
     package = pkg["packages"][0]
     by_kind = {a["kind"]: a for a in package["assets"]}
     # Caption + metadata + quality assets are real and present in storage.
-    for kind in ("captions_srt", "captions_vtt", "metadata", "quality_report"):
+    for kind in (
+        "captions_srt",
+        "captions_vtt",
+        "metadata",
+        "upload_metadata_v2",
+        "quality_report",
+    ):
         assert by_kind[kind]["status"] == "available"
         assert await storage.exists(by_kind[kind]["storage_key"])
     # The MP4 references the real render; the thumbnail is honestly unavailable.

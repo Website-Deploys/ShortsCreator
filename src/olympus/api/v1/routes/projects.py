@@ -13,7 +13,7 @@ video player can seek). Cloud storage redirects to a presigned URL.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Response, UploadFile, status
 from fastapi.responses import FileResponse, RedirectResponse
 
 from olympus.api.dependencies import (
@@ -21,23 +21,39 @@ from olympus.api.dependencies import (
     ClipPlannerServiceDep,
     EditingServiceDep,
     LibraryServiceDep,
+    LinkIntakeDep,
     OptimizationServiceDep,
     ProjectServiceDep,
     RenderingServiceDep,
+    SettingsDep,
     StorageDep,
     StoryServiceDep,
     ViralityServiceDep,
     WorkflowServiceDep,
 )
 from olympus.api.v1.schemas.projects import (
+    CreateProjectFromLinkRequest,
+    CreateProjectFromLinkResponse,
     CreateProjectRequest,
+    LinkDownloadResponse,
     ProjectResponse,
     RenameProjectRequest,
 )
+from olympus.platform.config.settings import Environment
 from olympus.platform.errors import NotFoundError, ValidationError
-from olympus.services.projects import NewProjectInput
+from olympus.platform.logging import get_logger
+from olympus.services.analysis import AnalysisService
+from olympus.services.intake import (
+    LinkDownloadRecord,
+    LinkDownloadStatus,
+    LinkIngestionMode,
+    VideoLinkIntakeService,
+)
+from olympus.services.projects import NewProjectInput, ProjectService
+from olympus.services.workflow import WorkflowService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+log = get_logger(__name__)
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -45,6 +61,8 @@ async def create_project(
     payload: CreateProjectRequest,
     projects: ProjectServiceDep,
     analysis: AnalysisServiceDep,
+    workflow: WorkflowServiceDep,
+    settings: SettingsDep,
 ) -> ProjectResponse:
     """Create a project from an uploaded video.
 
@@ -54,6 +72,11 @@ async def create_project(
     progress - stages report their honest state as the pipeline advances.
     """
 
+    log.info(
+        "project_creation_started",
+        storage_key=payload.storage_key,
+        source_filename=payload.source_filename,
+    )
     project = await projects.create(
         NewProjectInput(
             storage_key=payload.storage_key,
@@ -65,12 +88,209 @@ async def create_project(
             width=payload.width,
             height=payload.height,
             upload_duration_ms=payload.upload_duration_ms,
+            desired_clip_count=payload.desired_clip_count,
+            content_category=payload.content_category,
+            editing_intensity=payload.editing_intensity,
+            music_enabled=payload.music_enabled,
+            sfx_enabled=payload.sfx_enabled,
+            captions_enabled=payload.captions_enabled,
         )
     )
+    log.info("project_created", project_id=project.id, storage_key=project.storage_key)
     # Begin understanding the video right away (background task).
     await analysis.start(project)
+    if settings.durable_jobs.enabled and settings.environment is not Environment.TESTING:
+        await workflow.start(
+            project,
+            source="manual_upload",
+            idempotency_key=f"project_pipeline:{project.id}",
+        )
+    log.info("analysis_background_task_scheduled", project_id=project.id)
     refreshed = await projects.get(project.id)
+    log.info("project_creation_response_ready", project_id=project.id)
     return ProjectResponse.from_entity(refreshed)
+
+
+@router.post(
+    "/from-link",
+    response_model=CreateProjectFromLinkResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_project_from_link(
+    payload: CreateProjectFromLinkRequest,
+    background_tasks: BackgroundTasks,
+    links: LinkIntakeDep,
+    projects: ProjectServiceDep,
+    analysis: AnalysisServiceDep,
+    workflow: WorkflowServiceDep,
+    settings: SettingsDep,
+) -> CreateProjectFromLinkResponse:
+    """Validate a permitted link and queue download/project creation."""
+
+    log.info("link_project_creation_started", url=payload.url)
+    record = await links.prepare(
+        payload.url,
+        permission_confirmed=payload.permission_confirmed,
+        start_processing=payload.start_processing,
+        mode=payload.mode,
+        quality=payload.quality,
+    )
+    if record.status in {LinkDownloadStatus.FAILED, LinkDownloadStatus.UNAVAILABLE}:
+        log.info(
+            "link_project_creation_unavailable",
+            url=payload.url,
+            status=record.status.value,
+            reason=record.reason,
+        )
+        return CreateProjectFromLinkResponse(
+            download=_link_download_response(record),
+            project=None,
+        )
+
+    if payload.mode != LinkIngestionMode.METADATA_ONLY.value:
+        background_tasks.add_task(
+            _complete_link_project,
+            record.id,
+            links,
+            projects,
+            analysis,
+            workflow,
+            settings.durable_jobs.enabled and settings.environment is not Environment.TESTING,
+            payload,
+        )
+    log.info("link_project_creation_queued", ingestion_id=record.id, url=record.url)
+    return CreateProjectFromLinkResponse(
+        download=_link_download_response(record),
+        project=None,
+    )
+
+
+@router.get(
+    "/link-ingestions/{ingestion_id}",
+    response_model=CreateProjectFromLinkResponse,
+)
+async def get_link_ingestion(
+    ingestion_id: str,
+    links: LinkIntakeDep,
+    projects: ProjectServiceDep,
+) -> CreateProjectFromLinkResponse:
+    """Return persisted metadata, download progress, and the created project."""
+
+    record = await links.get(ingestion_id)
+    project_response = None
+    if record.project_id:
+        project_response = ProjectResponse.from_entity(await projects.get(record.project_id))
+    return CreateProjectFromLinkResponse(
+        download=_link_download_response(record),
+        project=project_response,
+    )
+
+
+async def _complete_link_project(
+    ingestion_id: str,
+    links: VideoLinkIntakeService,
+    projects: ProjectService,
+    analysis: AnalysisService,
+    workflow: WorkflowService,
+    durable_jobs_enabled: bool,
+    payload: CreateProjectFromLinkRequest,
+) -> None:
+    """Complete link ingestion after the HTTP response has been returned."""
+
+    stage = "project_creation"
+    try:
+        record = await links.ingest_prepared(ingestion_id)
+        if record.upload is None or record.status is not LinkDownloadStatus.DOWNLOADED:
+            return
+        if record.mode == LinkIngestionMode.DOWNLOAD_ONLY.value:
+            return
+        probe = record.media_probe or {}
+        project = await projects.create(
+            NewProjectInput(
+                storage_key=record.upload.storage_key,
+                source_filename=record.upload.filename,
+                size_bytes=record.upload.size_bytes,
+                video_format=record.upload.video_format,
+                content_type=record.upload.content_type,
+                duration_seconds=probe.get("container_duration"),
+                width=probe.get("width"),
+                height=probe.get("height"),
+                source_type="link",
+                source_url=record.url,
+                link_ingestion_id=record.id,
+                desired_clip_count=payload.desired_clip_count,
+                content_category=payload.content_category,
+                editing_intensity=payload.editing_intensity,
+                music_enabled=payload.music_enabled,
+                sfx_enabled=payload.sfx_enabled,
+                captions_enabled=payload.captions_enabled,
+            )
+        )
+        await links.attach_project(
+            ingestion_id,
+            project.id,
+            processing_started=False,
+        )
+        if payload.start_processing:
+            stage = "processing_started"
+            await analysis.start(project)
+            durable_workflow = (
+                await workflow.start(
+                    project,
+                    source="link_ingestion",
+                    idempotency_key=f"project_pipeline:{project.id}",
+                )
+                if durable_jobs_enabled
+                else None
+            )
+            await links.attach_project(
+                ingestion_id,
+                project.id,
+                processing_started=True,
+                job_id=durable_workflow.workflow_id if durable_workflow is not None else None,
+            )
+        log.info("link_project_created", project_id=project.id, ingestion_id=ingestion_id)
+    except Exception as exc:
+        await links.fail_after_download(
+            ingestion_id,
+            exc,
+            stage=stage,
+            cleanup_upload=stage == "project_creation",
+        )
+        log.error(
+            "link_project_background_failed",
+            ingestion_id=ingestion_id,
+            error=str(exc),
+            exc_info=True,
+        )
+
+
+def _link_download_response(record: LinkDownloadRecord) -> LinkDownloadResponse:
+    upload = record.upload
+    return LinkDownloadResponse(
+        ingestion_id=record.id,
+        status=record.status.value,
+        url=record.url,
+        original_url=record.original_url,
+        reason=record.reason,
+        filename=upload.filename if upload else None,
+        storage_key=upload.storage_key if upload else None,
+        size_bytes=upload.size_bytes if upload else None,
+        video_format=upload.video_format if upload else None,
+        content_type=upload.content_type if upload else None,
+        project_id=record.project_id,
+        job_id=record.job_id,
+        status_url=f"/api/v1/jobs/{record.job_id}" if record.job_id else None,
+        resume_url=f"/api/v1/jobs/{record.job_id}/resume" if record.job_id else None,
+        link_source=record.link_source,
+        video_metadata=record.video_metadata,
+        download_selection=record.download_selection,
+        link_ingestion_status=record.link_ingestion_status,
+        rights_confirmation=record.rights_confirmation,
+        media_probe=record.media_probe,
+        error=record.error,
+        warnings=record.warnings,
+    )
 
 
 @router.get("", response_model=list[ProjectResponse])

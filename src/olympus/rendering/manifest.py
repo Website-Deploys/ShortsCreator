@@ -32,6 +32,7 @@ def rendered_video_from_output(
     timeline_version: str | None,
     rendered_at: str,
     source_video: dict[str, object],
+    metadata: dict[str, object] | None = None,
 ) -> RenderedVideo:
     """Build a manifest entry from a real render output + measured checksum."""
 
@@ -57,4 +58,5 @@ def rendered_video_from_output(
         timeline_version=timeline_version,
         rendered_at=rendered_at,
         source_video=source_video,
+        metadata=metadata or {},
     )

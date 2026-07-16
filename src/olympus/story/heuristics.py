@@ -392,3 +392,9 @@ def seg_start(segment: dict[str, Any]) -> float:
 def seg_end(segment: dict[str, Any]) -> float:
     value = segment.get("end")
     return float(value) if value is not None else seg_start(segment)
+
+
+def as_list(value: Any) -> list[Any]:
+    """Safely coerce loose JSON stage data into a list."""
+
+    return value if isinstance(value, list) else []

@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from olympus.domain.entities.workflow import Job, Workflow, WorkflowEvent
+from olympus.jobs.contracts import workflow_to_durable_job
 
 
 class WorkflowResponse(BaseModel):
@@ -35,10 +36,14 @@ class WorkflowResponse(BaseModel):
     jobs: list[dict[str, Any]]
     history: list[dict[str, Any]]
     execution_graph: dict[str, Any]
+    durable_job_v2: dict[str, Any]
 
     @classmethod
     def from_entity(cls, workflow: Workflow) -> WorkflowResponse:
-        return cls(**workflow.to_dict())
+        return cls(
+            **workflow.to_dict(),
+            durable_job_v2=workflow_to_durable_job(workflow),
+        )
 
 
 class JobResponse(BaseModel):

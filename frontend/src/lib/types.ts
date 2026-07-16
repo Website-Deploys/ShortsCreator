@@ -31,6 +31,15 @@ export interface Project {
   updated_at: string;
   has_thumbnail: boolean;
   upload_duration_ms: number | null;
+  source_type: string;
+  source_url: string | null;
+  link_ingestion_id: string | null;
+  desired_clip_count: number | null;
+  content_category: string;
+  editing_intensity: string;
+  music_enabled: boolean;
+  sfx_enabled: boolean;
+  captions_enabled: boolean;
 }
 
 /** Payload for creating a project from an uploaded video. */
@@ -44,6 +53,98 @@ export interface CreateProjectInput {
   width?: number | null;
   height?: number | null;
   upload_duration_ms?: number | null;
+  desired_clip_count?: number | null;
+  content_category?: string;
+  editing_intensity?: string;
+  music_enabled?: boolean;
+  sfx_enabled?: boolean;
+  captions_enabled?: boolean;
+}
+
+export interface CreateProjectFromLinkInput {
+  url: string;
+  permission_confirmed: boolean;
+  start_processing?: boolean;
+  quality?: "best";
+  mode?: "metadata_only" | "download_only" | "full_pipeline";
+  desired_clip_count?: number | null;
+  content_category?: string;
+  editing_intensity?: string;
+  music_enabled?: boolean;
+  sfx_enabled?: boolean;
+  captions_enabled?: boolean;
+}
+
+export interface LinkDownloadStatus {
+  ingestion_id: string;
+  status: string;
+  url: string;
+  original_url: string;
+  reason: string | null;
+  filename: string | null;
+  storage_key: string | null;
+  size_bytes: number | null;
+  video_format: string | null;
+  content_type: string | null;
+  project_id: string | null;
+  job_id?: string | null;
+  status_url?: string | null;
+  resume_url?: string | null;
+  link_source: {
+    platform?: string;
+    video_id?: string;
+    url_type?: string;
+    validation_status?: string;
+    validation_warnings?: string[];
+  };
+  video_metadata: {
+    title?: string | null;
+    channel?: string | null;
+    uploader?: string | null;
+    duration?: number | null;
+    thumbnail_url?: string | null;
+    availability?: string | null;
+    is_live?: boolean;
+  };
+  download_selection: {
+    selected_resolution?: string | null;
+    selected_video_codec?: string | null;
+    selected_audio_codec?: string | null;
+    selected_container?: string | null;
+    estimated_filesize?: number | null;
+    selection_reason?: string | null;
+  };
+  link_ingestion_status: {
+    status?: string;
+    progress_percent?: number | null;
+    downloaded_bytes?: number | null;
+    total_bytes?: number | null;
+    speed?: number | null;
+    eta_seconds?: number | null;
+    current_stage?: string;
+    error_code?: string | null;
+    error_message?: string | null;
+  };
+  rights_confirmation: {
+    confirmed?: boolean;
+    confirmed_at?: string | null;
+    source?: string;
+  };
+  media_probe: Record<string, unknown> | null;
+  error: {
+    code?: string;
+    user_message?: string;
+    developer_message?: string;
+    retryable?: boolean;
+    stage?: string;
+    suggestion?: string;
+  } | null;
+  warnings: string[];
+}
+
+export interface CreateProjectFromLinkResponse {
+  download: LinkDownloadStatus;
+  project: Project | null;
 }
 
 /** A finished Short (rendered by the pipeline; none exist until it is connected). */
@@ -230,6 +331,12 @@ export interface ViralitySummary {
   summary: Record<string, unknown>;
 }
 
+/** The persisted Internet Trend Research V2 project snapshot. */
+export interface TrendResearchResponse {
+  project_id: string;
+  internet_trend_research_v2: Record<string, unknown>;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Clip Planner — editing blueprints                                          */
 /* -------------------------------------------------------------------------- */
@@ -291,8 +398,21 @@ export interface ClipPlan {
   end_frame?: number | null;
   fps?: number | null;
   quality_score: number;
+  overall_score?: number;
+  hook_score?: number;
+  retention_score?: number;
+  clarity_score?: number;
+  payoff_score?: number;
+  virality_score?: number;
+  emotion_score?: number;
+  uniqueness_score?: number;
+  platform_score?: number;
   confidence: number;
   source?: string;
+  source_candidate_type?: string | null;
+  transcript_excerpt?: string | null;
+  hook_line?: string | null;
+  duplicate_group?: string | null;
   explanation?: string;
   scores: Record<string, number>;
   evidence: Record<string, unknown>[];
@@ -573,6 +693,184 @@ export interface RenderRun {
   stages: RenderStage[];
 }
 
+/** One ranked title candidate produced by Upload Metadata V2. */
+export interface UploadTitleCandidate {
+  text: string;
+  platform: string;
+  pattern: string;
+  hook_category: string;
+  truth_score: number;
+  curiosity_score: number;
+  clarity_score: number;
+  safety_score: number;
+  length: number;
+  warnings: string[];
+}
+
+/** Stable platform-specific copy attached to a finished render. */
+export interface UploadMetadataV2 {
+  metadata_id: string;
+  project_id: string;
+  clip_id: string;
+  render_id?: string | null;
+  created_at: string;
+  generator_version: string;
+  status: "ready" | "generated_needs_review" | "not_ready" | "invalid" | "unavailable";
+  reason?: string | null;
+  input_signals: Record<string, unknown>;
+  youtube_shorts: {
+    title: string;
+    title_variants: UploadTitleCandidate[];
+    description: string;
+    hashtags: string[];
+    pinned_comment?: string | null;
+    safety_warnings: string[];
+    confidence: number;
+  };
+  instagram_reels: {
+    caption: string;
+    caption_variants: string[];
+    hashtags: string[];
+    safety_warnings: string[];
+    confidence: number;
+  };
+  tiktok: {
+    caption: string;
+    caption_variants: string[];
+    hashtags: string[];
+    safety_warnings: string[];
+    confidence: number;
+  };
+  universal: Record<string, unknown>;
+  upload_metadata_personalization?: Record<string, unknown>;
+  validation: Record<string, unknown>;
+  artifact: Record<string, unknown>;
+}
+
+export type CreatorRating = "like" | "dislike" | "neutral";
+
+export interface CreatorProfileV2 {
+  profile_id: string;
+  profile_name: string;
+  preset_id: string;
+  version: "2";
+  created_at: string;
+  updated_at: string;
+  learning: {
+    enabled: boolean;
+    explicit_feedback_only: true;
+    total_feedback_count: number;
+    last_feedback_at?: string | null;
+    confidence: number;
+  };
+  channel_context: Record<string, unknown>;
+  clip_selection_preferences: Record<string, unknown>;
+  editing_preferences: Record<string, unknown> & {
+    style_preset?: string;
+    pacing?: string;
+    motion_intensity?: number;
+    zoom_intensity?: number;
+    sfx_intensity?: number;
+    caption_intensity?: number;
+    music_intensity?: number;
+  };
+  caption_preferences: Record<string, unknown> & {
+    style?: string;
+    casing?: string;
+    highlight_density?: number;
+    max_words_per_line?: number;
+  };
+  music_preferences: Record<string, unknown> & {
+    preferred_moods?: string[];
+    music_presence?: string;
+    max_loudness?: number;
+  };
+  motion_preferences: Record<string, unknown> & {
+    preferred_styles?: string[];
+    intensity?: number;
+  };
+  upload_metadata_preferences: Record<string, unknown> & { title_style?: string };
+  safety_preferences: Record<string, unknown>;
+  learned_patterns: Record<string, unknown>;
+  privacy: {
+    local_only: true;
+    no_sensitive_data: true;
+    no_cloud_sync: true;
+    exportable: boolean;
+    resettable: boolean;
+  };
+}
+
+export interface CreatorProfilesResponse {
+  profiles: CreatorProfileV2[];
+  active_profile_id: string;
+  presets: string[];
+  privacy: CreatorProfileV2["privacy"];
+}
+
+export interface CreatorPersonalizationSummary {
+  version: "2";
+  enabled: boolean;
+  active_profile: CreatorProfileV2;
+  profile_count: number;
+  feedback_count: number;
+  presets: string[];
+  privacy: CreatorProfileV2["privacy"];
+  message: string;
+}
+
+export interface CreatorProfileExportResponse {
+  profile: CreatorProfileV2;
+  exported: boolean;
+  filename: string;
+}
+
+export interface ClipFeedbackInput {
+  profile_id: string;
+  project_id: string;
+  clip_id: string;
+  rating: {
+    overall: CreatorRating;
+    clip_selection?: CreatorRating;
+    hook?: CreatorRating;
+    story?: CreatorRating;
+    captions?: CreatorRating;
+    editing?: CreatorRating;
+    music?: CreatorRating;
+    motion?: CreatorRating;
+    title_metadata?: CreatorRating;
+  };
+  labels?: string[];
+  notes?: string;
+  clip_traits?: {
+    hook_category?: string;
+    title_pattern?: string;
+    caption_style?: string;
+    music_mood?: string;
+    motion_style?: string;
+    clip_traits?: string[];
+  };
+}
+
+export interface ClipFeedbackV2 extends ClipFeedbackInput {
+  feedback_id: string;
+  created_at: string;
+  version: "2";
+  extracted_safe_learning: Record<string, string[]>;
+  applied_to_profile: boolean;
+}
+
+export interface PersonalizationSummaryV2 {
+  applied: boolean;
+  profile_id?: string | null;
+  profile_name?: string | null;
+  confidence?: number | null;
+  affected_systems?: string[];
+  key_adjustments?: Array<Record<string, unknown>>;
+  warnings?: string[];
+  reasons?: string[];
+}
+
 /** One rendered clip described in the render manifest. */
 export interface RenderedVideo {
   clip_id: string;
@@ -591,6 +889,10 @@ export interface RenderedVideo {
   checksum?: string | null;
   subtitles_included?: boolean | null;
   music_included?: boolean | null;
+  metadata?: Record<string, unknown> & {
+    upload_metadata_v2?: UploadMetadataV2;
+    personalization_applied_v2?: PersonalizationSummaryV2;
+  };
 }
 
 /** The published render manifest (the contract the Optimization Engine consumes). */
@@ -636,6 +938,8 @@ export type JobStatus =
   | "pending"
   | "ready"
   | "running"
+  | "cancel_requested"
+  | "stale"
   | "completed"
   | "failed"
   | "cancelled"
@@ -679,10 +983,62 @@ export interface WorkflowJob {
   finished_at: string | null;
   available_at: string | null;
   scheduled_for: string | null;
+  heartbeat_at?: string | null;
   duration_ms: number | null;
+  progress_percent?: number;
   error: string | null;
   result: Record<string, unknown>;
+  checkpoint?: Record<string, unknown>;
+  resumable?: boolean;
+  retryable?: boolean;
+  skipped?: boolean;
+  skip_reason?: string | null;
+  warnings?: string[];
+  errors?: string[];
+  cancellation_requested?: boolean;
+  cancellation_requested_at?: string | null;
+  cancellation_reason?: string | null;
   logs: JobLogLine[];
+}
+
+export type DurableJobStatus =
+  | "queued"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "canceled"
+  | "cancel_requested"
+  | "retrying"
+  | "stale"
+  | "blocked";
+
+export interface DurableJob {
+  schema_version: "durable_job_v2" | string;
+  job_id: string;
+  project_id: string;
+  job_type: string;
+  status: DurableJobStatus;
+  current_stage: string | null;
+  progress_percent: number;
+  heartbeat_at: string | null;
+  worker_id: string | null;
+  resume: {
+    resumable: boolean;
+    resume_from_stage: string | null;
+    completed_stage_count: number;
+    pending_stage_count: number;
+    stale_running_detected: boolean;
+    reason: string | null;
+  };
+  cancellation: { requested: boolean; requested_at: string | null; reason: string | null };
+  result: { success: boolean; warnings: string[]; errors: string[] } & Record<string, unknown>;
+  diagnostics: Record<string, unknown>;
+  stages: Array<Record<string, unknown>>;
+}
+
+export interface DurableJobListResponse {
+  jobs: DurableJob[];
 }
 
 /** An entry on the workflow's execution history / event stream. */
@@ -726,6 +1082,7 @@ export interface Workflow {
   jobs: WorkflowJob[];
   history: WorkflowEvent[];
   execution_graph: ExecutionGraph;
+  durable_job_v2?: DurableJob;
 }
 
 /** A worker's registration and health snapshot. */
@@ -755,6 +1112,8 @@ export interface SchedulerStatus {
     dead: number;
     blocked: number;
     cancelled: number;
+    cancel_requested?: number;
+    stale?: number;
     active_workflows: number;
   };
   pool_running: boolean;
