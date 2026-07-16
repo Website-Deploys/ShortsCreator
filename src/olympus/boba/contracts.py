@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from olympus.boba.memory_contracts import BobaMemoryApplicationV1
+
 BOBA_VERSION = "1"
 BobaMode = Literal[
     "observe_only",
@@ -91,6 +93,7 @@ class BobaDecisionV1(BobaContract):
     reasoning: BobaReasoningV1
     output_directive: BobaOutputDirectiveV1
     validation: BobaDecisionValidationV1 = Field(default_factory=BobaDecisionValidationV1)
+    memory_application_v1: BobaMemoryApplicationV1 | None = None
 
 
 class BobaObservationV1(BobaContract):
@@ -234,6 +237,7 @@ class BobaClipRankingV1(BobaContract):
     coverage_summary: dict[str, Any] = Field(default_factory=dict)
     reasoning_summary: str = Field(default="", max_length=800)
     warnings: list[str] = Field(default_factory=list, max_length=32)
+    memory_application_v1: BobaMemoryApplicationV1 | None = None
 
 
 class BobaEditorialPolicyV1(BobaContract):
@@ -252,6 +256,7 @@ class BobaEditorialPolicyV1(BobaContract):
     explanation: str = Field(min_length=1, max_length=800)
     confidence: float = Field(ge=0.0, le=1.0)
     warnings: list[str] = Field(default_factory=list, max_length=32)
+    memory_application_v1: BobaMemoryApplicationV1 | None = None
 
 
 class BobaValidationResultV1(BobaContract):

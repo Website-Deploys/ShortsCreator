@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
-from olympus.api.dependencies import BobaIntegrationDep, SettingsDep
+from olympus.api.dependencies import (
+    BobaIntegrationDep,
+    PersonalizationServiceDep,
+    SettingsDep,
+)
+from olympus.boba.creator_memory import build_and_save_creator_memory
+from olympus.boba.global_memory import build_and_save_global_memory
+from olympus.boba.memory_contracts import BobaMemoryQueryV1
+from olympus.boba.memory_learning import BobaMemoryLearner
 from olympus.platform.errors import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/boba", tags=["boba"])
@@ -19,9 +27,42 @@ class EditorialPolicyRequest(BaseModel):
     clip_id: str = Field(min_length=1, max_length=128)
 
 
+class MemoryFeedbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str = Field(min_length=1, max_length=80)
+    project_id: str = Field(min_length=1, max_length=128)
+    clip_id: str = Field(min_length=1, max_length=128)
+    rating: dict[str, Any] | str = "neutral"
+    labels: list[str] = Field(default_factory=list, max_length=24)
+    notes: str = Field(default="", max_length=500)
+    clip_traits: dict[str, Any] = Field(default_factory=dict)
+
+
+class MemoryImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: bool = False
+    payload: dict[str, Any]
+
+
+class MemoryResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: bool = False
+    scope: Literal["project", "creator", "global"]
+    identifier: str | None = Field(default=None, max_length=128)
+
+
 def _require_enabled(settings: SettingsDep) -> None:
     if not settings.boba.enabled:
         raise ValidationError("BOBA Core Brain is disabled by configuration.")
+
+
+def _require_memory_enabled(settings: SettingsDep) -> None:
+    _require_enabled(settings)
+    if not settings.boba_memory.enabled:
+        raise ValidationError("BOBA Memory is disabled by configuration.")
 
 
 async def _require_project(project_id: str, boba: BobaIntegrationDep) -> None:
@@ -118,3 +159,189 @@ async def create_project_editorial_policy(
     return (await boba.generate_boba_for_clip(project_id, body.clip_id)).model_dump(
         mode="json"
     )
+
+
+@router.get("/memory/projects/{project_id}")
+async def get_project_memory(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    memory = boba.store.load_project_memory(project_id)
+    if memory is None:
+        memory = await boba.build_project_memory(project_id)
+    return memory.model_dump(mode="json")
+
+
+@router.post("/memory/projects/{project_id}/build")
+async def build_project_memory_route(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    return (await boba.build_project_memory(project_id)).model_dump(mode="json")
+
+
+@router.get("/memory/creators/{profile_id}")
+def get_creator_memory(
+    profile_id: str,
+    boba: BobaIntegrationDep,
+    personalization: PersonalizationServiceDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    if not settings.boba_memory.allow_creator_memory:
+        raise ValidationError("Creator memory is disabled by configuration.")
+    memory = boba.store.load_creator_memory(profile_id)
+    if memory is None:
+        profile = personalization.get_profile(profile_id)
+        memory = build_and_save_creator_memory(
+            boba.store,
+            profile,
+            personalization.store.list_feedback(profile_id),
+        )
+    return memory.model_dump(mode="json")
+
+
+@router.post("/memory/creators/{profile_id}/build")
+def build_creator_memory_route(
+    profile_id: str,
+    boba: BobaIntegrationDep,
+    personalization: PersonalizationServiceDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    if not settings.boba_memory.allow_creator_memory:
+        raise ValidationError("Creator memory is disabled by configuration.")
+    profile = personalization.get_profile(profile_id)
+    return build_and_save_creator_memory(
+        boba.store,
+        profile,
+        personalization.store.list_feedback(profile_id),
+    ).model_dump(mode="json")
+
+
+@router.get("/memory/global")
+def get_global_memory(
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    if not settings.boba_memory.allow_global_memory:
+        raise ValidationError("Global memory is disabled by configuration.")
+    memory = boba.store.load_global_memory() or build_and_save_global_memory(boba.store)
+    return memory.model_dump(mode="json")
+
+
+@router.post("/memory/global/build")
+def build_global_memory_route(
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    if not settings.boba_memory.allow_global_memory:
+        raise ValidationError("Global memory is disabled by configuration.")
+    return build_and_save_global_memory(boba.store).model_dump(mode="json")
+
+
+@router.post("/memory/query")
+def query_memory(
+    body: BobaMemoryQueryV1,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    return boba.store.query_memory(body).model_dump(mode="json")
+
+
+@router.post("/memory/feedback")
+async def record_memory_feedback(
+    body: MemoryFeedbackRequest,
+    boba: BobaIntegrationDep,
+    personalization: PersonalizationServiceDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(body.project_id, boba)
+    feedback = personalization.record_feedback(
+        profile_id=body.profile_id,
+        project_id=body.project_id,
+        clip_id=body.clip_id,
+        rating=body.rating,
+        labels=body.labels,
+        notes=body.notes,
+        clip_traits=body.clip_traits,
+    )
+    if personalization.memory_feedback_callback is None:
+        BobaMemoryLearner(boba.store).learn_from_feedback(feedback)
+        build_and_save_creator_memory(
+            boba.store,
+            personalization.get_profile(body.profile_id),
+            personalization.store.list_feedback(body.profile_id),
+        )
+    creator_memory = boba.store.load_creator_memory(body.profile_id)
+    if creator_memory is None:
+        raise ValidationError("Creator memory was not created from explicit feedback.")
+    return {
+        "feedback": feedback.model_dump(mode="json"),
+        "creator_memory": creator_memory.model_dump(mode="json"),
+    }
+
+
+@router.get("/memory/export")
+def export_memory(
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    scope: Literal["project", "creator", "global"] | None = None,
+    identifier: str | None = None,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    if not settings.boba_memory.allow_import_export:
+        raise ValidationError("BOBA memory export is disabled by configuration.")
+    return boba.store.export_memory(scope, identifier)
+
+
+@router.post("/memory/import")
+def import_memory(
+    body: MemoryImportRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    if not body.confirm:
+        raise ValidationError("BOBA memory import requires explicit confirmation.")
+    if not settings.boba_memory.allow_import_export:
+        raise ValidationError("BOBA memory import is disabled by configuration.")
+    return {"imported": boba.store.import_memory(body.payload)}
+
+
+@router.post("/memory/reset")
+def reset_memory(
+    body: MemoryResetRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    if not body.confirm:
+        raise ValidationError("BOBA memory reset requires explicit confirmation.")
+    if body.scope == "project":
+        if not body.identifier:
+            raise ValidationError("Project memory reset requires identifier.")
+        backup = boba.store.reset_project_memory(body.identifier)
+    elif body.scope == "creator":
+        if not body.identifier:
+            raise ValidationError("Creator memory reset requires identifier.")
+        backup = boba.store.reset_creator_memory(body.identifier)
+    else:
+        backup = boba.store.reset_global_memory()
+    return {
+        "reset": True,
+        "scope": body.scope,
+        "identifier": body.identifier,
+        "backup_created": backup is not None,
+        "backup_name": backup.name if backup else None,
+    }
