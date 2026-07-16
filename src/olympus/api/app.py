@@ -46,9 +46,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             service = workflow_service_provider()
             await service.recover()
-            service.start_pool()
-            workflow_started = True
-            log.info("workflow_pool_started")
+            workflow_started = service.start_pool()
+            if workflow_started:
+                log.info("workflow_pool_started")
+            else:
+                log.info("workflow_pool_external_mode")
         except Exception as exc:  # never let orchestration startup block the API
             log.error("workflow_startup_error", error=str(exc))
     try:
@@ -98,3 +100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(api_v1_router, prefix="/api/v1")
 
     return app
+
+
+# ASGI application entrypoint for Uvicorn
+app = create_app()

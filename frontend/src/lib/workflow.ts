@@ -33,6 +33,8 @@ const JOB_STATUS_META: Record<JobStatus, StatusMeta> = {
   pending: { label: "Pending", tone: "text-muted", dot: "bg-white/25" },
   ready: { label: "Ready", tone: "text-sky-300", dot: "bg-sky-400" },
   running: { label: "Running", tone: "text-accent", dot: "bg-accent" },
+  cancel_requested: { label: "Stopping", tone: "text-amber-300", dot: "bg-amber-400" },
+  stale: { label: "Stale", tone: "text-amber-300", dot: "bg-amber-500" },
   completed: { label: "Completed", tone: "text-emerald-300", dot: "bg-emerald-400" },
   failed: { label: "Failed", tone: "text-rose-300", dot: "bg-rose-400" },
   cancelled: { label: "Cancelled", tone: "text-muted", dot: "bg-white/30" },
@@ -101,7 +103,7 @@ export function jobTally(jobs: WorkflowJob[]): {
   let pending = 0;
   for (const j of jobs) {
     if (j.status === "completed") completed += 1;
-    else if (j.status === "running") running += 1;
+    else if (j.status === "running" || j.status === "cancel_requested") running += 1;
     else if (j.status === "failed" || j.status === "dead" || j.status === "blocked") failed += 1;
     else pending += 1;
   }

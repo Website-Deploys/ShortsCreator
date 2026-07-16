@@ -60,6 +60,7 @@ STORY_STAGE_ORDER: tuple[str, ...] = (
     "emotional_turning_points",
     "information_density",
     "context_dependencies",
+    "story_analysis_v2",
     "story_graph",
     "story_summary",
 )
@@ -74,6 +75,7 @@ STORY_STAGE_LABELS: dict[str, str] = {
     "emotional_turning_points": "Emotional Turning Points",
     "information_density": "Information Density",
     "context_dependencies": "Context Dependencies",
+    "story_analysis_v2": "Story Analysis V2",
     "story_graph": "Story Graph",
     "story_summary": "Story Summary",
 }

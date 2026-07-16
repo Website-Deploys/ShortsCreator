@@ -13,6 +13,7 @@ These verify the *honest* contract of clip planning:
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,7 @@ from olympus.domain.entities.planning import (
     PlanningStatus,
 )
 from olympus.domain.entities.project import Project, ProjectStatus
-from olympus.planning import build_default_planning_analyzers
+from olympus.planning import build_default_planning_analyzers, v2
 from olympus.planning.analyzers import DuplicateDetectionAnalyzer, RankingAnalyzer
 from olympus.planning.pipeline import ClipPlanningPipeline
 from olympus.services.planning import ClipPlannerService
@@ -101,6 +102,31 @@ TRANSCRIPT = [
         "text": "What I learned is that constraints create freedom. Thanks for watching!",
     },
 ]
+
+
+def _long_transcript(duration: float, *, strong: bool = True) -> list[dict[str, object]]:
+    segments: list[dict[str, object]] = []
+    t = 0.0
+    i = 0
+    strong_lines = [
+        "Why do creators miss viral moments? The truth is they only check the intro.",
+        "Nobody tells you this, but the best clip often starts after the topic changes.",
+        "This changed everything because the payoff finally makes the whole story clear.",
+        "The biggest mistake is keeping dead air instead of cutting to the tension line.",
+    ]
+    weak_line = "We continued talking about the same general update with no clear point."
+    while t < duration:
+        text = (
+            f"{strong_lines[i % len(strong_lines)]} Topic{i} lesson{i} example{i}."
+            if strong
+            else weak_line
+        )
+        segments.append(
+            {"start": t, "end": min(duration, t + 12.0), "speaker": "spk_0", "text": text}
+        )
+        t += 12.0
+        i += 1
+    return segments
 
 
 @pytest.fixture
@@ -187,6 +213,179 @@ def _pipeline(repo: StoragePlanningRepository, **kw: object) -> ClipPlanningPipe
 # --------------------------------------------------------------------------- #
 # Structure & honesty
 # --------------------------------------------------------------------------- #
+def test_auto_clip_count_strategy_scales_with_duration() -> None:
+    assert v2.clip_count_strategy(180).maximum == 3
+    assert v2.clip_count_strategy(1800).minimum >= 4
+    one_hour = v2.clip_count_strategy(3600)
+    two_hours = v2.clip_count_strategy(7200)
+
+    assert one_hour.minimum == 6
+    assert one_hour.maximum == 15
+    assert two_hours.minimum == 10
+    assert two_hours.maximum == 30
+    assert one_hour.reason.lower().startswith("30-60 minutes")
+    assert two_hours.reason.lower().startswith("60-120 minutes")
+
+
+def test_long_transcript_candidates_are_spread_across_full_duration() -> None:
+    duration = 3600.0
+    strategy = v2.clip_count_strategy(duration)
+    text = " ".join(str(seg["text"]) for seg in _long_transcript(duration))
+    content_niche = v2.detect_content_niche(text, "education")
+    research = v2.viral_research_snapshot(content_niche)
+    candidates = v2.transcript_window_candidates(
+        _long_transcript(duration),
+        duration_seconds=duration,
+        target=strategy.target,
+        existing=[],
+        strategy=strategy,
+        research_snapshot=research,
+        content_niche=content_niche,
+    )
+
+    assert len(candidates) >= strategy.minimum
+    assert min(c["raw_start"] for c in candidates) < 120
+    assert max(c["raw_end"] for c in candidates) > 3300
+    assert {c["source"] for c in candidates} & {
+        "transcript_window",
+        "topic_shift",
+        "emotional_spike",
+        "fallback_coverage",
+    }
+    assert len({round(float(c["raw_start"]) // 600) for c in candidates}) >= 4
+    assert all("candidate_id" in c for c in candidates)
+    assert all("viral_pattern_match" in c for c in candidates)
+    assert all("v2_candidate_metadata" in c for c in candidates)
+
+
+def test_viral_research_snapshot_uses_evergreen_fallback_and_cache() -> None:
+    now = datetime(2026, 7, 9, tzinfo=UTC)
+    niche = {"primary": "creator_education", "confidence": 0.8}
+    first = v2.viral_research_snapshot(niche, now=now)
+    cached = v2.viral_research_snapshot(niche, now=now + timedelta(minutes=5), cached=first)
+
+    assert first["internet_research_available"] is False
+    assert first["sources_used"][0]["type"] == "evergreen_fallback"
+    assert first["trend_patterns"]
+    assert cached["cache_hit"] is True
+    assert cached["created_at"] == first["created_at"]
+
+
+def test_niche_hook_story_ending_and_viral_score_v2_are_transparent() -> None:
+    text = (
+        "Why do most creators miss viral moments? The biggest mistake is only checking "
+        "the intro. But then the topic changes and finally the payoff makes the story clear."
+    )
+    niche = v2.detect_content_niche(text, "education")
+    research = v2.viral_research_snapshot(niche)
+    hook = v2.hook_analysis("Why do most creators miss viral moments?", research)
+    story = v2.storytelling_analysis(text)
+    ending = v2.ending_analysis(text)
+    trend = v2.trend_pattern_match(text, research, niche)
+    score = v2.viral_score_v2(
+        {"retention": 0.7, "payoff": 0.7, "clarity": 0.8, "emotion": 0.4, "uniqueness": 0.6},
+        hook,
+        story,
+        ending,
+        trend,
+    )
+
+    assert niche["primary"] == "education_tutorial"
+    assert hook["engine"] == "hook_engine_v2"
+    assert hook["clickbait_risk"] is False
+    assert story["story_shape"] in {"setup_tension_payoff", "setup_payoff"}
+    assert ending["ending_type"] in {"lesson_or_reveal", "clean_final_line"}
+    assert trend["score"] > 0
+    assert score["overall"] > 0
+    assert "formula" in score
+
+
+async def test_ranking_rejects_weak_long_video_filler(storage: LocalStorage) -> None:
+    strategy = v2.strategy_dict(v2.clip_count_strategy(3600.0))
+    ctx = PlanningStageContext(
+        project=_project(),
+        storage=storage,
+        results={
+            "candidate_generation": PlanningStageResult(
+                stage="candidate_generation",
+                status=PlanningStageStatus.COMPLETED,
+                data={"target_clip_strategy": strategy},
+            ),
+            "blueprint_generation": PlanningStageResult(
+                stage="blueprint_generation",
+                status=PlanningStageStatus.COMPLETED,
+                data={
+                    "plans": [
+                        {
+                            "id": f"clip_{i}",
+                            "start": i * 120.0,
+                            "end": i * 120.0 + 45.0,
+                            "quality_score": 0.12,
+                            "confidence": 0.4,
+                            "scores": {"hook": 0.1, "retention": 0.1, "editing_complexity": 0.1},
+                        }
+                        for i in range(20)
+                    ]
+                },
+            ),
+        },
+    )
+
+    outcome = await RankingAnalyzer().analyze(ctx, lambda _v: None)
+
+    assert outcome.data["plan_count"] == 0
+    assert outcome.data["used_secondary_threshold"] is True
+    assert outcome.data["low_clip_count_explanation"]["applies"] is True
+    assert "filler" in outcome.data["low_clip_count_explanation"]["reason"]
+
+
+async def test_long_video_with_many_strong_moments_selects_many_clips(
+    storage: LocalStorage,
+) -> None:
+    strategy = v2.strategy_dict(v2.clip_count_strategy(3600.0))
+    ctx = PlanningStageContext(
+        project=_project(),
+        storage=storage,
+        results={
+            "candidate_generation": PlanningStageResult(
+                stage="candidate_generation",
+                status=PlanningStageStatus.COMPLETED,
+                data={"target_clip_strategy": strategy},
+            ),
+            "blueprint_generation": PlanningStageResult(
+                stage="blueprint_generation",
+                status=PlanningStageStatus.COMPLETED,
+                data={
+                    "plans": [
+                        {
+                            "id": f"clip_{i}",
+                            "start": i * 180.0,
+                            "end": i * 180.0 + 45.0,
+                            "quality_score": 0.62,
+                            "confidence": 0.8,
+                            "scores": {
+                                "hook": 0.8,
+                                "retention": 0.7,
+                                "clarity": 0.7,
+                                "payoff": 0.65,
+                                "editing_complexity": 0.2,
+                            },
+                        }
+                        for i in range(20)
+                    ]
+                },
+            ),
+        },
+    )
+
+    outcome = await RankingAnalyzer().analyze(ctx, lambda _v: None)
+    plans = outcome.data["plans"]
+
+    assert len(plans) >= strategy["minimum"]
+    assert len(plans) <= strategy["maximum"]
+    assert max(p["start"] for p in plans) >= 1800.0
+
+
 async def test_pipeline_runs_all_stages_and_persists(
     storage: LocalStorage, planning_repo: StoragePlanningRepository
 ) -> None:
@@ -233,6 +432,50 @@ async def test_pipeline_with_transcript_produces_plans(
     assert result.status is PlanningStatus.COMPLETED
 
 
+async def test_short_video_uses_v2_transcript_windows_for_multiple_distinct_clips(
+    storage: LocalStorage, planning_repo: StoragePlanningRepository
+) -> None:
+    analysis, story, virality = await _upstream(storage, with_transcript=True)
+    result = await _pipeline(planning_repo).run(
+        _project(), storage, analysis=analysis, story=story, virality=virality
+    )
+
+    generation = result.stage("candidate_generation").data
+    ranking = result.stage("ranking").data
+
+    assert generation["target_clip_strategy"]["target"] == 3
+    assert generation["candidate_count"] >= 2
+    assert generation["content_niche"]["primary"]
+    assert generation["viral_research_snapshot"]["internet_research_available"] is False
+    assert generation["viral_research_snapshot"]["trend_patterns"]
+    assert len(ranking["plans"]) >= 2
+    assert any(c["source"] == "transcript_window" for c in generation["candidates"])
+    assert any(c.get("hook_potential") is not None for c in generation["candidates"])
+    assert all("source_reason" in c for c in generation["candidates"])
+
+
+async def test_planning_consumes_story_v2_guidance(
+    storage: LocalStorage, planning_repo: StoragePlanningRepository
+) -> None:
+    analysis, story, virality = await _upstream(storage, with_transcript=True)
+    result = await _pipeline(planning_repo).run(
+        _project(), storage, analysis=analysis, story=story, virality=virality
+    )
+
+    generation = result.stage("candidate_generation").data
+    plans = result.stage("ranking").data["plans"]
+
+    assert generation["story_guidance_available"] is True
+    assert generation["story_candidate_count"] >= 1
+    assert any(c["source"] == "story_v2_micro_story" for c in generation["candidates"])
+    assert plans
+    assert any(p.get("story_id") for p in plans)
+    first = next(p for p in plans if p.get("story_id"))
+    assert first["planning_story_integration"]["story_guidance_used"] is True
+    assert first["blueprint"]["story_v2_guidance"]["story_guidance_source"] == "story_analysis_v2"
+    assert first["unified_clip_intelligence"]["story"]["story_shape"]
+
+
 # --------------------------------------------------------------------------- #
 # Plan / blueprint / timeline validation
 # --------------------------------------------------------------------------- #
@@ -265,6 +508,26 @@ async def test_plans_have_valid_timelines_and_blueprints(
         "continuation_possibility",
         "estimated_complexity",
         "platform_suitability",
+        "hook_v2",
+        "hook_analysis_v2",
+        "storytelling_v2",
+        "ending_payoff_v2",
+        "trend_match_v2",
+        "viral_score_v2",
+        "editing_guidance_v2",
+        "editing_trend_guidance",
+        "content_niche",
+        "viral_research_snapshot",
+        "internet_trend_research_v2",
+        "boundary_optimization_v2",
+        "story_v2_guidance",
+        "planning_story_integration",
+        "planning_trend_integration",
+        "story_trend_guidance",
+        "caption_decision_v2",
+        "music_decision_v2",
+        "sound_effect_plan_v2",
+        "v2_metadata",
     }
     for plan in plans:
         # Timeline validity.
@@ -287,6 +550,27 @@ async def test_plans_have_valid_timelines_and_blueprints(
             "tiktok",
             "instagram_reels",
         }
+        assert plan["hook_score"] == plan["blueprint"]["hook_v2"]["score"]
+        assert plan["story_completion_score"] == plan["scores"]["story_completion"]
+        assert plan["ending_score"] == plan["scores"]["ending"]
+        assert plan["trend_score"] == plan["scores"]["trend_fit"]
+        assert plan["blueprint"]["hook_analysis_v2"]["engine"] == "hook_engine_v2"
+        assert "story_shape" in plan["blueprint"]["storytelling_v2"]
+        assert "ending_type" in plan["blueprint"]["ending_payoff_v2"]
+        assert "matched_patterns" in plan["blueprint"]["trend_match_v2"]
+        assert "formula" in plan["blueprint"]["viral_score_v2"]
+        assert plan["blueprint"]["content_niche"]["primary"]
+        assert plan["blueprint"]["viral_research_snapshot"]["internet_research_available"] is False
+        assert plan["blueprint"]["planning_trend_integration"]["trend_guidance_used"] is True
+        assert plan["blueprint"]["editing_trend_guidance"]["trend_snapshot_id"]
+        assert plan["unified_clip_intelligence"]["trend_research"]["snapshot_id"]
+        assert plan["blueprint"]["music_decision_v2"]["status"] in {
+            "disabled",
+            "unavailable",
+            "available",
+            "selected",
+        }
+        assert "why_selected" in plan["blueprint"]["v2_metadata"]
 
 
 async def test_ranking_orders_by_quality_with_reasons(

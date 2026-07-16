@@ -37,6 +37,9 @@ dependencies = [
 transcription = [
     "faster-whisper>=1.0,<2.0",
 ]
+video-links = [
+    "yt-dlp>=2025.1.15",
+]
 dev = [
     "pytest>=8.2,<9.0",
     "pytest-asyncio>=0.23,<1.0",

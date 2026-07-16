@@ -493,6 +493,7 @@ def _real_runners(storage: LocalStorage) -> dict[str, EngineRunner]:
     """Build runners over the REAL engine services (on temp storage, no chaining)."""
 
     from olympus.ai import build_transcription_provider
+    from olympus.platform.config import Settings
     from olympus.workflow import build_service_runner
 
     pr = StorageProjectRepository(storage)
@@ -500,7 +501,7 @@ def _real_runners(storage: LocalStorage) -> dict[str, EngineRunner]:
         analysis_repo=StorageAnalysisRepository(storage),
         project_repo=pr,
         storage=storage,
-        transcription_provider=build_transcription_provider(),
+        transcription_provider=build_transcription_provider(Settings(_env_file=None)),
     )
     story = StoryService(
         story_repo=StorageStoryRepository(storage),

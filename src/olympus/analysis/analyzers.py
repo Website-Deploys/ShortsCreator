@@ -26,6 +26,7 @@ from olympus.domain.contracts.analysis import (
     StageOutcome,
 )
 from olympus.domain.entities.analysis import StageStatus
+from olympus.platform.errors import ExternalServiceError
 from olympus.platform.logging import get_logger
 
 log = get_logger(__name__)
@@ -345,6 +346,7 @@ class SpeechTranscriptionAnalyzer(Analyzer):
     depends_on = ("audio_extraction",)
 
     async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
+        log.info("speech_transcription_analyzer_entered", project_id=ctx.project.id)
         audio = ctx.data_of("audio_extraction")
         if not audio:
             return StageOutcome.unavailable(
@@ -356,7 +358,36 @@ class SpeechTranscriptionAnalyzer(Analyzer):
                 "No speech-to-text provider is configured. Set "
                 "OLYMPUS_AI__TRANSCRIPTION_PROVIDER to a real provider to enable it."
             )
-        result = await provider.transcribe(audio["audio_key"])
+        log.info(
+            "calling_transcription_provider",
+            project_id=ctx.project.id,
+            audio_key=audio["audio_key"],
+            provider=getattr(provider, "name", None),
+        )
+        try:
+            result = await provider.transcribe(audio["audio_key"])
+        except ExternalServiceError as exc:
+            log.warning(
+                "transcription_provider_failed",
+                project_id=ctx.project.id,
+                audio_key=audio["audio_key"],
+                provider=getattr(provider, "name", None),
+                error=exc.message,
+                details=exc.details,
+            )
+            return StageOutcome.failed(exc.message, retryable=False)
+
+        log.info(
+            "transcription_provider_returned",
+            project_id=ctx.project.id,
+            segments=len(result.segments),
+            language=result.language,
+        )
+        if not result.segments or not result.text.strip():
+            return StageOutcome.failed(
+                "Speech transcription completed but returned no speech segments.",
+                retryable=False,
+            )
         report(1.0)
         return StageOutcome.completed(
             {

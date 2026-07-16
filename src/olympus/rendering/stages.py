@@ -19,6 +19,8 @@ The engine performs execution only; it never changes the creative decisions.
 
 from __future__ import annotations
 
+import copy
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -30,9 +32,17 @@ from olympus.domain.contracts.render_pipeline import (
 )
 from olympus.domain.contracts.rendering import ClipRenderSpec, RendererUnavailableError
 from olympus.domain.entities.rendering import RenderManifest, RenderStatus
+from olympus.integration import clip_intelligence as CI  # noqa: N812 (module alias is intentional)
+from olympus.metadata import (
+    UPLOAD_METADATA_V2_VERSION,
+    generate_upload_metadata,
+    unavailable_upload_metadata,
+)
+from olympus.platform.config import get_settings
 from olympus.platform.errors import ExternalServiceError
 from olympus.rendering import command as C  # noqa: N812 (module alias is intentional)
 from olympus.rendering import manifest as M  # noqa: N812 (module alias is intentional)
+from olympus.safety import CopyrightSafetyChecker
 from olympus.utils import new_id, utc_now
 
 _NO_TIMELINES = (
@@ -53,6 +63,20 @@ def _clip_id(timeline: dict[str, Any]) -> str:
     return str(timeline.get("clip_id", ""))
 
 
+async def _link_ingestion_record(ctx: RenderStageContext) -> dict[str, Any]:
+    ingestion_id = ctx.project.link_ingestion_id
+    if not ingestion_id:
+        return {}
+    key = f"link_ingestions/{ingestion_id}/status.json"
+    if not await ctx.storage.exists(key):
+        return {}
+    try:
+        payload = json.loads((await ctx.storage.get(key)).decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _source_presence(ctx: RenderStageContext) -> dict[str, bool]:
     data = ctx.render_data("validate_source_assets") or {}
     return {
@@ -65,6 +89,24 @@ def _source_presence(ctx: RenderStageContext) -> dict[str, bool]:
 def _renderer_unavailable_reason(ctx: RenderStageContext) -> str | None:
     availability = ctx.renderer.availability()
     return None if availability.available else (availability.reason or "renderer unavailable")
+
+
+def _caption_intelligence(timeline: dict[str, Any]) -> dict[str, Any]:
+    metadata = timeline.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    editing = metadata.get("editing_v2")
+    editing = editing if isinstance(editing, dict) else {}
+    intelligence = metadata.get("caption_intelligence_v2") or editing.get(
+        "caption_intelligence_v2"
+    )
+    return intelligence if isinstance(intelligence, dict) else {}
+
+
+def _rendered_captions(metadata: dict[str, Any], timeline: dict[str, Any]) -> bool:
+    validation = metadata.get("caption_render_validation")
+    if isinstance(validation, dict):
+        return bool(validation.get("captions_planned") and validation.get("passed"))
+    return C.subtitles_included(timeline)
 
 
 # --------------------------------------------------------------------------- #
@@ -106,7 +148,7 @@ class LoadTimelineStage(RenderStageAnalyzer):
 # --------------------------------------------------------------------------- #
 class ValidateTimelineStage(RenderStageAnalyzer):
     name = "validate_timeline"
-    version = "1"
+    version = "3"
     depends_on = ("load_timeline",)
 
     async def run(self, ctx: RenderStageContext, report: RenderProgressReporter) -> RenderOutcome:
@@ -128,7 +170,34 @@ class ValidateTimelineStage(RenderStageAnalyzer):
                 if cue["start"] < -0.001 or cue["end"] > duration + 0.5:
                     issues.append("a caption falls outside the clip duration")
                     break
-            clips.append({"clip_id": _clip_id(t), "valid": not issues, "issues": issues})
+            readability = _caption_intelligence(t).get("caption_readability_validation")
+            if isinstance(readability, dict) and readability.get("passed") is False:
+                issues.append("caption readability validation failed")
+            motion = C.motion_intelligence(t)
+            motion_safety = motion.get("motion_safety_validation")
+            motion_safety = motion_safety if isinstance(motion_safety, dict) else {}
+            motion_decision = motion.get("decision")
+            motion_decision = motion_decision if isinstance(motion_decision, dict) else {}
+            for effect in C.motion_effects(t):
+                start = float(effect.get("start_time") or effect.get("start") or 0.0)
+                end = float(effect.get("end_time") or effect.get("end") or 0.0)
+                if start < 0 or end <= start or end > duration + 0.001:
+                    issues.append("a motion effect falls outside the clip duration")
+                    break
+            if (
+                motion_decision.get("should_apply_motion") is True
+                and motion_safety.get("passed") is not True
+            ):
+                issues.append("motion safety validation failed")
+            clips.append(
+                {
+                    "clip_id": _clip_id(t),
+                    "valid": not issues,
+                    "issues": issues,
+                    "caption_readability_validation": readability,
+                    "motion_safety_validation": motion_safety,
+                }
+            )
         report(1.0)
         return RenderOutcome.completed(
             {
@@ -248,14 +317,14 @@ class ApplyJumpCutsStage(_ApplyStage):
 
 class ApplyZoomsStage(_ApplyStage):
     name = "apply_zooms"
-    version = "1"
+    version = "2"
     op_fn = staticmethod(C.zoom_ops)
     op_key = "zooms"
 
 
 class ApplyCropsStage(RenderStageAnalyzer):
     name = "apply_crops"
-    version = "1"
+    version = "2"
     depends_on = ("build_video_timeline",)
 
     async def run(self, ctx: RenderStageContext, report: RenderProgressReporter) -> RenderOutcome:
@@ -275,18 +344,28 @@ class ApplyTransitionsStage(_ApplyStage):
 
 class ApplyCaptionsStage(RenderStageAnalyzer):
     name = "apply_captions"
-    version = "1"
+    version = "2"
     depends_on = ("build_video_timeline",)
 
     async def run(self, ctx: RenderStageContext, report: RenderProgressReporter) -> RenderOutcome:
         clips: list[dict[str, Any]] = []
         for t in ctx.timelines():
             cues = C.caption_cues(t)
+            intelligence = _caption_intelligence(t)
+            style = intelligence.get("style_decision")
+            timing = intelligence.get("caption_timing_quality")
+            readability = intelligence.get("caption_readability_validation")
             clips.append(
                 {
                     "clip_id": _clip_id(t),
                     "caption_count": len(cues),
                     "subtitles_included": bool(cues),
+                    "style": style if isinstance(style, dict) else {},
+                    "timing_quality": timing if isinstance(timing, dict) else {},
+                    "readability_validation": (
+                        readability if isinstance(readability, dict) else {}
+                    ),
+                    "render_status": "planned" if cues else "disabled_or_unavailable",
                 }
             )
         report(1.0)
@@ -304,7 +383,7 @@ class ApplyBrollStage(_ApplyStage):
 
 class ApplyMusicStage(RenderStageAnalyzer):
     name = "apply_music"
-    version = "1"
+    version = "2"
     depends_on = ("build_audio_timeline",)
 
     async def run(self, ctx: RenderStageContext, report: RenderProgressReporter) -> RenderOutcome:
@@ -318,8 +397,8 @@ class ApplyMusicStage(RenderStageAnalyzer):
         return RenderOutcome.completed(
             {
                 "clips": clips,
-                "note": "music cues come from the timeline; the Rendering Engine does not "
-                "select music (that is the Optimization Engine's recommendation).",
+                "note": "music cues and Music Intelligence decisions come from the timeline; "
+                "the renderer resolves only verified safe local assets and reports truth.",
                 "logs": [f"prepared music for {len(clips)} clip(s)"],
             }
         )
@@ -327,7 +406,7 @@ class ApplyMusicStage(RenderStageAnalyzer):
 
 class AudioMixingStage(RenderStageAnalyzer):
     name = "audio_mixing"
-    version = "1"
+    version = "2"
     depends_on = ("build_audio_timeline", "apply_music")
 
     async def run(self, ctx: RenderStageContext, report: RenderProgressReporter) -> RenderOutcome:
@@ -345,6 +424,7 @@ class _RenderExecutionStage(RenderStageAnalyzer):
     """Shared execution logic for the preview and full-resolution render stages."""
 
     preview = False
+    version = "2"
 
     async def run(self, ctx: RenderStageContext, report: RenderProgressReporter) -> RenderOutcome:
         timelines = ctx.timelines()
@@ -361,10 +441,29 @@ class _RenderExecutionStage(RenderStageAnalyzer):
         skipped: list[dict[str, Any]] = []
         logs: list[str] = []
         s = ctx.settings
+        safety_checker = CopyrightSafetyChecker(get_settings().copyright_safety)
+        link_record = await _link_ingestion_record(ctx)
+        project_data = ctx.project.to_dict()
         for t in timelines:
             cid = _clip_id(t)
             if not presence.get(cid, False):
                 skipped.append({"clip_id": cid, "reason": "source asset missing"})
+                continue
+            pre_render_safety = safety_checker.check(
+                project=project_data,
+                clip_id=cid,
+                timeline=t,
+                link_record=link_record,
+                assessment_phase="pre_render",
+            )
+            if safety_checker.should_block(pre_render_safety):
+                skipped.append(
+                    {
+                        "clip_id": cid,
+                        "reason": "copyright_safety_blocked",
+                        "copyright_safety_v2": pre_render_safety,
+                    }
+                )
                 continue
             spec = ClipRenderSpec(
                 clip_id=cid,
@@ -383,13 +482,56 @@ class _RenderExecutionStage(RenderStageAnalyzer):
             except RendererUnavailableError as exc:
                 return RenderOutcome.unavailable(f"Cannot render: {exc.reason}")
             except ExternalServiceError as exc:
-                skipped.append({"clip_id": cid, "reason": str(exc)})
                 logs.append(f"[error] clip {cid}: {exc}")
+                details = exc.details if isinstance(exc.details, dict) else {}
+                stderr_tail = details.get("stderr_tail")
+                ffmpeg_tail = (
+                    [str(line) for line in stderr_tail] if isinstance(stderr_tail, list) else []
+                )
+                logs.extend(f"[ffmpeg] {line}" for line in ffmpeg_tail)
+                tail_reason = " | ".join(ffmpeg_tail[-3:])
+                reason = f"{exc} {tail_reason}".strip() if tail_reason else str(exc)
+                skipped.append({"clip_id": cid, "reason": reason, "stderr_tail": ffmpeg_tail})
                 continue
             logs.extend(out.logs)
-            outputs.append(self._output_dict(t, out))
+            rendered = self._output_dict(t, out)
+            metadata = rendered.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            metadata["copyright_safety_pre_render"] = {
+                "report_id": pre_render_safety["report_id"],
+                "risk_level": pre_render_safety["overall"]["risk_level"],
+                "blocked": False,
+                "warnings": pre_render_safety["result"]["warnings"],
+            }
+            metadata["copyright_safety_v2"] = safety_checker.check(
+                project=project_data,
+                clip_id=cid,
+                timeline=t,
+                render_metadata=metadata,
+                render_output=rendered,
+                link_record=link_record,
+                assessment_phase="preview_output" if self.preview else "final_output",
+            )
+            metadata["unified_clip_intelligence"] = CI.unified_clip_intelligence(
+                clip=t,
+                editing_v2=CI.as_dict(metadata.get("editing_v2")),
+                render_metadata=metadata,
+                render_output=rendered,
+            )
+            rendered["metadata"] = metadata
+            outputs.append(rendered)
         if not outputs and skipped:
-            return RenderOutcome.failed(f"All clips failed to render: {skipped[0]['reason']}")
+            return RenderOutcome.failed(
+                f"All clips failed to render: {skipped[0]['reason']}",
+                data={
+                    "clips": outputs,
+                    "rendered_count": 0,
+                    "skipped": skipped,
+                    "renderer": ctx.renderer.name,
+                    "preview": self.preview,
+                    "logs": logs,
+                },
+            )
         report(1.0)
         return RenderOutcome.completed(
             {
@@ -409,6 +551,20 @@ class _RenderExecutionStage(RenderStageAnalyzer):
 
     @staticmethod
     def _output_dict(timeline: dict[str, Any], out: Any) -> dict[str, Any]:
+        metadata = dict(out.metadata or {})
+        subtitles_included = _rendered_captions(metadata, timeline)
+        metadata["unified_clip_intelligence"] = CI.unified_clip_intelligence(
+            clip=timeline,
+            editing_v2=CI.as_dict(metadata.get("editing_v2")),
+            render_metadata=metadata,
+            render_output={
+                "clip_id": out.clip_id,
+                "output_key": out.output_key,
+                "plan_id": timeline.get("plan_id"),
+                "duration": out.duration,
+                "subtitles_included": subtitles_included,
+            },
+        )
         return {
             "clip_id": out.clip_id,
             "output_key": out.output_key,
@@ -425,21 +581,22 @@ class _RenderExecutionStage(RenderStageAnalyzer):
             "audio_sample_rate": out.audio_sample_rate,
             "size_bytes": out.size_bytes,
             "source_video": timeline.get("source_video", {}),
-            "subtitles_included": C.subtitles_included(timeline),
-            "music_included": C.music_included(timeline),
+            "subtitles_included": subtitles_included,
+            "music_included": bool(metadata.get("music_mixed")) if metadata else False,
+            "metadata": metadata,
         }
 
 
 class RenderPreviewStage(_RenderExecutionStage):
     name = "render_preview"
-    version = "1"
+    version = "9"
     preview = True
     depends_on = ("build_video_timeline", "build_audio_timeline", "validate_source_assets")
 
 
 class FullResolutionRenderStage(_RenderExecutionStage):
     name = "full_resolution_render"
-    version = "1"
+    version = "9"
     preview = False
     depends_on = (
         "apply_jump_cuts",
@@ -459,7 +616,7 @@ class FullResolutionRenderStage(_RenderExecutionStage):
 # --------------------------------------------------------------------------- #
 class RenderVerificationStage(RenderStageAnalyzer):
     name = "render_verification"
-    version = "1"
+    version = "8"
     depends_on = ("full_resolution_render",)
 
     async def run(self, ctx: RenderStageContext, report: RenderProgressReporter) -> RenderOutcome:
@@ -484,11 +641,55 @@ class RenderVerificationStage(RenderStageAnalyzer):
                 issues.append("rendered file is missing from storage")
             expected = float((timelines.get(cid) or {}).get("duration") or 0.0)
             actual = float(out.get("duration") or 0.0)
-            checks["duration_match"] = (
-                abs(actual - expected) <= max(1.0, expected * 0.1) if expected else None
+            metadata = out.get("metadata") if isinstance(out.get("metadata"), dict) else {}
+            sync_validation = (
+                metadata.get("sync_validation")
+                if isinstance(metadata.get("sync_validation"), dict)
+                else None
             )
+            duration_validation = (
+                metadata.get("duration_validation")
+                if isinstance(metadata.get("duration_validation"), dict)
+                else None
+            )
+            checks["duration_match"] = abs(actual - expected) <= 0.15 if expected else None
             if expected and checks["duration_match"] is False:
-                issues.append(f"duration {actual:.1f}s differs from timeline {expected:.1f}s")
+                issues.append(f"duration {actual:.3f}s differs from timeline {expected:.3f}s")
+            checks["sync_validation"] = sync_validation
+            checks["duration_validation"] = duration_validation
+            checks["music_validation"] = metadata.get("music_validation")
+            caption_validation = (
+                metadata.get("caption_render_validation")
+                if isinstance(metadata.get("caption_render_validation"), dict)
+                else None
+            )
+            checks["caption_render_validation"] = caption_validation
+            multi_speaker_validation = (
+                metadata.get("multi_speaker_validation")
+                if isinstance(metadata.get("multi_speaker_validation"), dict)
+                else None
+            )
+            checks["multi_speaker_validation"] = multi_speaker_validation
+            motion_validation = (
+                metadata.get("motion_render_validation")
+                if isinstance(metadata.get("motion_render_validation"), dict)
+                else None
+            )
+            checks["motion_render_validation"] = motion_validation
+            if sync_validation and sync_validation.get("passed") is False:
+                issues.append("sync validation warning")
+            if duration_validation and duration_validation.get("passed") is False:
+                issues.append("duration validation warning")
+            if (
+                caption_validation
+                and caption_validation.get("captions_planned")
+                and caption_validation.get("passed") is False
+            ):
+                issues.append("caption render validation warning")
+            if multi_speaker_validation and multi_speaker_validation.get("passed") is False:
+                issues.append("multi-speaker layout validation warning")
+            if motion_validation and motion_validation.get("passed") is False:
+                issues.append("motion render validation warning")
             checks["has_audio"] = out.get("has_audio")
             if out.get("has_audio") is False:
                 issues.append("no audio stream in the rendered file")
@@ -511,7 +712,7 @@ class RenderVerificationStage(RenderStageAnalyzer):
 # --------------------------------------------------------------------------- #
 class GenerateRenderManifestStage(RenderStageAnalyzer):
     name = "generate_render_manifest"
-    version = "1"
+    version = "11"
     depends_on = ("full_resolution_render", "render_verification")
 
     async def run(self, ctx: RenderStageContext, report: RenderProgressReporter) -> RenderOutcome:
@@ -526,9 +727,162 @@ class GenerateRenderManifestStage(RenderStageAnalyzer):
             )
         now = utc_now()
         rendered_at = now.isoformat()
+        render_id = new_id("render")
         renders = []
+        timelines_by_clip = {_clip_id(timeline): timeline for timeline in ctx.timelines()}
+        upload_metadata_settings = get_settings().upload_metadata
         for out in outputs:
             data = await ctx.storage.get(str(out["output_key"]))
+            metadata = copy.deepcopy(
+                out.get("metadata") if isinstance(out.get("metadata"), dict) else {}
+            )
+            caption_validation = metadata.get("caption_render_validation")
+            if isinstance(caption_validation, dict):
+                caption_validation = copy.deepcopy(caption_validation)
+                captions_planned = caption_validation.get("captions_planned") is True
+                manifest_confirmed = bool(captions_planned and out.get("subtitles_included"))
+                caption_validation["render_manifest_confirmed"] = manifest_confirmed
+                caption_validation["passed"] = bool(
+                    (not captions_planned)
+                    or (caption_validation.get("passed") is True and manifest_confirmed)
+                )
+                warnings = list(caption_validation.get("warnings") or [])
+                if captions_planned and not manifest_confirmed:
+                    warnings.append("Render manifest could not confirm burned-in captions.")
+                caption_validation["warnings"] = list(dict.fromkeys(warnings))
+                metadata["caption_render_validation"] = caption_validation
+
+                caption_intelligence = metadata.get("caption_intelligence_v2")
+                if isinstance(caption_intelligence, dict):
+                    caption_intelligence = copy.deepcopy(caption_intelligence)
+                    intelligence_validation = caption_intelligence.get("validation")
+                    intelligence_validation = (
+                        copy.deepcopy(intelligence_validation)
+                        if isinstance(intelligence_validation, dict)
+                        else {}
+                    )
+                    intelligence_validation["render_manifest_confirmed"] = manifest_confirmed
+                    intelligence_validation["passed"] = bool(
+                        caption_validation["passed"]
+                        and intelligence_validation.get("passed", True)
+                    )
+                    intelligence_validation["warnings"] = list(
+                        dict.fromkeys(
+                            [
+                                *list(intelligence_validation.get("warnings") or []),
+                                *list(caption_validation.get("warnings") or []),
+                            ]
+                        )
+                    )
+                    caption_intelligence["validation"] = intelligence_validation
+                    metadata["caption_intelligence_v2"] = caption_intelligence
+
+                effects = metadata.get("render_effects_v2")
+                if isinstance(effects, dict):
+                    effects = copy.deepcopy(effects)
+                    caption_effect = effects.get("captions")
+                    if isinstance(caption_effect, dict):
+                        caption_effect["included"] = manifest_confirmed
+                        caption_effect["validation"] = caption_validation
+                        effects["captions"] = caption_effect
+                    metadata["render_effects_v2"] = effects
+            motion_validation = metadata.get("motion_render_validation")
+            if isinstance(motion_validation, dict):
+                motion_validation = copy.deepcopy(motion_validation)
+                effects_planned = int(motion_validation.get("effects_planned") or 0)
+                effects_rendered = int(motion_validation.get("effects_rendered") or 0)
+                manifest_confirmed = bool(
+                    effects_planned > 0
+                    and effects_rendered == effects_planned
+                    and out.get("output_key")
+                )
+                motion_validation["render_manifest_confirmed"] = manifest_confirmed
+                motion_validation["passed"] = bool(
+                    motion_validation.get("passed") is True
+                    and (effects_planned == 0 or manifest_confirmed)
+                )
+                warnings = list(motion_validation.get("warnings") or [])
+                if effects_planned and not manifest_confirmed:
+                    warnings.append("Render manifest could not confirm all planned motion effects.")
+                motion_validation["warnings"] = list(dict.fromkeys(warnings))
+                metadata["motion_render_validation"] = motion_validation
+                motion_intelligence = metadata.get("motion_intelligence_v2")
+                if isinstance(motion_intelligence, dict):
+                    motion_intelligence = copy.deepcopy(motion_intelligence)
+                    motion_intelligence["validation"] = copy.deepcopy(motion_validation)
+                    metadata["motion_intelligence_v2"] = motion_intelligence
+                effects = metadata.get("render_effects_v2")
+                if isinstance(effects, dict) and isinstance(effects.get("motion"), dict):
+                    effects = copy.deepcopy(effects)
+                    motion_effect = copy.deepcopy(effects["motion"])
+                    motion_effect["applied"] = bool(
+                        manifest_confirmed and motion_validation["passed"]
+                    )
+                    motion_effect["render_validation"] = motion_validation
+                    effects["motion"] = motion_effect
+                    metadata["render_effects_v2"] = effects
+            metadata["unified_clip_intelligence"] = CI.unified_clip_intelligence(
+                render_metadata=metadata,
+                render_output={**out, "render_id": render_id},
+            )
+            clip_id = str(out.get("clip_id") or "")
+            artifact_key = (
+                f"render/{ctx.project.id}/metadata/{clip_id}/upload_metadata_v2.json"
+            )
+            try:
+                upload_metadata = generate_upload_metadata(
+                    project_id=ctx.project.id,
+                    clip_id=clip_id,
+                    render_id=render_id,
+                    created_at=rendered_at,
+                    unified_clip_intelligence=CI.as_dict(
+                        metadata.get("unified_clip_intelligence")
+                    ),
+                    timeline=timelines_by_clip.get(clip_id),
+                    render_metadata=metadata,
+                    settings=upload_metadata_settings,
+                )
+            except Exception as exc:
+                upload_metadata = unavailable_upload_metadata(
+                    project_id=ctx.project.id,
+                    clip_id=clip_id,
+                    render_id=render_id,
+                    created_at=rendered_at,
+                    reason=f"Upload metadata generation failed: {exc}",
+                )
+            try:
+                upload_metadata["artifact"] = {
+                    "status": "available",
+                    "storage_key": artifact_key,
+                    "version": UPLOAD_METADATA_V2_VERSION,
+                }
+                await ctx.storage.put(
+                    artifact_key,
+                    json.dumps(upload_metadata, indent=2).encode("utf-8"),
+                    content_type="application/json",
+                )
+            except Exception as exc:
+                upload_metadata["artifact"] = {
+                    "status": "unavailable",
+                    "storage_key": None,
+                    "version": UPLOAD_METADATA_V2_VERSION,
+                    "reason": f"Upload metadata artifact could not be persisted: {exc}",
+                }
+                upload_metadata["universal"]["warnings"] = list(
+                    dict.fromkeys(
+                        [
+                            *upload_metadata["universal"].get("warnings", []),
+                            upload_metadata["artifact"]["reason"],
+                        ]
+                    )
+                )
+            metadata["upload_metadata_v2"] = upload_metadata
+            metadata["upload_metadata_v2_version"] = UPLOAD_METADATA_V2_VERSION
+            metadata["unified_clip_intelligence"] = CI.unified_clip_intelligence(
+                render_metadata=metadata,
+                render_output={**out, "render_id": render_id},
+            )
+            out = {**out, "metadata": metadata}
             renders.append(
                 M.rendered_video_from_output(
                     _to_clip_output(out),
@@ -540,6 +894,7 @@ class GenerateRenderManifestStage(RenderStageAnalyzer):
                     timeline_version=ctx.editing_version(),
                     rendered_at=rendered_at,
                     source_video=out.get("source_video", {}),
+                    metadata=out.get("metadata", {}),
                 )
             )
         manifest = RenderManifest(
@@ -548,7 +903,7 @@ class GenerateRenderManifestStage(RenderStageAnalyzer):
             created_at=now,
             updated_at=now,
             renderer=ctx.renderer.name,
-            render_id=new_id("render"),
+            render_id=render_id,
             rendering_version=self.version,
             timeline_version=ctx.editing_version(),
             renders=renders,
@@ -584,6 +939,7 @@ def _to_clip_output(out: dict[str, Any]) -> Any:
         bitrate_kbps=out.get("bitrate_kbps"),
         audio_sample_rate=out.get("audio_sample_rate"),
         size_bytes=out.get("size_bytes"),
+        metadata=out.get("metadata", {}) or {},
     )
 
 
@@ -592,7 +948,7 @@ def _to_clip_output(out: dict[str, Any]) -> Any:
 # --------------------------------------------------------------------------- #
 class CleanupTemporaryFilesStage(RenderStageAnalyzer):
     name = "cleanup_temporary_files"
-    version = "1"
+    version = "2"
 
     async def run(self, ctx: RenderStageContext, report: RenderProgressReporter) -> RenderOutcome:
         prefix = f"render/{ctx.project.id}/work/"
@@ -610,7 +966,7 @@ class CleanupTemporaryFilesStage(RenderStageAnalyzer):
 # --------------------------------------------------------------------------- #
 class FinalValidationStage(RenderStageAnalyzer):
     name = "final_validation"
-    version = "1"
+    version = "8"
     depends_on = ("render_verification", "generate_render_manifest")
 
     async def run(self, ctx: RenderStageContext, report: RenderProgressReporter) -> RenderOutcome:

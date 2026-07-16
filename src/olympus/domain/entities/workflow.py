@@ -39,6 +39,8 @@ class JobStatus(StrEnum):
     RUNNING = "running"  # claimed by a worker and executing
     COMPLETED = "completed"  # the engine genuinely finished
     FAILED = "failed"  # a real error occurred (may retry)
+    CANCEL_REQUESTED = "cancel_requested"  # cooperative cancellation is pending
+    STALE = "stale"  # persisted running state has lost its worker/lease
     CANCELLED = "cancelled"  # the operator cancelled
     DEAD = "dead"  # retries exhausted; will not run again
     BLOCKED = "blocked"  # an upstream dependency can never complete
@@ -101,7 +103,9 @@ class EventType(StrEnum):
     JOB_STARTED = "job_started"
     JOB_COMPLETED = "job_completed"
     JOB_FAILED = "job_failed"
+    JOB_CANCEL_REQUESTED = "job_cancel_requested"
     JOB_RETRYING = "job_retrying"
+    JOB_STALE = "job_stale"
     JOB_DEAD = "job_dead"
     JOB_CANCELLED = "job_cancelled"
     JOB_BLOCKED = "job_blocked"
@@ -192,8 +196,19 @@ class Job:
     finished_at: datetime | None = None
     available_at: datetime | None = None  # earliest run time (delay/backoff)
     scheduled_for: datetime | None = None  # explicit schedule (optional)
+    heartbeat_at: datetime | None = None
     error: str | None = None
     result: dict[str, Any] = field(default_factory=dict)
+    checkpoint: dict[str, Any] = field(default_factory=dict)
+    resumable: bool = True
+    retryable: bool = True
+    skipped: bool = False
+    skip_reason: str | None = None
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    cancellation_requested: bool = False
+    cancellation_requested_at: datetime | None = None
+    cancellation_reason: str | None = None
     logs: list[LogLine] = field(default_factory=list)
 
     @property
@@ -205,6 +220,16 @@ class Job:
         if self.started_at and self.finished_at:
             return (self.finished_at - self.started_at).total_seconds() * 1000.0
         return None
+
+    @property
+    def progress_percent(self) -> float:
+        if self.status is JobStatus.COMPLETED:
+            return 100.0
+        if self.status in (JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED):
+            raw = self.result.get("progress_percent")
+            if isinstance(raw, (int, float)):
+                return round(max(0.0, min(100.0, float(raw))), 2)
+        return 0.0
 
     def log(self, message: str, *, level: str = "info") -> None:
         self.logs.append(LogLine(ts=_utc(), level=level, message=message))
@@ -227,9 +252,21 @@ class Job:
             "finished_at": _iso(self.finished_at),
             "available_at": _iso(self.available_at),
             "scheduled_for": _iso(self.scheduled_for),
+            "heartbeat_at": _iso(self.heartbeat_at),
             "duration_ms": self.duration_ms,
+            "progress_percent": self.progress_percent,
             "error": self.error,
             "result": self.result,
+            "checkpoint": self.checkpoint,
+            "resumable": self.resumable,
+            "retryable": self.retryable,
+            "skipped": self.skipped,
+            "skip_reason": self.skip_reason,
+            "warnings": self.warnings,
+            "errors": self.errors,
+            "cancellation_requested": self.cancellation_requested,
+            "cancellation_requested_at": _iso(self.cancellation_requested_at),
+            "cancellation_reason": self.cancellation_reason,
             "logs": [line.to_dict() for line in self.logs],
         }
 
@@ -252,8 +289,19 @@ class Job:
             finished_at=_parse_dt(raw.get("finished_at")),
             available_at=_parse_dt(raw.get("available_at")),
             scheduled_for=_parse_dt(raw.get("scheduled_for")),
+            heartbeat_at=_parse_dt(raw.get("heartbeat_at")),
             error=raw.get("error"),
             result=raw.get("result", {}) or {},
+            checkpoint=raw.get("checkpoint", {}) or {},
+            resumable=bool(raw.get("resumable", True)),
+            retryable=bool(raw.get("retryable", True)),
+            skipped=bool(raw.get("skipped", False)),
+            skip_reason=raw.get("skip_reason"),
+            warnings=[str(item) for item in raw.get("warnings", [])],
+            errors=[str(item) for item in raw.get("errors", [])],
+            cancellation_requested=bool(raw.get("cancellation_requested", False)),
+            cancellation_requested_at=_parse_dt(raw.get("cancellation_requested_at")),
+            cancellation_reason=raw.get("cancellation_reason"),
             logs=[
                 LogLine.from_dict(line) for line in raw.get("logs", []) if isinstance(line, dict)
             ],
@@ -329,6 +377,19 @@ class Workflow:
     jobs: list[Job] = field(default_factory=list)
     history: list[WorkflowEvent] = field(default_factory=list)
     retry_count: int = 0
+    schema_version: str = "durable_job_v2"
+    job_type: str = "project_pipeline"
+    requested_by: str = "api"
+    source: str = "project"
+    idempotency_key: str | None = None
+    parent_job_id: str | None = None
+    cancellation_requested: bool = False
+    cancellation_requested_at: datetime | None = None
+    cancellation_reason: str | None = None
+    stale_running_detected: bool = False
+    recovery_reason: str | None = None
+    result_warnings: list[str] = field(default_factory=list)
+    result_errors: list[str] = field(default_factory=list)
 
     # -- lookups --------------------------------------------------------------
     def job(self, stage: str) -> Job | None:
@@ -392,6 +453,23 @@ class Workflow:
     def total_retries(self) -> int:
         return sum(max(0, j.attempts - 1) for j in self.jobs)
 
+    @property
+    def heartbeat_at(self) -> datetime | None:
+        values = [job.heartbeat_at for job in self.jobs if job.heartbeat_at is not None]
+        return max(values) if values else None
+
+    @property
+    def worker_id(self) -> str | None:
+        running = next(
+            (
+                job
+                for job in self.jobs
+                if job.status in (JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED)
+            ),
+            None,
+        )
+        return running.worker_id if running is not None else None
+
     def execution_graph(self) -> dict[str, Any]:
         """The dependency DAG as nodes + edges, for the dashboard."""
 
@@ -431,6 +509,21 @@ class Workflow:
             "estimated_remaining_seconds": self.estimated_remaining_seconds,
             "retry_count": self.retry_count,
             "total_retries": self.total_retries,
+            "schema_version": self.schema_version,
+            "job_type": self.job_type,
+            "requested_by": self.requested_by,
+            "source": self.source,
+            "idempotency_key": self.idempotency_key,
+            "parent_job_id": self.parent_job_id,
+            "heartbeat_at": _iso(self.heartbeat_at),
+            "worker_id": self.worker_id,
+            "cancellation_requested": self.cancellation_requested,
+            "cancellation_requested_at": _iso(self.cancellation_requested_at),
+            "cancellation_reason": self.cancellation_reason,
+            "stale_running_detected": self.stale_running_detected,
+            "recovery_reason": self.recovery_reason,
+            "result_warnings": self.result_warnings,
+            "result_errors": self.result_errors,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -454,6 +547,19 @@ class Workflow:
                 WorkflowEvent.from_dict(e) for e in raw.get("history", []) if isinstance(e, dict)
             ],
             retry_count=int(raw.get("retry_count", 0)),
+            schema_version=str(raw.get("schema_version", "durable_job_v2")),
+            job_type=str(raw.get("job_type", "project_pipeline")),
+            requested_by=str(raw.get("requested_by", "api")),
+            source=str(raw.get("source", "project")),
+            idempotency_key=raw.get("idempotency_key"),
+            parent_job_id=raw.get("parent_job_id"),
+            cancellation_requested=bool(raw.get("cancellation_requested", False)),
+            cancellation_requested_at=_parse_dt(raw.get("cancellation_requested_at")),
+            cancellation_reason=raw.get("cancellation_reason"),
+            stale_running_detected=bool(raw.get("stale_running_detected", False)),
+            recovery_reason=raw.get("recovery_reason"),
+            result_warnings=[str(item) for item in raw.get("result_warnings", [])],
+            result_errors=[str(item) for item in raw.get("result_errors", [])],
         )
 
 

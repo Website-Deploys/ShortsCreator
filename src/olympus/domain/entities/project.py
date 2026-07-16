@@ -53,6 +53,15 @@ class Project:
     # Optional, added without breaking older records (read with .get on load).
     thumbnail_key: str | None = None
     upload_duration_ms: float | None = None
+    source_type: str = "upload"
+    source_url: str | None = None
+    link_ingestion_id: str | None = None
+    desired_clip_count: int | None = None
+    content_category: str = "auto"
+    editing_intensity: str = "balanced"
+    music_enabled: bool = True
+    sfx_enabled: bool = True
+    captions_enabled: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-safe dict (datetimes -> ISO, enum -> value)."""
@@ -73,6 +82,15 @@ class Project:
             "updated_at": self.updated_at.isoformat(),
             "thumbnail_key": self.thumbnail_key,
             "upload_duration_ms": self.upload_duration_ms,
+            "source_type": self.source_type,
+            "source_url": self.source_url,
+            "link_ingestion_id": self.link_ingestion_id,
+            "desired_clip_count": self.desired_clip_count,
+            "content_category": self.content_category,
+            "editing_intensity": self.editing_intensity,
+            "music_enabled": self.music_enabled,
+            "sfx_enabled": self.sfx_enabled,
+            "captions_enabled": self.captions_enabled,
         }
 
     @classmethod
@@ -95,4 +113,13 @@ class Project:
             updated_at=datetime.fromisoformat(data["updated_at"]),
             thumbnail_key=data.get("thumbnail_key"),
             upload_duration_ms=data.get("upload_duration_ms"),
+            source_type=data.get("source_type", "upload"),
+            source_url=data.get("source_url"),
+            link_ingestion_id=data.get("link_ingestion_id"),
+            desired_clip_count=data.get("desired_clip_count"),
+            content_category=data.get("content_category", "auto"),
+            editing_intensity=data.get("editing_intensity", "balanced"),
+            music_enabled=bool(data.get("music_enabled", True)),
+            sfx_enabled=bool(data.get("sfx_enabled", True)),
+            captions_enabled=bool(data.get("captions_enabled", True)),
         )

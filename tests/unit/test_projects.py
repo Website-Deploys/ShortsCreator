@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from olympus.api.dependencies import (
     analysis_service_provider,
     intake_provider,
+    link_intake_provider,
     project_service_provider,
     storage_provider,
 )
@@ -18,7 +19,7 @@ from olympus.data.repositories import StorageAnalysisRepository, StorageProjectR
 from olympus.data.storage.local import LocalStorage
 from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.services.analysis import AnalysisService
-from olympus.services.intake import IntakeService
+from olympus.services.intake import DownloadedFile, IntakeService, VideoLinkIntakeService
 from olympus.services.projects import NewProjectInput, ProjectService
 
 
@@ -194,6 +195,109 @@ def test_projects_api_roundtrip(app: FastAPI, tmp_path: Path) -> None:
 
         missing = client.get(f"/api/v1/projects/{project['id']}")
         assert missing.status_code == 404
+
+
+def test_create_project_from_link_api(app: FastAPI, tmp_path: Path) -> None:
+    """POST /projects/from-link downloads permitted media and starts analysis."""
+
+    store = LocalStorage(root=str(tmp_path / "storage"))
+
+    def _fake_downloader(_url: str, directory: Path) -> DownloadedFile:
+        path = directory / "Linked Source.mp4"
+        path.write_bytes(b"linked-video-bytes")
+        return DownloadedFile(path=path, filename=path.name, content_type="video/mp4")
+
+    def _fake_metadata(_url: str) -> dict[str, object]:
+        return {
+            "id": "BaW_jenozKc",
+            "title": "Linked Source",
+            "duration": 60.0,
+            "webpage_url": "https://www.youtube.com/watch?v=BaW_jenozKc",
+            "availability": "public",
+            "formats": [
+                {
+                    "format_id": "video",
+                    "ext": "mp4",
+                    "width": 1920,
+                    "height": 1080,
+                    "vcodec": "h264",
+                    "acodec": "aac",
+                    "filesize": 1000,
+                }
+            ],
+        }
+
+    def _fake_probe(_path: Path) -> dict[str, object]:
+        return {
+            "passed": True,
+            "has_video": True,
+            "has_audio": True,
+            "container_duration": 60.0,
+            "width": 1920,
+            "height": 1080,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "errors": [],
+        }
+
+    app.dependency_overrides[project_service_provider] = lambda: ProjectService(
+        StorageProjectRepository(store), store
+    )
+    app.dependency_overrides[storage_provider] = lambda: store
+    link_service = VideoLinkIntakeService(
+        store,
+        downloader=_fake_downloader,
+        metadata_extractor=_fake_metadata,
+        media_probe=_fake_probe,
+    )
+    app.dependency_overrides[link_intake_provider] = lambda: link_service
+    app.dependency_overrides[analysis_service_provider] = lambda: AnalysisService(
+        analysis_repo=StorageAnalysisRepository(store),
+        project_repo=StorageProjectRepository(store),
+        storage=store,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/projects/from-link",
+            json={
+                "url": "https://youtu.be/BaW_jenozKc",
+                "permission_confirmed": True,
+                "desired_clip_count": 3,
+                "content_category": "motivational",
+                "editing_intensity": "aggressive viral",
+                "music_enabled": True,
+                "sfx_enabled": True,
+                "captions_enabled": True,
+            },
+        )
+        assert response.status_code == 202
+        queued = response.json()
+        status_response = client.get(
+            f"/api/v1/projects/link-ingestions/{queued['download']['ingestion_id']}"
+        )
+
+    assert status_response.status_code == 200
+    body = status_response.json()
+    assert body["download"]["status"] == "downloaded"
+    assert body["project"]["source_type"] == "link"
+    assert body["project"]["link_ingestion_id"] == body["download"]["ingestion_id"]
+    assert body["project"]["desired_clip_count"] == 3
+    assert body["project"]["content_category"] == "motivational"
+
+
+def test_create_project_from_link_requires_rights_confirmation(app: FastAPI) -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/projects/from-link",
+            json={
+                "url": "https://www.youtube.com/watch?v=BaW_jenozKc",
+                "permission_confirmed": False,
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "RIGHTS_CONFIRMATION_REQUIRED"
 
 
 

@@ -16,6 +16,16 @@ import type {
   CleanupResultResponse,
   ClipsResponse,
   CreateProjectInput,
+  CreatorPersonalizationSummary,
+  CreatorProfileExportResponse,
+  CreatorProfileV2,
+  CreatorProfilesResponse,
+  DurableJob,
+  DurableJobListResponse,
+  ClipFeedbackInput,
+  ClipFeedbackV2,
+  CreateProjectFromLinkInput,
+  CreateProjectFromLinkResponse,
   Editing,
   ExportsResponse,
   LibraryDashboard,
@@ -41,6 +51,7 @@ import type {
   Story,
   StorySummary,
   SystemInfo,
+  TrendResearchResponse,
   Timeline,
   TimelineEvent,
   TimelineList,
@@ -135,12 +146,59 @@ export const api = {
   getProject: (id: string) => request<Project>(`/projects/${id}`),
   createProject: (input: CreateProjectInput) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify(input) }),
+  createProjectFromLink: (input: CreateProjectFromLinkInput) =>
+    request<CreateProjectFromLinkResponse>("/projects/from-link", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  getLinkIngestion: (id: string) =>
+    request<CreateProjectFromLinkResponse>(`/projects/link-ingestions/${id}`),
   renameProject: (id: string, name: string) =>
     request<Project>(`/projects/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
   processProject: (id: string) =>
     request<Project>(`/projects/${id}/process`, { method: "POST" }),
   deleteProject: (id: string) =>
     request<void>(`/projects/${id}`, { method: "DELETE" }),
+
+  /* Creator Personalization V2 - local profiles and explicit feedback only. */
+  listCreatorProfiles: () =>
+    request<CreatorProfilesResponse>("/personalization/profiles"),
+  getCreatorPersonalizationSummary: () =>
+    request<CreatorPersonalizationSummary>("/personalization/summary"),
+  createCreatorProfile: (input: {
+    preset_id: string;
+    profile_name?: string;
+    learning_enabled?: boolean;
+    activate?: boolean;
+  }) =>
+    request<CreatorProfileV2>("/personalization/profiles", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateCreatorProfile: (profileId: string, updates: Record<string, unknown>) =>
+    request<CreatorProfileV2>(`/personalization/profiles/${profileId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ updates }),
+    }),
+  activateCreatorProfile: (profileId: string) =>
+    request<CreatorProfileV2>(`/personalization/profiles/${profileId}/activate`, {
+      method: "POST",
+      body: JSON.stringify({ confirm: true }),
+    }),
+  resetCreatorProfile: (profileId: string) =>
+    request<CreatorProfileV2>(`/personalization/profiles/${profileId}/reset`, {
+      method: "POST",
+      body: JSON.stringify({ confirm: true }),
+    }),
+  exportCreatorProfile: (profileId: string) =>
+    request<CreatorProfileExportResponse>(
+      `/personalization/profiles/${profileId}/export`,
+    ),
+  submitClipFeedback: (input: ClipFeedbackInput) =>
+    request<ClipFeedbackV2>("/personalization/feedback", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
 
   /* Cognitive Engine — video understanding. */
   getAnalysis: (id: string) => request<Analysis>(`/projects/${id}/analysis`),
@@ -171,6 +229,8 @@ export const api = {
     request<{ cancelled: boolean }>(`/projects/${id}/virality/cancel`, { method: "POST" }),
   getViralitySummary: (id: string) =>
     request<ViralitySummary>(`/projects/${id}/virality/summary`),
+  getTrendResearch: (id: string) =>
+    request<TrendResearchResponse>(`/projects/${id}/virality/trend-research`),
 
   /* Clip Planner — editing blueprints. */
   getPlanning: (id: string) => request<Planning>(`/projects/${id}/planning`),
@@ -301,6 +361,17 @@ export const api = {
     request<JobLogsResponse>(`/projects/${id}/workflow/jobs/${jobId}/logs`),
   getWorkers: () => request<WorkersResponse>(`/workflow/workers`),
   getScheduler: () => request<SchedulerStatus>(`/workflow/scheduler`),
+
+  /* Durable Job Queue / Resume V2. */
+  getJobs: (projectId?: string) =>
+    request<DurableJobListResponse>(`/jobs${_qs({ project_id: projectId })}`),
+  getJob: (jobId: string) => request<DurableJob>(`/jobs/${jobId}`),
+  cancelJob: (jobId: string) =>
+    request<DurableJob>(`/jobs/${jobId}/cancel`, { method: "POST" }),
+  retryJob: (jobId: string) =>
+    request<DurableJob>(`/jobs/${jobId}/retry`, { method: "POST" }),
+  resumeJob: (jobId: string) =>
+    request<DurableJob>(`/jobs/${jobId}/resume`, { method: "POST" }),
 
   /* Production Monitoring & Analytics - observational only. */
   getMonitoringHealth: () => request<MonitoringHealthResponse>(`/monitoring/health`),

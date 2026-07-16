@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -114,12 +115,48 @@ async def test_faster_whisper_maps_segments_words_and_language() -> None:
     assert result.confidence is not None and 0.0 <= result.confidence <= 1.0
 
 
+async def test_faster_whisper_writes_temp_audio_before_transcribing() -> None:
+    seen: dict[str, int] = {}
+
+    class RecordingWhisperModel(FakeWhisperModel):
+        def transcribe(self, audio_path, **kwargs):
+            path = Path(audio_path)
+            seen["size"] = path.stat().st_size
+            seen["bytes"] = len(path.read_bytes())
+            return super().transcribe(audio_path, **kwargs)
+
+    def make(model, *, device, compute_type, download_root):
+        return RecordingWhisperModel(
+            model, device=device, compute_type=compute_type, download_root=download_root
+        )
+
+    provider = FasterWhisperTranscriptionProvider(
+        FakeStorage(b"RIFFfake-wav-data"), model_factory=make
+    )
+
+    await provider.transcribe("analysis/p/audio.wav")
+
+    assert seen == {"size": len(b"RIFFfake-wav-data"), "bytes": len(b"RIFFfake-wav-data")}
+
+
 async def test_faster_whisper_storage_failure_is_external_error() -> None:
     provider = FasterWhisperTranscriptionProvider(
         FakeStorage(fail=True), model_factory=_factory()
     )
     with pytest.raises(ExternalServiceError):
         await provider.transcribe("analysis/p/audio.wav")
+
+
+async def test_faster_whisper_model_load_failure_is_external_error() -> None:
+    def make(model, *, device, compute_type, download_root):
+        raise RuntimeError("model weights unavailable")
+
+    provider = FasterWhisperTranscriptionProvider(FakeStorage(), model_factory=make)
+
+    with pytest.raises(ExternalServiceError) as exc:
+        await provider.transcribe("analysis/p/audio.wav")
+
+    assert exc.value.message == "Transcription failed."
 
 
 async def test_faster_whisper_cpu_fallback_when_cuda_init_fails() -> None:
@@ -147,6 +184,52 @@ async def test_faster_whisper_compute_auto_resolves_int8_on_cpu() -> None:
     )
     await provider.transcribe("analysis/p/audio.wav")
     assert provider._resolved_compute == "int8"
+
+
+async def test_faster_whisper_consumes_lazy_segment_generator() -> None:
+    consumed = {"count": 0}
+
+    class LazyWhisperModel(FakeWhisperModel):
+        def transcribe(self, audio_path, **kwargs):
+            def generate():
+                for seg in [
+                    _Seg(0.0, 1.0, " one", -0.1, []),
+                    _Seg(1.0, 2.0, " two", -0.1, []),
+                ]:
+                    consumed["count"] += 1
+                    yield seg
+
+            return generate(), _Info()
+
+    def make(model, *, device, compute_type, download_root):
+        return LazyWhisperModel(
+            model, device=device, compute_type=compute_type, download_root=download_root
+        )
+
+    provider = FasterWhisperTranscriptionProvider(FakeStorage(), model_factory=make)
+
+    result = await provider.transcribe("analysis/p/audio.wav")
+
+    assert consumed["count"] == 2
+    assert result.text == "one two"
+
+
+async def test_faster_whisper_empty_transcript_is_external_error() -> None:
+    class EmptyWhisperModel(FakeWhisperModel):
+        def transcribe(self, audio_path, **kwargs):
+            return iter([]), _Info()
+
+    def make(model, *, device, compute_type, download_root):
+        return EmptyWhisperModel(
+            model, device=device, compute_type=compute_type, download_root=download_root
+        )
+
+    provider = FasterWhisperTranscriptionProvider(FakeStorage(), model_factory=make)
+
+    with pytest.raises(ExternalServiceError) as exc:
+        await provider.transcribe("analysis/p/audio.wav")
+
+    assert exc.value.message == "Transcription completed but returned no speech segments."
 
 
 async def test_faster_whisper_serializes_concurrent_calls() -> None:
@@ -186,7 +269,7 @@ def test_factory_unknown_provider_raises() -> None:
 
 
 def test_settings_whisper_defaults() -> None:
-    s = Settings()
+    s = Settings(_env_file=None)
     assert s.ai.transcription_provider == "noop"
     assert s.ai.whisper_model == "base"
     assert s.ai.whisper_device == "auto"

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import olympus.data.storage.local as local_storage_module
 from olympus.data.storage.local import LocalStorage
 from olympus.platform.errors import StorageError
 
@@ -39,6 +40,29 @@ async def test_get_missing_raises_storage_error(storage: LocalStorage) -> None:
 
     with pytest.raises(StorageError):
         await storage.get("does/not/exist.bin")
+
+
+async def test_get_retries_transient_windows_reader_lock(
+    storage: LocalStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await storage.put("workflow/p1/workflow.json", b"{}")
+    original_read_bytes = Path.read_bytes
+    attempts = 0
+
+    def transiently_locked(path: Path) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PermissionError("sharing violation")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(local_storage_module, "_WINDOWS_READ_RETRY_ENABLED", True)
+    monkeypatch.setattr(local_storage_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(Path, "read_bytes", transiently_locked)
+
+    assert await storage.get("workflow/p1/workflow.json") == b"{}"
+    assert attempts == 2
 
 
 async def test_path_traversal_is_blocked(storage: LocalStorage) -> None:

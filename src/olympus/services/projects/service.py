@@ -34,6 +34,15 @@ class NewProjectInput:
     width: int | None = None
     height: int | None = None
     upload_duration_ms: float | None = None
+    source_type: str = "upload"
+    source_url: str | None = None
+    link_ingestion_id: str | None = None
+    desired_clip_count: int | None = None
+    content_category: str = "auto"
+    editing_intensity: str = "balanced"
+    music_enabled: bool = True
+    sfx_enabled: bool = True
+    captions_enabled: bool = True
 
 
 # Maximum length of a project name. Enforced both when deriving a name from an
@@ -92,6 +101,15 @@ class ProjectService:
             created_at=now,
             updated_at=now,
             upload_duration_ms=data.upload_duration_ms,
+            source_type=data.source_type,
+            source_url=data.source_url,
+            link_ingestion_id=data.link_ingestion_id,
+            desired_clip_count=data.desired_clip_count,
+            content_category=data.content_category,
+            editing_intensity=data.editing_intensity,
+            music_enabled=data.music_enabled,
+            sfx_enabled=data.sfx_enabled,
+            captions_enabled=data.captions_enabled,
         )
         await self._repo.save(project)
         log.info("project_created", project_id=project.id, name=project.name)

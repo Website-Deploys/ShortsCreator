@@ -19,8 +19,10 @@ from fastapi import APIRouter, File, UploadFile, status
 from olympus.api.dependencies import IntakeDep
 from olympus.api.v1.schemas.uploads import UploadResponse
 from olympus.platform.errors import ValidationError
+from olympus.platform.logging import get_logger
 
 router = APIRouter()
+log = get_logger(__name__)
 
 # Size of chunks read from the incoming file when streaming to storage.
 _CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -45,6 +47,11 @@ async def _iter_upload(upload: UploadFile, chunk_size: int = _CHUNK_SIZE) -> Asy
 async def create_upload(intake: IntakeDep, file: UploadFile = File(...)) -> UploadResponse:
     """Receive, validate, and store an uploaded video."""
 
+    log.info(
+        "upload_request_started",
+        filename=file.filename,
+        content_type=file.content_type,
+    )
     if not file.filename:
         raise ValidationError("A file is required.")
 
@@ -52,6 +59,12 @@ async def create_upload(intake: IntakeDep, file: UploadFile = File(...)) -> Uplo
         filename=file.filename,
         content_type=file.content_type,
         chunks=_iter_upload(file),
+    )
+    log.info(
+        "upload_response_ready",
+        upload_id=record.id,
+        storage_key=record.storage_key,
+        size_bytes=record.size_bytes,
     )
     return UploadResponse(
         id=record.id,

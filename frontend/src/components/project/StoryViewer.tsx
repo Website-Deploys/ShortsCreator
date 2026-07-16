@@ -37,6 +37,7 @@ import {
   parseEmotionTurns,
   parseHook,
   parsePayoffs,
+  parseStoryV2,
   parseSummary,
   parseTopics,
   roleMeta,
@@ -137,6 +138,7 @@ function Chips({ items, tone = "default" }: { items: string[]; tone?: "default" 
 
 export function StoryViewer({ story }: { story: Story }) {
   const summary = parseSummary(story);
+  const storyV2 = parseStoryV2(story);
   const hook = parseHook(story);
   const payoffs = parsePayoffs(story);
   const { method, turns } = parseEmotionTurns(story);
@@ -195,6 +197,63 @@ export function StoryViewer({ story }: { story: Story }) {
           </div>
         ) : (
           <Unavailable story={story} stageName="story_summary" />
+        )}
+      </Section>
+
+      {/* Story V2 */}
+      <Section icon={<SparklesIcon className="h-4 w-4" />} title="Story intelligence V2">
+        {storyV2 ? (
+          <div className="space-y-4">
+            <div className="grid gap-2 text-xs text-muted sm:grid-cols-4">
+              <span>Topics: {storyV2.topicCount}</span>
+              <span>Micro-stories: {storyV2.microStoryCount}</span>
+              <span>Recommended: {storyV2.recommendedCount}</span>
+              <span>Avg completeness: {formatConfidence(storyV2.averageCompleteness)}</span>
+            </div>
+            {storyV2.topStories.length > 0 ? (
+              <ul className="space-y-3">
+                {storyV2.topStories.map((item) => (
+                  <li key={item.storyId} className="rounded-lg bg-white/[0.03] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-white">{item.title}</p>
+                      <ConfidenceChip value={item.completeness} />
+                    </div>
+                    <p className="mt-1 text-xs text-muted">
+                      {item.storyShape.replace(/_/g, " ")} Â· {formatTimestamp(item.start)}
+                      â€“{formatTimestamp(item.end)} Â· context risk{" "}
+                      {formatConfidence(item.contextRisk)}
+                    </p>
+                    {item.tension && (
+                      <p className="mt-2 text-xs text-white/80">Tension: {item.tension}</p>
+                    )}
+                    {item.payoff && (
+                      <p className="mt-1 text-xs text-white/80">Payoff: â€œ{item.payoff}â€</p>
+                    )}
+                    <p className="mt-1 text-xs text-muted">
+                      Ending: {item.endingReason || "evaluated"} Â· Boundary:{" "}
+                      {item.boundaryReason}
+                    </p>
+                    {item.warning && (
+                      <p className="mt-2 rounded border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-xs text-amber-100">
+                        Warning: {item.warning}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted">
+                No complete recommended micro-stories passed V2 story checks.
+              </p>
+            )}
+            {storyV2.warnings.length > 0 && (
+              <div className="rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+                {storyV2.warnings.join(" ")}
+              </div>
+            )}
+          </div>
+        ) : (
+          <Unavailable story={story} stageName="story_analysis_v2" />
         )}
       </Section>
 

@@ -46,6 +46,7 @@ from olympus.story.analyzers import (
     NarrativeArcAnalyzer,
     NarrativeSegmentationAnalyzer,
     PayoffDetectionAnalyzer,
+    StoryAnalysisV2Analyzer,
     StoryGraphAnalyzer,
     StorySummaryAnalyzer,
     TopicSegmentationAnalyzer,
@@ -55,7 +56,7 @@ from olympus.utils import utc_now
 log = get_logger(__name__)
 
 #: Bumped when the *set* or *ordering* of story stages changes.
-STORY_PIPELINE_VERSION = "1"
+STORY_PIPELINE_VERSION = "2"
 
 #: Retry budget for stages that raise or return FAILED. UNAVAILABLE is never
 #: retried (it is the truth about the inputs, not a failure).
@@ -80,6 +81,7 @@ def build_default_story_analyzers() -> list[StoryAnalyzer]:
         EmotionalTurningPointsAnalyzer(),
         InformationDensityAnalyzer(),
         ContextDependenciesAnalyzer(),
+        StoryAnalysisV2Analyzer(),
         StoryGraphAnalyzer(),
         StorySummaryAnalyzer(),
     ]

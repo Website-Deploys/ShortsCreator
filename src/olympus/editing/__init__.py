@@ -13,6 +13,12 @@ selects music, or generates a Short; it only produces the edit decision list a
 future Editing/Render engine can execute exactly.
 """
 
+from olympus.editing.motion import build_motion_intelligence, validate_motion_effects
 from olympus.editing.pipeline import EditingPipeline, build_default_editing_analyzers
 
-__all__ = ["EditingPipeline", "build_default_editing_analyzers"]
+__all__ = [
+    "EditingPipeline",
+    "build_default_editing_analyzers",
+    "build_motion_intelligence",
+    "validate_motion_effects",
+]

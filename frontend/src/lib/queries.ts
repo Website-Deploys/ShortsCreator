@@ -14,7 +14,15 @@ import type {
   Analysis,
   AssetsResponse,
   ClipsResponse,
+  CreateProjectFromLinkInput,
+  CreateProjectFromLinkResponse,
   CreateProjectInput,
+  CreatorPersonalizationSummary,
+  CreatorProfileExportResponse,
+  CreatorProfileV2,
+  CreatorProfilesResponse,
+  ClipFeedbackInput,
+  ClipFeedbackV2,
   Editing,
   ExportsResponse,
   LibraryDashboard,
@@ -54,6 +62,8 @@ export const queryKeys = {
   systemInfo: ["system", "info"] as const,
   projects: ["projects"] as const,
   project: (id: string) => ["projects", id] as const,
+  creatorProfiles: ["personalization", "profiles"] as const,
+  creatorPersonalizationSummary: ["personalization", "summary"] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
   story: (id: string) => ["projects", id, "story"] as const,
   virality: (id: string) => ["projects", id, "virality"] as const,
@@ -130,6 +140,91 @@ export function useCreateProject() {
     onSuccess: (project: Project) => {
       qc.setQueryData(queryKeys.project(project.id), project);
       void qc.invalidateQueries({ queryKey: queryKeys.projects });
+    },
+  });
+}
+
+export function useCreatorProfiles() {
+  return useQuery<CreatorProfilesResponse>({
+    queryKey: queryKeys.creatorProfiles,
+    queryFn: api.listCreatorProfiles,
+  });
+}
+
+export function useCreatorPersonalizationSummary() {
+  return useQuery<CreatorPersonalizationSummary>({
+    queryKey: queryKeys.creatorPersonalizationSummary,
+    queryFn: api.getCreatorPersonalizationSummary,
+  });
+}
+
+function invalidatePersonalization(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ["personalization"] });
+}
+
+export function useCreateCreatorProfile() {
+  const qc = useQueryClient();
+  return useMutation<CreatorProfileV2, Error, {
+    preset_id: string;
+    profile_name?: string;
+    learning_enabled?: boolean;
+    activate?: boolean;
+  }>({
+    mutationFn: api.createCreatorProfile,
+    onSuccess: () => invalidatePersonalization(qc),
+  });
+}
+
+export function useUpdateCreatorProfile() {
+  const qc = useQueryClient();
+  return useMutation<CreatorProfileV2, Error, {
+    profileId: string;
+    updates: Record<string, unknown>;
+  }>({
+    mutationFn: ({ profileId, updates }) => api.updateCreatorProfile(profileId, updates),
+    onSuccess: () => invalidatePersonalization(qc),
+  });
+}
+
+export function useActivateCreatorProfile() {
+  const qc = useQueryClient();
+  return useMutation<CreatorProfileV2, Error, string>({
+    mutationFn: api.activateCreatorProfile,
+    onSuccess: () => invalidatePersonalization(qc),
+  });
+}
+
+export function useResetCreatorProfile() {
+  const qc = useQueryClient();
+  return useMutation<CreatorProfileV2, Error, string>({
+    mutationFn: api.resetCreatorProfile,
+    onSuccess: () => invalidatePersonalization(qc),
+  });
+}
+
+export function useExportCreatorProfile() {
+  return useMutation<CreatorProfileExportResponse, Error, string>({
+    mutationFn: api.exportCreatorProfile,
+  });
+}
+
+export function useSubmitClipFeedback() {
+  const qc = useQueryClient();
+  return useMutation<ClipFeedbackV2, Error, ClipFeedbackInput>({
+    mutationFn: api.submitClipFeedback,
+    onSuccess: () => invalidatePersonalization(qc),
+  });
+}
+
+export function useCreateProjectFromLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateProjectFromLinkInput) => api.createProjectFromLink(input),
+    onSuccess: (result: CreateProjectFromLinkResponse) => {
+      if (result.project) {
+        qc.setQueryData(queryKeys.project(result.project.id), result.project);
+        void qc.invalidateQueries({ queryKey: queryKeys.projects });
+      }
     },
   });
 }

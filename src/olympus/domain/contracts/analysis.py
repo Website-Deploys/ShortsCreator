@@ -71,6 +71,7 @@ class StageOutcome:
     status: StageStatus
     data: dict[str, Any] = field(default_factory=dict)
     reason: str | None = None
+    retryable: bool = True
 
     @classmethod
     def completed(cls, data: dict[str, Any]) -> StageOutcome:
@@ -79,6 +80,10 @@ class StageOutcome:
     @classmethod
     def unavailable(cls, reason: str) -> StageOutcome:
         return cls(status=StageStatus.UNAVAILABLE, reason=reason)
+
+    @classmethod
+    def failed(cls, reason: str, *, retryable: bool = True) -> StageOutcome:
+        return cls(status=StageStatus.FAILED, reason=reason, retryable=retryable)
 
 
 # A progress reporter an analyzer may call with a value in [0, 1].

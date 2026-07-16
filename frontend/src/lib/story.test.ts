@@ -10,6 +10,7 @@ import {
   parseHook,
   parsePayoffs,
   parseSections,
+  parseStoryV2,
   parseSummary,
   roleMeta,
 } from "@/lib/story";
@@ -187,10 +188,45 @@ describe("parsers", () => {
     expect(summary?.pendingSignals).toContain("emotional_turning_points");
   });
 
+  it("parses Story V2 micro-story intelligence", () => {
+    const s = story([
+      stage("story_analysis_v2", "completed", {
+        topic_sections: [{ section_id: "topic_0" }],
+        micro_stories: [{ story_id: "story_1" }],
+        recommended_clip_stories: [
+          {
+            story_id: "story_1",
+            title: "Problem Solution",
+            start: 10,
+            end: 42,
+            story_shape: "problem_solution",
+            completeness_score: 0.72,
+            context_dependency_score: 0.2,
+            tension: { viewer_question: "How does this get solved?" },
+            payoff: { payoff_text: "The solution was structure." },
+            ending: { end_reason: "payoff preserved" },
+            boundary_repair: { reason: "candidate boundaries already preserve story" },
+          },
+        ],
+        story_quality_summary: { average_completeness: 0.62 },
+        warnings: ["heuristic story analysis"],
+      }),
+    ]);
+
+    const parsed = parseStoryV2(s);
+    expect(parsed?.topicCount).toBe(1);
+    expect(parsed?.microStoryCount).toBe(1);
+    expect(parsed?.recommendedCount).toBe(1);
+    expect(parsed?.topStories[0].storyShape).toBe("problem_solution");
+    expect(parsed?.topStories[0].payoff).toContain("structure");
+    expect(parsed?.warnings).toContain("heuristic story analysis");
+  });
+
   it("returns empty/null for unavailable stages (no fabrication)", () => {
     const s = story([stage("narrative_segmentation", "unavailable", null, "no transcript")]);
     expect(parseSections(s)).toEqual([]);
     expect(parseHook(s)).toBeNull();
     expect(parseSummary(s)).toBeNull();
+    expect(parseStoryV2(s)).toBeNull();
   });
 });

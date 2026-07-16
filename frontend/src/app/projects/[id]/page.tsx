@@ -195,7 +195,7 @@ function ProjectWorkspace({ project }: { project: Project }) {
 
               <section>
                 <SectionTitle>Shorts</SectionTitle>
-                <ResultsSection clips={[]} />
+                <ResultsSection projectId={project.id} render={rendering} />
               </section>
             </>
           )}

@@ -148,8 +148,11 @@ class AnalysisPipeline:
 
         only_set = set(only) if only is not None else None
         analysis = await self._load_or_init(project.id)
+        recovered = self._recover_stale_running(project.id, analysis)
         analysis.status = AnalysisStatus.RUNNING
         analysis.updated_at = utc_now()
+        for stage in recovered:
+            await self._repo.save_stage(project.id, stage)
         await self._repo.save_index(analysis)
 
         results: dict[str, StageResult] = {s.stage: s for s in analysis.stages}
@@ -163,6 +166,32 @@ class AnalysisPipeline:
             if not self._should_run(analyzer, results.get(analyzer.name), only_set):
                 continue
 
+            log.info(
+                "starting_stage",
+                project_id=project.id,
+                stage=analyzer.name,
+            )
+
+            running = StageResult(
+                stage=analyzer.name,
+                status=StageStatus.RUNNING,
+                version=analyzer.version,
+                started_at=utc_now(),
+            )
+            results[analyzer.name] = running
+            self._replace_stage(analysis, running)
+            analysis.updated_at = utc_now()
+            await self._repo.save_stage(project.id, running)
+            await self._repo.save_index(analysis)
+            log.info(
+                "stage_persisted",
+                project_id=project.id,
+                stage=running.stage,
+                status=running.status.value,
+            )
+            if on_progress is not None:
+                on_progress(analysis)
+
             result = await self._run_stage(
                 analyzer,
                 StageContext(
@@ -172,11 +201,26 @@ class AnalysisPipeline:
                     transcription_provider=transcription_provider,
                 ),
             )
+
+            log.info(
+                "stage_returned",
+                project_id=project.id,
+                stage=analyzer.name,
+                status=result.status.value,
+            )
+
             results[analyzer.name] = result
             self._replace_stage(analysis, result)
             analysis.updated_at = utc_now()
             await self._repo.save_stage(project.id, result)
             await self._repo.save_index(analysis)
+            log.info(
+                "stage_persisted",
+                project_id=project.id,
+                stage=result.stage,
+                status=result.status.value,
+            )
+
             if on_progress is not None:
                 on_progress(analysis)
 
@@ -213,6 +257,36 @@ class AnalysisPipeline:
             updated_at=now,
             stages=[StageResult(stage=name) for name in STAGE_ORDER],
         )
+
+    @staticmethod
+    def _recover_stale_running(project_id: str, analysis: Analysis) -> list[StageResult]:
+        """Turn persisted RUNNING stages from interrupted processes into failures.
+
+        In-process run registries disappear when the backend stops. If a stage
+        artifact says RUNNING when a new run starts, no live task owns that work
+        anymore, so keeping it RUNNING would strand the UI. Mark it failed and
+        let the current run replace it if the stage is in scope.
+        """
+
+        recovered: list[StageResult] = []
+        for stage in analysis.stages:
+            if stage.status is not StageStatus.RUNNING:
+                continue
+            stage.status = StageStatus.FAILED
+            stage.progress = 0.0
+            stage.completed_at = utc_now()
+            stage.error = (
+                "Stage was interrupted while running in a previous backend process; "
+                "start analysis again or re-run this stage to retry it."
+            )
+            stage.reason = None
+            recovered.append(stage)
+            log.warning(
+                "stale_running_stage_recovered",
+                project_id=project_id,
+                stage=stage.stage,
+            )
+        return recovered
 
     def _should_run(
         self,
@@ -263,7 +337,11 @@ class AnalysisPipeline:
                 return self._finalize_failed(result, last_error)
 
             # A returned FAILED outcome is a genuine failure -> retry too.
-            if outcome.status is StageStatus.FAILED and attempt < max_attempts:
+            if (
+                outcome.status is StageStatus.FAILED
+                and outcome.retryable
+                and attempt < max_attempts
+            ):
                 last_error = outcome.reason or "Stage reported failure."
                 log.warning(
                     "analysis_stage_failed_outcome",

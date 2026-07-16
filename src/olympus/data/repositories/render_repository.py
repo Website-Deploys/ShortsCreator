@@ -62,6 +62,10 @@ class StorageRenderManifestRepository(RenderManifestStore):
         # Remove the manifest, the rendered clip files, and any working artifacts.
         if await self._storage.exists(_index_key(project_id)):
             await self._storage.delete(_index_key(project_id))
-        for prefix in (f"render/{project_id}/clips/", f"render/{project_id}/work/"):
+        for prefix in (
+            f"render/{project_id}/clips/",
+            f"render/{project_id}/metadata/",
+            f"render/{project_id}/work/",
+        ):
             for key in await self._storage.list_keys(prefix):
                 await self._storage.delete(key)

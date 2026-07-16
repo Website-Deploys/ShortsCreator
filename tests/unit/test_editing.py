@@ -58,6 +58,11 @@ from olympus.services.editing import EditingService
 from olympus.services.planning import ClipPlannerService
 from olympus.services.projects import ProjectService
 from olympus.story import StoryPipeline, build_default_story_analyzers
+from olympus.trends import (
+    build_editing_trend_guidance,
+    build_evergreen_snapshot,
+    match_trend_patterns,
+)
 from olympus.utils import new_id, utc_now
 from olympus.virality import ViralityPipeline, build_default_virality_analyzers
 
@@ -142,7 +147,13 @@ def _project() -> Project:
     )
 
 
-def _analysis(*, with_transcript: bool, width: int = 1080, height: int = 1920) -> Analysis:
+def _analysis(
+    *,
+    with_transcript: bool,
+    width: int = 1080,
+    height: int = 1920,
+    face_data: dict[str, Any] | None = None,
+) -> Analysis:
     now = utc_now()
     stages = [
         StageResult(
@@ -159,6 +170,15 @@ def _analysis(*, with_transcript: bool, width: int = 1080, height: int = 1920) -
                 status=StageStatus.COMPLETED,
                 version="1",
                 data={"language": "en", "confidence": 0.9, "segments": TRANSCRIPT},
+            )
+        )
+    if face_data is not None:
+        stages.append(
+            StageResult(
+                stage="face_detection",
+                status=StageStatus.COMPLETED,
+                version="1",
+                data=face_data,
             )
         )
     return Analysis(
@@ -311,6 +331,15 @@ async def test_real_timelines_assembled_and_valid(
     base = next(e for e in video["events"] if e["type"] == "source_clip")
     assert base["start"] == 0.0
     assert abs(base["end"] - tl["duration"]) < 0.05
+    editing_v2 = tl["metadata"]["editing_v2"]
+    assert editing_v2["version"] == "2"
+    assert editing_v2["motion_intelligence_v2"]["decision"]["motion_style"]
+    assert editing_v2["motion_plan"]["events"] == editing_v2["motion_intelligence_v2"][
+        "effect_plan"
+    ]["effects"]
+    assert editing_v2["voice_enhancement_plan"]["applied_at_render"] is True
+    assert editing_v2["video_enhancement_plan"]["applied_at_render"] is True
+    assert editing_v2["caption_style"]["renderer"] == "ass"
     # Every event is timestamped with a reason and evidence key.
     for track in tl["tracks"]:
         for ev in track["events"]:
@@ -394,6 +423,83 @@ async def test_crop_is_9_16_from_real_dimensions(
     assert crop2["width"] < 1920
 
 
+async def test_single_face_tracking_plan_created_from_detections(
+    storage: LocalStorage, editing_repo: StorageEditingRepository
+) -> None:
+    analysis = _analysis(
+        with_transcript=True,
+        width=1920,
+        height=1080,
+        face_data=_face_frames(),
+    )
+    planning = _planning_with([_make_plan("clip_a", 0.0, 8.0)])
+    result = await _pipeline(editing_repo).run(
+        _project(), storage, analysis=analysis, planning=planning
+    )
+
+    timeline = result.stage("timeline_validation").data["timelines"][0]
+    plan = timeline["metadata"]["face_tracking_plan"]
+    assert plan["mode"] == "single_face_tracking"
+    assert plan["applied_to_render"] is False
+    assert len(plan["crop_keyframes"]) >= 2
+    assert timeline["metadata"]["crop"]["subject_aware"] is True
+    motion = timeline["metadata"]["motion_intelligence_v2"]
+    assert motion["decision"]["should_apply_motion"] is True
+    assert motion["effect_plan"]["effects"]
+    assert timeline["metadata"]["editing_v2"]["motion_plan"]["source"] == (
+        "motion_intelligence_v2"
+    )
+
+
+async def test_two_face_tracking_uses_two_speaker_stack_without_association(
+    storage: LocalStorage, editing_repo: StorageEditingRepository
+) -> None:
+    analysis = _analysis(
+        with_transcript=True,
+        width=1920,
+        height=1080,
+        face_data=_face_frames(two_faces=True),
+    )
+    planning = _planning_with([_make_plan("clip_a", 0.0, 8.0)])
+    result = await _pipeline(editing_repo).run(
+        _project(), storage, analysis=analysis, planning=planning
+    )
+
+    plan = result.stage("timeline_validation").data["timelines"][0]["metadata"][
+        "face_tracking_plan"
+    ]
+    assert plan["mode"] == "two_speaker_stack"
+    assert len(plan["tracked_faces"]) == 2
+    assert len(plan["layout_regions"]) == 2
+    assert plan["input_analysis"]["active_speaker_evidence_available"] is False
+    motion = result.stage("timeline_validation").data["timelines"][0]["metadata"][
+        "motion_intelligence_v2"
+    ]
+    assert motion["decision"]["should_apply_motion"] is False
+    assert motion["decision"]["disabled_reason"] == "layout_complexity"
+
+
+async def test_low_confidence_faces_fallback_to_center_crop(
+    storage: LocalStorage, editing_repo: StorageEditingRepository
+) -> None:
+    analysis = _analysis(
+        with_transcript=True,
+        width=1920,
+        height=1080,
+        face_data=_face_frames(confidence=0.2),
+    )
+    planning = _planning_with([_make_plan("clip_a", 0.0, 8.0)])
+    result = await _pipeline(editing_repo).run(
+        _project(), storage, analysis=analysis, planning=planning
+    )
+
+    plan = result.stage("timeline_validation").data["timelines"][0]["metadata"][
+        "face_tracking_plan"
+    ]
+    assert plan["mode"] == "center_fallback"
+    assert plan["fallback_reason"] == "sparse_or_low_confidence_faces"
+
+
 async def test_music_beats_unknown_and_hook_decision_present(
     storage: LocalStorage, editing_repo: StorageEditingRepository
 ) -> None:
@@ -407,7 +513,122 @@ async def test_music_beats_unknown_and_hook_decision_present(
     types = {m["type"] for m in music["markers"]}
     assert {"music_intro", "music_ending"} <= types
     hook = result.stage("hook_enhancement").data["clips"][0]["decision"]
-    assert hook["type"] in ("fast_start", "no_changes", "preview", "cold_open", "unknown")
+    assert hook["type"] in (
+        "fast_start",
+        "no_changes",
+        "preview",
+        "cold_open",
+        "punch_in_caption_pop",
+        "unknown",
+    )
+    timeline = result.stage("timeline_validation").data["timelines"][0]
+    hook_editing = timeline["metadata"]["editing_v2"]["hook_editing"]
+    assert hook_editing["hook_motion_event"]["type"] == "hook_punch_zoom"
+    assert hook_editing["hook_sfx_event"]["safe_default"] is True
+
+
+async def test_editing_consumes_upstream_story_virality_planning_guidance(
+    storage: LocalStorage, editing_repo: StorageEditingRepository
+) -> None:
+    plan = _make_plan("clip_a", 0.0, 40.0)
+    trend_snapshot = build_evergreen_snapshot(
+        {"primary": "education_tutorial", "confidence": 0.9}
+    )
+    trend_match = match_trend_patterns(
+        "Why do people fail? The biggest mistake is missing the payoff because it matters.",
+        trend_snapshot,
+        {"primary": "education_tutorial", "confidence": 0.9},
+    )
+    editing_trend = build_editing_trend_guidance(
+        trend_snapshot,
+        {"primary": "education_tutorial", "confidence": 0.9},
+        trend_match,
+    )
+    plan["story_id"] = "story_test_1"
+    plan["candidate_id"] = "story_test_1"
+    plan["planning_story_integration"] = {"story_guidance_used": True}
+    plan["blueprint"].update(
+        {
+            "hook_v2": {
+                "category": "curiosity_gap",
+                "hook_line": "Why do people fail?",
+                "score": 0.82,
+            },
+            "caption_decision_v2": {"style": "bold_hook"},
+            "music_decision_v2": {"enabled": True, "category": "neutral bed"},
+            "sound_effect_plan_v2": {"enabled": True, "effects": []},
+            "v2_metadata": {"editing_intensity": "balanced", "content_category": "education"},
+            "story_v2_guidance": {
+                "story_guidance_used": True,
+                "story_guidance_source": "story_analysis_v2",
+                "story_id": "story_test_1",
+                "story_shape": "problem_solution",
+                "payoff": "Constraints create freedom.",
+                "completeness_score": 0.86,
+                "context_risk": 0.1,
+                "planning_guidance": {"context_caption": "A productivity mistake"},
+                "editing_guidance": {
+                    "caption_emphasis_words": ["productivity"],
+                    "music_mood": "subtle tension",
+                    "ending_hold_recommendation": 0.25,
+                },
+            },
+            "planning_story_integration": {"story_guidance_used": True},
+            "editing_guidance_v2": {"source": "story_analysis_v2+planning_v2"},
+            "internet_trend_research_v2": trend_snapshot,
+            "trend_match_v2": trend_match,
+            "editing_trend_guidance": editing_trend,
+            "planning_trend_integration": {
+                "trend_guidance_used": True,
+                "trend_snapshot_id": trend_snapshot["snapshot_id"],
+            },
+        }
+    )
+    result = await _pipeline(editing_repo).run(
+        _project(),
+        storage,
+        analysis=_analysis(with_transcript=True),
+        planning=_planning_with([plan]),
+    )
+
+    timeline = result.stage("timeline_validation").data["timelines"][0]
+    editing = timeline["metadata"]["editing_v2"]
+    assert editing["editing_guidance_consumed"]["story_used"] is True
+    assert "productivity" in editing["caption_style"]["highlight_words"]
+    assert editing["music_plan"]["mood"] == "subtle tension"
+    assert editing["ending_hold"]["duration_s"] == 0.25
+    assert editing["editing_guidance_consumed"]["trend_used"] is True
+    assert editing["editing_trend_guidance"]["trend_snapshot_id"] == trend_snapshot["snapshot_id"]
+    assert editing["pacing_profile"]["profile"] == "structured_clarity"
+    assert editing["sfx_plan"]["density"] == "low"
+    assert timeline["metadata"]["unified_clip_intelligence"]["story"]["story_shape"] == (
+        "problem_solution"
+    )
+    assert timeline["metadata"]["unified_clip_intelligence"]["trend_research"][
+        "snapshot_id"
+    ] == trend_snapshot["snapshot_id"]
+
+
+def _face_frames(*, confidence: float = 0.88, two_faces: bool = False) -> dict[str, Any]:
+    frames: list[dict[str, Any]] = []
+    for time, x in ((0.0, 760), (2.0, 860), (4.0, 940), (6.0, 980)):
+        faces = [
+            {
+                "face_id": "speaker_a",
+                "bbox": {"x": x, "y": 210, "width": 260, "height": 320},
+                "confidence": confidence,
+            }
+        ]
+        if two_faces:
+            faces.append(
+                {
+                    "face_id": "speaker_b",
+                    "bbox": {"x": 1220, "y": 230, "width": 250, "height": 310},
+                    "confidence": confidence,
+                }
+            )
+        frames.append({"timestamp": time, "faces": faces})
+    return {"frames": frames}
 
 
 async def test_multiple_clips_each_get_a_timeline(

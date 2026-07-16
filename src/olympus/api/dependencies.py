@@ -41,11 +41,13 @@ from olympus.data.repositories import (
 from olympus.data.storage import build_storage
 from olympus.domain.contracts import Renderer, StoragePort, TranscriptionProvider
 from olympus.domain.contracts.rendering import ClipRenderer
+from olympus.jobs import CheckpointValidator, LocalDurableJobStore
+from olympus.personalization import CreatorPersonalizationService, ProfileStore
 from olympus.platform.config import Settings, get_settings
 from olympus.rendering import build_clip_renderer, build_renderer
 from olympus.services.analysis import AnalysisService
 from olympus.services.editing import EditingService
-from olympus.services.intake import IntakeService
+from olympus.services.intake import IntakeService, VideoLinkIntakeService
 from olympus.services.monitoring import MonitoringService
 from olympus.services.optimization import OptimizationService
 from olympus.services.planning import ClipPlannerService
@@ -108,11 +110,39 @@ def intake_provider() -> IntakeService:
     return IntakeService(build_storage())
 
 
+def link_intake_provider() -> VideoLinkIntakeService:
+    """Provide the video-link intake service, wired to the configured storage."""
+
+    settings = get_settings()
+    return VideoLinkIntakeService(
+        build_storage(),
+        settings=settings.link_ingestion,
+        ffmpeg_binary=settings.rendering.ffmpeg_binary,
+        ffprobe_binary=settings.rendering.ffprobe_binary,
+    )
+
+
 def project_service_provider() -> ProjectService:
     """Provide the project service, wired to the configured storage."""
 
     storage = build_storage()
     return ProjectService(StorageProjectRepository(storage), storage)
+
+
+def personalization_service_provider() -> CreatorPersonalizationService:
+    """Provide the local-only creator profile and explicit-feedback service."""
+
+    settings = get_settings().creator_personalization
+    return CreatorPersonalizationService(
+        ProfileStore(
+            settings.storage_dir,
+            max_profiles=settings.max_profiles,
+            max_note_chars=settings.max_feedback_notes_chars,
+            learning_enabled_by_default=settings.learning_enabled_by_default,
+        ),
+        conservative_until_feedback_count=settings.conservative_until_feedback_count,
+        enabled=settings.enabled,
+    )
 
 
 def editing_service_provider() -> EditingService:
@@ -121,10 +151,15 @@ def editing_service_provider() -> EditingService:
     Wired to the configured storage; reads the Cognitive, Story, Virality, and
     Clip Planner outputs as its only inputs. The in-flight run registry lives in
     the service module (process-wide), so per-request instances coordinate
-    correctly. It renders nothing.
+    correctly. On completion it starts the Rendering Engine, which is the only
+    layer that encodes MP4s.
     """
 
     storage = build_storage()
+
+    async def _start_rendering(project: object, _editing: object) -> None:
+        await rendering_service_provider().start(project)  # type: ignore[arg-type]
+
     return EditingService(
         editing_repo=StorageEditingRepository(storage),
         planning_repo=StoragePlanningRepository(storage),
@@ -133,6 +168,7 @@ def editing_service_provider() -> EditingService:
         analysis_repo=StorageAnalysisRepository(storage),
         project_repo=StorageProjectRepository(storage),
         storage=storage,
+        on_complete=_start_rendering,
     )
 
 
@@ -143,10 +179,8 @@ def optimization_service_provider() -> OptimizationService:
     plus the Cognitive, Story, Virality, Clip Planner, and Editing outputs as its
     only inputs. It is fully additive and never modifies any of them.
 
-    Note on chaining: this engine intentionally does *not* auto-start after the
-    Editing Engine, because the Rendering Engine must produce a real MP4 between
-    them. It is started explicitly via the API, or - in a future deployment - by
-    the Rendering Engine's own ``on_complete`` hook once that engine exists. The
+    Note on chaining: this engine starts after a real render manifest exists. The
+    Rendering Engine produces that manifest and invokes this service. The
     in-flight run registry lives in the service module (process-wide), so
     per-request instances coordinate correctly. It renders and encodes nothing.
     """
@@ -178,8 +212,7 @@ def rendering_service_provider() -> RenderingService:
     realising the Rendering -> Optimization chain. This is wiring only; neither
     engine is redesigned. When FFmpeg is unavailable the render stages report
     UNAVAILABLE honestly, no manifest is produced, and optimization is not
-    triggered (there is nothing to optimize). Rendering itself is started
-    explicitly (via the API), since it is the heavy execution step.
+    triggered (there is nothing to optimize).
     """
 
     storage = build_storage()
@@ -309,7 +342,7 @@ def analysis_service_provider() -> AnalysisService:
 _WORKFLOW_SERVICE: WorkflowService | None = None
 
 
-def build_workflow_service() -> WorkflowService:
+def build_workflow_service(*, run_in_process: bool | None = None) -> WorkflowService:
     """Construct the singleton workflow service, wiring runners to real engines.
 
     Each runner drives an existing engine's service to a genuine terminal state;
@@ -319,6 +352,15 @@ def build_workflow_service() -> WorkflowService:
     """
 
     storage = build_storage()
+    settings = get_settings()
+    durable_store = (
+        LocalDurableJobStore(
+            settings.durable_jobs.storage_dir,
+            max_logs_tail_chars=settings.durable_jobs.max_logs_tail_chars,
+        )
+        if settings.durable_jobs.enabled
+        else None
+    )
     runners = {
         "upload": UploadRunner(storage),
         "cognitive": build_service_runner(
@@ -342,10 +384,22 @@ def build_workflow_service() -> WorkflowService:
         ),
     }
     return WorkflowService(
-        repository=StorageWorkflowRepository(storage),
+        repository=StorageWorkflowRepository(storage, durable_store=durable_store),
         project_repo=StorageProjectRepository(storage),
         runners=runners,
         concurrency=2,
+        max_attempts=settings.durable_jobs.max_attempts,
+        heartbeat_interval_seconds=settings.durable_jobs.heartbeat_interval_seconds,
+        stale_after_seconds=settings.durable_jobs.stale_after_seconds,
+        run_in_process=(
+            settings.durable_jobs.run_in_process
+            if run_in_process is None
+            else run_in_process
+        ),
+        worker_poll_interval_seconds=settings.durable_jobs.worker_poll_interval_seconds,
+        lock_manager=durable_store.locks if durable_store is not None else None,
+        checkpoint_validator=CheckpointValidator(storage),
+        max_logs_tail_chars=settings.durable_jobs.max_logs_tail_chars,
     )
 
 
@@ -423,7 +477,11 @@ TranscriptionDep = Annotated[TranscriptionProvider, Depends(transcription_provid
 RendererDep = Annotated[Renderer, Depends(renderer_provider)]
 ClipRendererDep = Annotated[ClipRenderer, Depends(clip_renderer_provider)]
 IntakeDep = Annotated[IntakeService, Depends(intake_provider)]
+LinkIntakeDep = Annotated[VideoLinkIntakeService, Depends(link_intake_provider)]
 ProjectServiceDep = Annotated[ProjectService, Depends(project_service_provider)]
+PersonalizationServiceDep = Annotated[
+    CreatorPersonalizationService, Depends(personalization_service_provider)
+]
 AnalysisServiceDep = Annotated[AnalysisService, Depends(analysis_service_provider)]
 StoryServiceDep = Annotated[StoryService, Depends(story_service_provider)]
 ViralityServiceDep = Annotated[ViralityService, Depends(virality_service_provider)]

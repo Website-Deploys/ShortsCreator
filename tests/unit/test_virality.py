@@ -34,7 +34,12 @@ from olympus.domain.contracts.virality import (
 )
 from olympus.domain.entities.analysis import Analysis, AnalysisStatus, StageResult, StageStatus
 from olympus.domain.entities.project import Project, ProjectStatus
-from olympus.domain.entities.story import StoryAnalysis
+from olympus.domain.entities.story import (
+    StoryAnalysis,
+    StoryStageResult,
+    StoryStageStatus,
+    StoryStatus,
+)
 from olympus.domain.entities.virality import (
     VIRALITY_STAGE_ORDER,
     ViralityStageStatus,
@@ -178,6 +183,86 @@ async def _story_from(storage: LocalStorage, analysis: Analysis) -> StoryAnalysi
     return await pipeline.run(_project(), storage, analysis=analysis)
 
 
+def _story_with_v2(*, payoff: bool, context_risk: float) -> StoryAnalysis:
+    now = utc_now()
+    payoff_text = "Constraints create freedom." if payoff else ""
+    return StoryAnalysis(
+        project_id="placeholder",
+        pipeline_version="2",
+        status=StoryStatus.COMPLETED,
+        created_at=now,
+        updated_at=now,
+        stages=[
+            StoryStageResult(
+                stage="story_analysis_v2",
+                status=StoryStageStatus.COMPLETED,
+                version="1",
+                data={
+                    "schema": "story_analysis_v2",
+                    "recommended_clip_stories": [
+                        {
+                            "story_id": "story_test_1",
+                            "candidate_id": "story_test_1",
+                            "start": 0.0,
+                            "end": 32.0,
+                            "recommended_start": 0.0,
+                            "recommended_end": 32.0,
+                            "summary": "A complete productivity lesson."
+                            if payoff
+                            else "A setup without its payoff.",
+                            "viewer_promise": "why productivity fails",
+                            "story_shape": "problem_solution",
+                            "completeness_score": 0.86 if payoff else 0.35,
+                            "payoff_score": 0.9 if payoff else 0.0,
+                            "context_dependency_score": context_risk,
+                            "setup": {"setup_text": "Why do most people fail?"},
+                            "tension": {
+                                "unresolved_question": "what actually fixes it?",
+                                "viewer_question": "what fixed it?",
+                            },
+                            "turning_point": {"time": 18.0},
+                            "payoff": {
+                                "payoff_present": payoff,
+                                "payoff_text": payoff_text,
+                            },
+                            "ending": {
+                                "final_line_strength": 0.86 if payoff else 0.2,
+                                "reason": "clear payoff" if payoff else "missing payoff",
+                            },
+                            "boundary_repair": {
+                                "repaired_start": 0.0,
+                                "repaired_end": 32.0,
+                                "reason": "synthetic story boundary",
+                            },
+                            "risks": [] if payoff else ["missing payoff"],
+                            "downstream_guidance": {
+                                "virality": {
+                                    "story_id": "story_test_1",
+                                    "payoff_line": payoff_text,
+                                },
+                                "planning": {
+                                    "story_id": "story_test_1",
+                                    "recommended_start": 0.0,
+                                    "recommended_end": 32.0,
+                                },
+                                "editing": {
+                                    "story_id": "story_test_1",
+                                    "caption_emphasis_words": ["constraints"],
+                                    "music_mood": "subtle tension",
+                                    "ending_hold_recommendation": 0.25,
+                                },
+                            },
+                        }
+                    ],
+                    "virality_story_guidance": [],
+                    "planning_story_guidance": [],
+                    "editing_story_guidance": [],
+                },
+            )
+        ],
+    )
+
+
 def _pipeline(repo: StorageViralityRepository, **kw: object) -> ViralityPipeline:
     return ViralityPipeline(build_default_virality_analyzers(), repo, **kw)  # type: ignore[arg-type]
 
@@ -195,6 +280,10 @@ async def test_pipeline_runs_all_stages_and_persists(
     assert [s.stage for s in result.stages] == list(VIRALITY_STAGE_ORDER)
     assert all(s.is_terminal for s in result.stages)
     assert result.status is ViralityStatus.COMPLETED  # unavailable != failed
+    trend = result.stage("trend_research")
+    assert trend is not None and trend.status is ViralityStageStatus.COMPLETED
+    assert trend.data["internet_trend_research_v2"]["fallback_used"] is True
+    assert await storage.exists(f"trend/{project.id}/trend_research_v2.json") is True
 
     reloaded = await virality_repo.load(project.id)
     assert reloaded is not None
@@ -312,6 +401,32 @@ async def test_summary_aggregates_with_timeline_and_heatmap(
         assert "density" in cell["components"]
 
 
+async def test_story_v2_changes_replay_potential_score(
+    storage: LocalStorage, virality_repo: StorageViralityRepository
+) -> None:
+    analysis = _analysis(with_transcript=False)
+    strong = await _pipeline(virality_repo).run(
+        _project(),
+        storage,
+        analysis=analysis,
+        story=_story_with_v2(payoff=True, context_risk=0.1),
+    )
+    weak = await _pipeline(StorageViralityRepository(storage)).run(
+        _project(),
+        storage,
+        analysis=analysis,
+        story=_story_with_v2(payoff=False, context_risk=0.75),
+    )
+
+    strong_replay = strong.stage("replay_potential")
+    weak_replay = weak.stage("replay_potential")
+    assert strong_replay is not None and weak_replay is not None
+    assert strong_replay.data["story_guidance_used"] is True
+    assert strong.stage("virality_summary").data["story_guidance_used"] is True
+    assert strong_replay.data["score"] > weak_replay.data["score"]
+    assert weak_replay.data["payoff_strength"] < strong_replay.data["payoff_strength"]
+
+
 async def test_heatmap_intensity_is_derived_not_fabricated(
     storage: LocalStorage, virality_repo: StorageViralityRepository
 ) -> None:
@@ -360,7 +475,8 @@ async def test_failed_stage_is_retried_and_surfaces(
             raise RuntimeError("boom")
 
     analyzers = build_default_virality_analyzers()
-    analyzers[0] = _Flaky()
+    hook_index = next(i for i, analyzer in enumerate(analyzers) if analyzer.name == "hook_strength")
+    analyzers[hook_index] = _Flaky()
     pipeline = ViralityPipeline(analyzers, virality_repo, retry_backoff_seconds=0.0)
     result = await pipeline.run(
         _project(), storage, analysis=_analysis(with_transcript=False), story=None
@@ -584,6 +700,10 @@ def test_virality_api_flow(app: object, tmp_path: Path) -> None:
         summary = client.get(f"/api/v1/projects/{project.id}/virality/summary")
         assert summary.status_code == 200
         assert "overall_score" in summary.json()["summary"]
+
+        trends = client.get(f"/api/v1/projects/{project.id}/virality/trend-research")
+        assert trends.status_code == 200
+        assert trends.json()["internet_trend_research_v2"]["snapshot_id"]
 
         rerun = client.post(f"/api/v1/projects/{project.id}/virality/stages/platform_fit/rerun")
         assert rerun.status_code == 200

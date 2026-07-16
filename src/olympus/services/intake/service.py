@@ -9,6 +9,7 @@ backend agnostic and trivially testable with the local backend.
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -80,11 +81,23 @@ class IntakeService:
         upload_id = new_id("upl")
         storage_key = f"uploads/{upload_id}/source{ext}"
 
-        log.info("upload_started", upload_id=upload_id, filename=filename)
+        started = time.perf_counter()
+        log.info(
+            "upload_storage_write_started",
+            upload_id=upload_id,
+            filename=filename,
+            storage_key=storage_key,
+        )
         stored = await self._storage.put_stream(
             storage_key, chunks, content_type=content_type
         )
-        log.info("upload_stored", upload_id=upload_id, size_bytes=stored.size_bytes)
+        log.info(
+            "upload_storage_write_completed",
+            upload_id=upload_id,
+            storage_key=storage_key,
+            size_bytes=stored.size_bytes,
+            duration_ms=round((time.perf_counter() - started) * 1000),
+        )
 
         if stored.size_bytes == 0:
             # Clean up and reject empty uploads (honest failure, no junk stored).

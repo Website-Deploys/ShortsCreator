@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
+import wave
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
@@ -46,6 +47,19 @@ from olympus.platform.errors import ConfigurationError, ExternalServiceError
 from olympus.platform.logging import get_logger
 
 log = get_logger(__name__)
+
+
+def _duration_ms(started: float) -> int:
+    return round((time.perf_counter() - started) * 1000)
+
+
+def _wav_duration_seconds(audio_path: str) -> float | None:
+    try:
+        with wave.open(audio_path, "rb") as handle:
+            frame_rate = handle.getframerate()
+            return handle.getnframes() / frame_rate if frame_rate else None
+    except (EOFError, OSError, wave.Error):
+        return None
 
 
 class _ModelFactory(Protocol):
@@ -144,6 +158,13 @@ class FasterWhisperTranscriptionProvider(TranscriptionProvider):
         factory = self._build_model_factory()
         device = self._auto_device()
         compute = self._auto_compute(device)
+        started = time.perf_counter()
+        log.info(
+            "whisper_model_loading",
+            model=self._model_name,
+            device=device,
+            compute_type=compute,
+        )
         try:
             model = factory(
                 self._model_name,
@@ -165,7 +186,11 @@ class FasterWhisperTranscriptionProvider(TranscriptionProvider):
                 raise
         self._resolved_device, self._resolved_compute = device, compute
         log.info(
-            "whisper_model_loaded", model=self._model_name, device=device, compute_type=compute
+            "whisper_model_loaded",
+            model=self._model_name,
+            device=device,
+            compute_type=compute,
+            duration_ms=_duration_ms(started),
         )
         return model
 
@@ -173,17 +198,48 @@ class FasterWhisperTranscriptionProvider(TranscriptionProvider):
     def _transcribe_sync(
         self, audio_path: str, language_hint: str | None, deadline: float
     ) -> TranscriptResult:
+        sync_started = time.perf_counter()
+        log.info("whisper_transcribe_sync_entered", audio_path=audio_path)
         if self._model is None:
             self._model = self._load_model()
+        else:
+            log.info(
+                "whisper_model_reusing",
+                model=self._model_name,
+                device=self._resolved_device,
+                compute_type=self._resolved_compute,
+            )
+        call_started = time.perf_counter()
+        log.info(
+            "whisper_model_transcribe_calling",
+            audio_path=audio_path,
+            beam_size=self._beam_size,
+            language=self._language or language_hint or None,
+        )
         segments_iter, info = self._model.transcribe(
             audio_path,
             beam_size=self._beam_size,
             language=self._language or language_hint or None,
             word_timestamps=True,
         )
+        log.info(
+            "whisper_transcribe_generator_created",
+            duration_ms=_duration_ms(call_started),
+            language=getattr(info, "language", None),
+        )
         segments: list[TranscriptSegment] = []
         confidences: list[float] = []
-        for seg in segments_iter:  # lazy generator: the actual work happens here
+        iterator = iter(segments_iter)
+        transcription_started = time.perf_counter()
+        while True:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"transcription exceeded {self._timeout:.0f}s")
+            if not segments:
+                log.info("whisper_waiting_for_first_segment", audio_path=audio_path)
+            try:
+                seg = next(iterator)  # lazy generator: the actual work happens here
+            except StopIteration:
+                break
             if time.monotonic() > deadline:
                 raise TimeoutError(f"transcription exceeded {self._timeout:.0f}s")
             words = None
@@ -211,13 +267,33 @@ class FasterWhisperTranscriptionProvider(TranscriptionProvider):
                     words=words,
                 )
             )
+            if len(segments) == 1:
+                log.info(
+                    "whisper_first_segment_received",
+                    start=segments[-1].start,
+                    end=segments[-1].end,
+                    text_length=len(segments[-1].text),
+                )
+            elif len(segments) % 10 == 0:
+                log.info("whisper_segments_received", segments=len(segments))
+        log.info(
+            "whisper_generator_exhausted",
+            segments=len(segments),
+            duration_ms=_duration_ms(transcription_started),
+        )
+        if not segments or not any(segment.text.strip() for segment in segments):
+            raise ExternalServiceError(
+                "Transcription completed but returned no speech segments.",
+                details={"audio_path": audio_path},
+            )
         overall = (sum(confidences) / len(confidences)) if confidences else None
         language = getattr(info, "language", None)
         log.info(
-            "whisper_transcription_complete",
+            "whisper_transcript_result_built",
             language=language,
             segments=len(segments),
             device=self._resolved_device,
+            duration_ms=_duration_ms(sync_started),
         )
         return TranscriptResult(language=language, segments=segments, confidence=overall)
 
@@ -225,6 +301,16 @@ class FasterWhisperTranscriptionProvider(TranscriptionProvider):
     async def transcribe(
         self, audio_key: str, *, language_hint: str | None = None
     ) -> TranscriptResult:
+        total_started = time.perf_counter()
+        log.info(
+            "whisper_provider_entered",
+            audio_key=audio_key,
+            model=self._model_name,
+            device=self._device,
+            compute_type=self._compute_type,
+        )
+        read_started = time.perf_counter()
+        log.info("whisper_storage_read_started", audio_key=audio_key)
         try:
             data = await self._storage.get(audio_key)
         except Exception as exc:
@@ -232,29 +318,81 @@ class FasterWhisperTranscriptionProvider(TranscriptionProvider):
                 "Failed to read audio for transcription.",
                 details={"audio_key": audio_key, "error": str(exc)},
             ) from exc
+        log.info(
+            "whisper_storage_read_complete",
+            audio_key=audio_key,
+            size_bytes=len(data),
+            duration_ms=_duration_ms(read_started),
+        )
+        if not data:
+            raise ExternalServiceError(
+                "Audio artifact was empty.",
+                details={"audio_key": audio_key},
+            )
 
         suffix = Path(audio_key).suffix or ".wav"
-        log.info(
-            "whisper_transcription_started", audio_key=audio_key, model=self._model_name
-        )
         with TemporaryDirectory() as tmp:
             audio_path = str(Path(tmp) / f"audio{suffix}")
+            write_started = time.perf_counter()
             await asyncio.to_thread(Path(audio_path).write_bytes, data)
+            temp_size = Path(audio_path).stat().st_size
+            log.info(
+                "whisper_temp_audio_written",
+                audio_key=audio_key,
+                path=audio_path,
+                size_bytes=temp_size,
+                wav_duration_seconds=_wav_duration_seconds(audio_path),
+                duration_ms=_duration_ms(write_started),
+            )
+            if temp_size <= 0:
+                raise ExternalServiceError(
+                    "Temporary audio file was empty.",
+                    details={"audio_key": audio_key, "path": audio_path},
+                )
             deadline = time.monotonic() + self._timeout
+            result: TranscriptResult | None = None
+            lock_acquired = False
             try:
                 # Serialize inference (a single CTranslate2 model is not safe for
                 # concurrent use) and bound it with a wall-clock timeout.
+                lock_wait_started = time.perf_counter()
+                log.info("whisper_waiting_for_transcription_lock", audio_key=audio_key)
                 async with self._lock:
-                    return await asyncio.wait_for(
+                    lock_acquired = True
+                    log.info(
+                        "whisper_transcription_lock_acquired",
+                        audio_key=audio_key,
+                        wait_duration_ms=_duration_ms(lock_wait_started),
+                    )
+                    thread_started = time.perf_counter()
+                    log.info("whisper_entering_to_thread", audio_key=audio_key)
+                    result = await asyncio.wait_for(
                         asyncio.to_thread(
                             self._transcribe_sync, audio_path, language_hint, deadline
                         ),
-                        timeout=self._timeout + 30.0,
+                        timeout=self._timeout,
+                    )
+                    log.info(
+                        "whisper_to_thread_returned",
+                        audio_key=audio_key,
+                        duration_ms=_duration_ms(thread_started),
                     )
             except TimeoutError as exc:
+                log.warning(
+                    "whisper_transcription_timeout",
+                    audio_key=audio_key,
+                    timeout_seconds=self._timeout,
+                )
                 raise ExternalServiceError(
                     "Transcription timed out.",
-                    details={"audio_key": audio_key, "timeout_seconds": self._timeout},
+                    details={
+                        "audio_key": audio_key,
+                        "timeout_seconds": self._timeout,
+                        "note": (
+                            "The worker thread may finish later if faster-whisper "
+                            "was blocked inside native inference."
+                        ),
+                    },
                 ) from exc
             except ConfigurationError:
                 raise
@@ -265,3 +403,16 @@ class FasterWhisperTranscriptionProvider(TranscriptionProvider):
                     "Transcription failed.",
                     details={"audio_key": audio_key, "error": str(exc)},
                 ) from exc
+            finally:
+                if lock_acquired:
+                    log.info("whisper_transcription_lock_released", audio_key=audio_key)
+
+            assert result is not None
+            log.info(
+                "whisper_provider_returning",
+                audio_key=audio_key,
+                segments=len(result.segments),
+                language=result.language,
+                total_duration_ms=_duration_ms(total_started),
+            )
+            return result

@@ -45,6 +45,14 @@ class WorkflowRepository(abc.ABC):
         """Return the project ids of all non-terminal workflows (for recovery)."""
 
     @abc.abstractmethod
+    async def list_all(self) -> list[Workflow]:
+        """Return every persisted workflow, including terminal jobs."""
+
+    @abc.abstractmethod
+    async def load_by_job_id(self, job_id: str) -> Workflow | None:
+        """Load a workflow by its durable top-level job id."""
+
+    @abc.abstractmethod
     async def delete(self, project_id: str) -> None:
         """Delete a project's workflow (idempotent)."""
 
@@ -62,6 +70,8 @@ class QueueStats:
     dead: int = 0
     blocked: int = 0
     cancelled: int = 0
+    cancel_requested: int = 0
+    stale: int = 0
     active_workflows: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +85,8 @@ class QueueStats:
             "dead": self.dead,
             "blocked": self.blocked,
             "cancelled": self.cancelled,
+            "cancel_requested": self.cancel_requested,
+            "stale": self.stale,
             "active_workflows": self.active_workflows,
         }
 
@@ -104,6 +116,14 @@ class JobQueue(abc.ABC):
     @abc.abstractmethod
     async def requeue(self, job: Job, *, reason: str) -> None:
         """Return a job to the runnable pool (e.g. after worker loss)."""
+
+    @abc.abstractmethod
+    async def heartbeat(self, job: Job, worker_id: str) -> None:
+        """Persist a running job heartbeat and renew its local lease."""
+
+    @abc.abstractmethod
+    async def cancel(self, job: Job, *, reason: str) -> None:
+        """Acknowledge cooperative cancellation at a safe execution point."""
 
     @abc.abstractmethod
     async def stats(self) -> QueueStats:

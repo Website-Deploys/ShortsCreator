@@ -55,13 +55,14 @@ from olympus.virality.analyzers import (
     ReplayPotentialAnalyzer,
     RetentionAnalyzer,
     ShareabilityAnalyzer,
+    TrendResearchAnalyzer,
     ViralitySummaryAnalyzer,
 )
 
 log = get_logger(__name__)
 
 #: Bumped when the *set* or *ordering* of virality stages changes.
-VIRALITY_PIPELINE_VERSION = "1"
+VIRALITY_PIPELINE_VERSION = "2"
 
 #: Retry budget for stages that raise or return FAILED. UNAVAILABLE is never
 #: retried (it is the truth about the evidence, not a failure).
@@ -71,13 +72,14 @@ ViralityProgressCallback = Callable[[ViralityAnalysis], None]
 
 
 def build_default_virality_analyzers() -> list[ViralityAnalyzer]:
-    """Return the fifteen virality analyzers in pipeline order.
+    """Return the sixteen virality analyzers in pipeline order.
 
     The order mirrors :data:`VIRALITY_STAGE_ORDER`; the pipeline validates this on
     construction so the two can never silently drift apart.
     """
 
     return [
+        TrendResearchAnalyzer(),
         HookStrengthAnalyzer(),
         CuriosityGapAnalyzer(),
         EmotionalImpactAnalyzer(),
@@ -194,6 +196,7 @@ class ViralityPipeline:
     async def _load_or_init(self, project_id: str) -> ViralityAnalysis:
         existing = await self._repo.load(project_id)
         if existing is not None:
+            existing.pipeline_version = VIRALITY_PIPELINE_VERSION
             present = {s.stage for s in existing.stages}
             for name in VIRALITY_STAGE_ORDER:
                 if name not in present:

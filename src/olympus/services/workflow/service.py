@@ -33,6 +33,9 @@ from olympus.domain.entities.workflow import (
     WorkflowEvent,
     WorkflowStatus,
 )
+from olympus.jobs.checkpoints import CheckpointValidator
+from olympus.jobs.contracts import workflow_to_durable_job
+from olympus.jobs.locks import LocalJobLockManager
 from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.platform.logging import get_logger
 from olympus.utils import new_id, utc_now
@@ -59,11 +62,23 @@ class WorkflowService:
         concurrency: int = 2,
         max_attempts: int = 3,
         backoff_base_seconds: float = 2.0,
+        heartbeat_interval_seconds: float = 10.0,
+        stale_after_seconds: float = 120.0,
+        run_in_process: bool = True,
+        worker_poll_interval_seconds: float = 0.02,
+        lock_manager: LocalJobLockManager | None = None,
+        checkpoint_validator: CheckpointValidator | None = None,
+        max_logs_tail_chars: int = 8000,
     ) -> None:
         self._repo = repository
         self._projects = project_repo
         self._runners = runners
         self._max_attempts = max_attempts
+        self._stale_after_seconds = stale_after_seconds
+        self._run_in_process = run_in_process
+        self._leases = lock_manager
+        self._checkpoints = checkpoint_validator
+        self._max_logs_tail_chars = max_logs_tail_chars
 
         self._workflows: dict[str, Workflow] = {}
         self._lock = asyncio.Lock()
@@ -76,6 +91,8 @@ class WorkflowService:
             scheduler=self._scheduler,
             repository=repository,
             event_bus=self._bus,
+            lock_manager=lock_manager,
+            stale_after_seconds=stale_after_seconds,
         )
         self._pool = WorkerPool(
             queue=self._queue,
@@ -85,6 +102,10 @@ class WorkflowService:
             event_bus=self._bus,
             workflows=self._workflows,
             concurrency=concurrency,
+            heartbeat_interval_seconds=heartbeat_interval_seconds,
+            worker_timeout_seconds=stale_after_seconds,
+            idle_sleep=worker_poll_interval_seconds,
+            checkpoint_validator=checkpoint_validator,
         )
 
     # -- event subscription (plugins) ----------------------------------------
@@ -92,14 +113,24 @@ class WorkflowService:
         self._bus.subscribe(handler)
 
     # -- pool lifecycle -------------------------------------------------------
-    def start_pool(self) -> None:
+    def start_pool(self, *, force: bool = False) -> bool:
+        if not self._run_in_process and not force:
+            return False
         self._pool.start()
+        return True
 
     async def stop_pool(self) -> None:
         await self._pool.stop()
 
     # -- workflow construction ------------------------------------------------
-    def _build_workflow(self, project: Project) -> Workflow:
+    def _build_workflow(
+        self,
+        project: Project,
+        *,
+        requested_by: str = "api",
+        source: str = "project",
+        idempotency_key: str | None = None,
+    ) -> Workflow:
         now = utc_now()
         workflow_id = new_id("wf")
         jobs = [
@@ -124,6 +155,9 @@ class WorkflowService:
             created_at=now,
             updated_at=now,
             jobs=jobs,
+            requested_by=requested_by,
+            source=source,
+            idempotency_key=idempotency_key or f"project_pipeline:{project.id}",
         )
 
     async def _get_cached_or_load(self, project_id: str) -> Workflow | None:
@@ -136,27 +170,68 @@ class WorkflowService:
         return wf
 
     # -- start / resume -------------------------------------------------------
-    async def start(self, project: Project, *, restart: bool = False) -> Workflow:
+    async def start(
+        self,
+        project: Project,
+        *,
+        restart: bool = False,
+        requested_by: str = "api",
+        source: str = "project",
+        idempotency_key: str | None = None,
+    ) -> Workflow:
         """Create (or resume) the project's workflow and begin execution."""
 
         events: list[WorkflowEvent] = []
-        async with self._lock:
-            wf = await self._get_cached_or_load(project.id)
-            if wf is None or restart:
-                wf = self._build_workflow(project)
-            self._workflows[project.id] = wf
-            if wf.status in (WorkflowStatus.COMPLETED, WorkflowStatus.FAILED):
-                return wf  # use retry_workflow to re-run a finished workflow
-            wf.status = WorkflowStatus.RUNNING
-            wf.updated_at = utc_now()
-            self._scheduler.reconcile(wf, now=utc_now())
-            ev = WorkflowEvent(
-                ts=utc_now(), type=EventType.WORKFLOW_STARTED, message="workflow started"
-            )
-            wf.record(ev)
-            events.append(ev)
-            await self._repo.save(wf)
-        self._pool.start()
+        creation_lock: tuple[str, str] | None = None
+        try:
+            async with self._lock:
+                wf = await self._get_cached_or_load(project.id)
+                if wf is None or restart:
+                    candidate = self._build_workflow(
+                        project,
+                        requested_by=requested_by,
+                        source=source,
+                        idempotency_key=idempotency_key,
+                    )
+                    if self._leases is not None:
+                        lock_key = f"create:project_pipeline:{project.id}"
+                        acquired = await asyncio.to_thread(
+                            self._leases.try_acquire,
+                            lock_key,
+                            candidate.workflow_id,
+                            stale_after_seconds=self._stale_after_seconds,
+                        )
+                        if not acquired:
+                            concurrent = await self._repo.load(project.id)
+                            if concurrent is not None:
+                                self._workflows[project.id] = concurrent
+                                return concurrent
+                            raise ValidationError(
+                                "A project pipeline job is already being created.",
+                                details={"project_id": project.id},
+                            )
+                        creation_lock = (lock_key, candidate.workflow_id)
+                    wf = candidate
+                self._workflows[project.id] = wf
+                if wf.status in (
+                    WorkflowStatus.COMPLETED,
+                    WorkflowStatus.FAILED,
+                    WorkflowStatus.CANCELLED,
+                ):
+                    return wf  # use retry_workflow to re-run a finished workflow
+                wf.status = WorkflowStatus.RUNNING
+                wf.updated_at = utc_now()
+                self._scheduler.reconcile(wf, now=utc_now())
+                ev = WorkflowEvent(
+                    ts=utc_now(), type=EventType.WORKFLOW_STARTED, message="workflow started"
+                )
+                wf.record(ev)
+                events.append(ev)
+                await self._repo.save(wf)
+        finally:
+            if self._leases is not None and creation_lock is not None:
+                await asyncio.to_thread(self._leases.release, *creation_lock)
+        self.start_pool()
         await self._emit(events)
         return wf
 
@@ -164,8 +239,22 @@ class WorkflowService:
         events: list[WorkflowEvent] = []
         async with self._lock:
             wf = await self._require(project_id)
-            if wf.status is WorkflowStatus.PAUSED:
+            if any(job.status is JobStatus.CANCEL_REQUESTED for job in wf.jobs):
+                raise ValidationError(
+                    "Cancellation is still pending; resume after the active stage stops.",
+                    details={"project_id": project_id},
+                )
+            if wf.status in (
+                WorkflowStatus.PAUSED,
+                WorkflowStatus.CANCELLED,
+                WorkflowStatus.FAILED,
+            ):
+                if wf.status in (WorkflowStatus.CANCELLED, WorkflowStatus.FAILED):
+                    await self._prepare_resume(wf)
                 wf.status = WorkflowStatus.RUNNING
+                wf.cancellation_requested = False
+                wf.cancellation_requested_at = None
+                wf.cancellation_reason = None
                 wf.updated_at = utc_now()
                 self._scheduler.reconcile(wf, now=utc_now())
                 ev = WorkflowEvent(
@@ -174,7 +263,7 @@ class WorkflowService:
                 wf.record(ev)
                 events.append(ev)
                 await self._repo.save(wf)
-        self._pool.start()
+        self.start_pool()
         await self._emit(events)
         return await self._require_cached(project_id)
 
@@ -196,13 +285,24 @@ class WorkflowService:
                 return wf
             now = utc_now()
             wf.status = WorkflowStatus.CANCELLED
+            wf.cancellation_requested = True
+            wf.cancellation_requested_at = now
+            wf.cancellation_reason = "cancelled by operator"
             for job in wf.jobs:
                 if not job.is_terminal:
-                    job.status = JobStatus.CANCELLED
-                    job.finished_at = now
+                    job.cancellation_requested = True
+                    job.cancellation_requested_at = now
+                    job.cancellation_reason = wf.cancellation_reason
+                    if job.status is JobStatus.RUNNING:
+                        job.status = JobStatus.CANCEL_REQUESTED
+                    else:
+                        job.status = JobStatus.CANCELLED
+                        job.finished_at = now
             wf.updated_at = now
             ev = WorkflowEvent(
-                ts=now, type=EventType.WORKFLOW_CANCELLED, message="workflow cancelled"
+                ts=now,
+                type=EventType.WORKFLOW_CANCELLED,
+                message="workflow cancellation requested",
             )
             wf.record(ev)
             events.append(ev)
@@ -264,7 +364,7 @@ class WorkflowService:
                 )
             )
             await self._repo.save(wf)
-        self._pool.start()
+        self.start_pool()
         return await self._require_cached(project_id)
 
     async def retry_workflow(self, project_id: str) -> Workflow:
@@ -289,7 +389,7 @@ class WorkflowService:
                 )
             )
             await self._repo.save(wf)
-        self._pool.start()
+        self.start_pool()
         return await self._require_cached(project_id)
 
     @staticmethod
@@ -301,6 +401,10 @@ class WorkflowService:
         job.started_at = None
         job.available_at = None
         job.worker_id = None
+        job.heartbeat_at = None
+        job.cancellation_requested = False
+        job.cancellation_requested_at = None
+        job.cancellation_reason = None
 
     # -- recovery -------------------------------------------------------------
     async def recover(self) -> int:
@@ -317,11 +421,65 @@ class WorkflowService:
                 wf = await self._repo.load(project_id)
                 if wf is None:
                     continue
+                project = await self._projects.get(project_id)
+                if project is not None:
+                    await self._validate_completed_checkpoints(wf, project)
                 for job in wf.jobs:
-                    if job.status is JobStatus.RUNNING:
+                    if job.status in {JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED} and (
+                        wf.cancellation_requested or job.cancellation_requested
+                    ):
+                        now = utc_now()
+                        job.status = JobStatus.CANCELLED
+                        job.finished_at = now
+                        job.worker_id = None
+                        job.heartbeat_at = now
+                        wf.status = WorkflowStatus.CANCELLED
+                        wf.stale_running_detected = True
+                        wf.recovery_reason = (
+                            f"Stage {job.stage} cancellation finalized after restart."
+                        )
+                        wf.updated_at = now
+                        if self._leases is not None:
+                            await asyncio.to_thread(
+                                self._leases.force_release,
+                                f"job:{job.job_id}",
+                            )
+                        recovered += 1
+                        wf.record(
+                            WorkflowEvent(
+                                ts=now,
+                                type=EventType.JOB_CANCELLED,
+                                message=(
+                                    f"job {job.stage} cancellation finalized after restart"
+                                ),
+                                stage=job.stage,
+                                job_id=job.job_id,
+                            )
+                        )
+                    elif job.status is JobStatus.RUNNING:
+                        job.status = JobStatus.STALE
+                        wf.stale_running_detected = True
+                        wf.recovery_reason = (
+                            f"Stage {job.stage} lost its in-process worker during restart."
+                        )
+                        wf.record(
+                            WorkflowEvent(
+                                ts=utc_now(),
+                                type=EventType.JOB_STALE,
+                                message=f"job {job.stage} marked stale after restart",
+                                stage=job.stage,
+                                job_id=job.job_id,
+                            )
+                        )
+                        if self._leases is not None:
+                            await asyncio.to_thread(
+                                self._leases.force_release,
+                                f"job:{job.job_id}",
+                            )
                         job.status = JobStatus.READY
                         job.worker_id = None
                         job.started_at = None
+                        job.heartbeat_at = None
                         recovered += 1
                         wf.record(
                             WorkflowEvent(
@@ -335,13 +493,68 @@ class WorkflowService:
                 self._workflows[project_id] = wf
                 await self._repo.save(wf)
         if self._workflows:
-            self._pool.start()
+            self.start_pool()
         log.info("workflow_recovery", recovered_jobs=recovered, workflows=len(self._workflows))
         return recovered
 
     # -- read -----------------------------------------------------------------
     async def get(self, project_id: str) -> Workflow | None:
         return await self._get_cached_or_load(project_id)
+
+    async def list_jobs(
+        self,
+        *,
+        project_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        persisted = await self._repo.list_all()
+        by_id = {item.workflow_id: item for item in persisted}
+        by_id.update({item.workflow_id: item for item in self._workflows.values()})
+        workflows = sorted(by_id.values(), key=lambda item: item.created_at, reverse=True)
+        jobs = [
+            workflow_to_durable_job(item, max_logs_tail_chars=self._max_logs_tail_chars)
+            for item in workflows
+            if project_id is None or item.project_id == project_id
+        ]
+        return [item for item in jobs if status is None or item["status"] == status]
+
+    async def get_durable_job(self, job_id: str) -> dict[str, Any] | None:
+        workflow = self._cached_by_job_id(job_id) or await self._repo.load_by_job_id(job_id)
+        if workflow is None:
+            return None
+        return workflow_to_durable_job(
+            workflow,
+            max_logs_tail_chars=self._max_logs_tail_chars,
+        )
+
+    async def cancel_by_job_id(self, job_id: str) -> dict[str, Any]:
+        workflow = await self._require_job(job_id)
+        updated = await self.cancel(workflow.project_id)
+        return workflow_to_durable_job(updated, max_logs_tail_chars=self._max_logs_tail_chars)
+
+    async def retry_by_job_id(self, job_id: str) -> dict[str, Any]:
+        workflow = await self._require_job(job_id)
+        updated = await self.retry_workflow(workflow.project_id)
+        return workflow_to_durable_job(updated, max_logs_tail_chars=self._max_logs_tail_chars)
+
+    async def resume_by_job_id(self, job_id: str) -> dict[str, Any]:
+        workflow = await self._require_job(job_id)
+        updated = await self.resume(workflow.project_id)
+        return workflow_to_durable_job(updated, max_logs_tail_chars=self._max_logs_tail_chars)
+
+    async def durable_events(self, job_id: str) -> list[dict[str, Any]] | None:
+        workflow = self._cached_by_job_id(job_id) or await self._repo.load_by_job_id(job_id)
+        return [event.to_dict() for event in workflow.history] if workflow is not None else None
+
+    async def durable_logs(self, job_id: str) -> list[dict[str, Any]] | None:
+        workflow = self._cached_by_job_id(job_id) or await self._repo.load_by_job_id(job_id)
+        if workflow is None:
+            return None
+        return [
+            {**line.to_dict(), "stage": job.stage, "stage_id": job.job_id}
+            for job in workflow.jobs
+            for line in job.logs
+        ]
 
     async def history(self, project_id: str) -> list[WorkflowEvent] | None:
         wf = await self._get_cached_or_load(project_id)
@@ -388,7 +601,8 @@ class WorkflowService:
         waited = 0.0
         step = 0.02
         while waited < timeout:
-            wf = await self._get_cached_or_load(project_id)
+            async with self._lock:
+                wf = await self._get_cached_or_load(project_id)
             if wf is not None and wf.status in (
                 WorkflowStatus.COMPLETED,
                 WorkflowStatus.FAILED,
@@ -411,6 +625,68 @@ class WorkflowService:
         if wf is None:
             raise NotFoundError("No workflow for this project.", details={"id": project_id})
         return wf
+
+    async def _require_job(self, job_id: str) -> Workflow:
+        workflow = self._cached_by_job_id(job_id) or await self._repo.load_by_job_id(job_id)
+        if workflow is None:
+            raise NotFoundError("Durable job not found.", details={"job_id": job_id})
+        self._workflows[workflow.project_id] = workflow
+        return workflow
+
+    def _cached_by_job_id(self, job_id: str) -> Workflow | None:
+        return next(
+            (
+                workflow
+                for workflow in self._workflows.values()
+                if workflow.workflow_id == job_id
+            ),
+            None,
+        )
+
+    async def _prepare_resume(self, workflow: Workflow) -> None:
+        project = await self._projects.get(workflow.project_id)
+        if project is not None:
+            await self._validate_completed_checkpoints(workflow, project)
+        for job in workflow.jobs:
+            if job.status in (
+                JobStatus.CANCELLED,
+                JobStatus.CANCEL_REQUESTED,
+                JobStatus.STALE,
+                JobStatus.FAILED,
+                JobStatus.DEAD,
+                JobStatus.BLOCKED,
+            ):
+                self._reset_job(job)
+        self._scheduler.reconcile(workflow, now=utc_now())
+
+    async def _validate_completed_checkpoints(
+        self,
+        workflow: Workflow,
+        project: Project,
+    ) -> None:
+        if self._checkpoints is None:
+            return
+        invalid_at: int | None = None
+        for index, job in enumerate(workflow.jobs):
+            if job.status is not JobStatus.COMPLETED:
+                continue
+            checkpoint = (
+                await self._checkpoints.validate_existing(job, workflow.project_id)
+                if job.checkpoint
+                else await self._checkpoints.inspect(project, job)
+            )
+            job.checkpoint = checkpoint
+            if not checkpoint.get("valid"):
+                invalid_at = index
+                warning = f"Checkpoint for {job.stage} is missing, stale, or invalid."
+                job.warnings.append(warning)
+                workflow.result_warnings.append(warning)
+                break
+        if invalid_at is None:
+            return
+        for job in workflow.jobs[invalid_at:]:
+            self._reset_job(job)
+        workflow.recovery_reason = f"Resuming from {workflow.jobs[invalid_at].stage}."
 
     async def _emit(self, events: list[WorkflowEvent]) -> None:
         for event in events:

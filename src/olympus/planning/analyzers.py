@@ -25,7 +25,12 @@ from olympus.domain.contracts.planning import (
     PlanningProgressReporter,
     PlanningStageContext,
 )
+from olympus.integration import clip_intelligence as CI  # noqa: N812 (module alias is intentional)
+from olympus.personalization import apply as P  # noqa: N812 (module alias is intentional)
 from olympus.planning import scoring as S  # noqa: N812 (module alias is intentional)
+from olympus.planning import v2 as V2  # noqa: N812 (module alias is intentional)
+from olympus.platform.config import get_settings
+from olympus.trends import build_editing_trend_guidance
 
 # Tunable, transparent thresholds.
 MIN_CLIP_SECONDS = 8.0
@@ -107,12 +112,31 @@ def _platform_suitability(duration: float, vertical: bool) -> dict[str, Any]:
     return out
 
 
+def _candidate_coverage(candidates: list[dict[str, Any]], duration: float) -> dict[str, Any]:
+    """Summarise where candidate windows landed across the source timeline."""
+
+    if not candidates or duration <= 0:
+        return {"coverage_ratio": 0.0, "first_timestamp": None, "last_timestamp": None}
+    starts = [S.as_float(c.get("raw_start")) for c in candidates]
+    ends = [S.as_float(c.get("raw_end")) for c in candidates]
+    covered = sum(max(0.0, e - s) for s, e in zip(starts, ends, strict=False))
+    return {
+        "coverage_ratio": S.round3(min(1.0, covered / duration)),
+        "first_timestamp": S.round3(min(starts)),
+        "last_timestamp": S.round3(max(ends)),
+        "source_count": {
+            source: sum(1 for c in candidates if c.get("source") == source)
+            for source in sorted({S.as_str(c.get("source")) for c in candidates})
+        },
+    }
+
+
 # --------------------------------------------------------------------------- #
 # 1. Candidate Generation - find clip-worthy moments from upstream signals.
 # --------------------------------------------------------------------------- #
 class CandidateGenerationAnalyzer(PlanningAnalyzer):
     name = "candidate_generation"
-    version = "1"
+    version = "4"
 
     async def analyze(
         self, ctx: PlanningStageContext, report: PlanningProgressReporter
@@ -120,6 +144,7 @@ class CandidateGenerationAnalyzer(PlanningAnalyzer):
         summary = ctx.virality_data("virality_summary") or {}
         heatmap = S.as_list(summary.get("heatmap"))
         payoffs = S.as_list((ctx.story_data("payoff_detection") or {}).get("relationships"))
+        story_v2 = ctx.story_data("story_analysis_v2") or {}
         hook = ctx.story_data("hook_detection") or {}
         segments = ctx.transcript_segments() or []
 
@@ -127,6 +152,21 @@ class CandidateGenerationAnalyzer(PlanningAnalyzer):
             return PlanningOutcome.unavailable(_NO_SIGNALS)
 
         duration = ctx.video_duration() or (segments and _seg_end(segments[-1])) or 0.0
+        strategy = V2.clip_count_strategy(duration, ctx.project.desired_clip_count)
+        transcript_text = " ".join(_seg_text(seg) for seg in segments)
+        trend_stage = ctx.virality_data("trend_research") or {}
+        trend_snapshot = trend_stage.get("internet_trend_research_v2")
+        viral_research = (
+            trend_snapshot if isinstance(trend_snapshot, dict) else {}
+        )
+        detected_niche = viral_research.get("detected_niche")
+        content_niche = (
+            detected_niche
+            if isinstance(detected_niche, dict)
+            else V2.detect_content_niche(transcript_text, ctx.project.content_category)
+        )
+        if not viral_research:
+            viral_research = V2.viral_research_snapshot(content_niche)
         candidates: list[dict[str, Any]] = []
 
         # (a) High-heat regions from the virality heatmap.
@@ -136,6 +176,7 @@ class CandidateGenerationAnalyzer(PlanningAnalyzer):
                     "raw_start": run["start"],
                     "raw_end": run["end"],
                     "source": "heat_region",
+                    "candidate_type": "heat_region",
                     "peak_heat": S.round3(run["peak"]),
                     "evidence": [
                         {
@@ -157,6 +198,7 @@ class CandidateGenerationAnalyzer(PlanningAnalyzer):
                         "raw_start": max(0.0, s - 1.0),
                         "raw_end": e,
                         "source": "payoff_arc",
+                        "candidate_type": "payoff_arc",
                         "peak_heat": None,
                         "evidence": [
                             {
@@ -168,6 +210,16 @@ class CandidateGenerationAnalyzer(PlanningAnalyzer):
                     }
                 )
 
+        # (c) Story V2 complete micro-stories. These become first-class
+        # candidates when available, but legacy signals remain valid fallback.
+        story_candidates = []
+        if CI.story_v2_available(story_v2):
+            for story in CI.story_recommendations(story_v2)[:20]:
+                candidate = CI.story_candidate(story, story_v2)
+                if candidate["raw_end"] > candidate["raw_start"]:
+                    story_candidates.append(candidate)
+            candidates.extend(story_candidates)
+
         # (c) The opening hook (a natural self-contained clip start).
         if hook.get("has_hook"):
             window = S.as_dict(hook.get("window"))
@@ -177,6 +229,7 @@ class CandidateGenerationAnalyzer(PlanningAnalyzer):
                     "raw_start": hs,
                     "raw_end": hs + 30.0,
                     "source": "hook",
+                    "candidate_type": "hook",
                     "peak_heat": None,
                     "evidence": [
                         {"type": "hook", "timestamp": hs, "detail": S.as_str(hook.get("why"))}
@@ -184,16 +237,79 @@ class CandidateGenerationAnalyzer(PlanningAnalyzer):
                 }
             )
 
+        # (d) V2 transcript windows across the full video, used when sparse
+        # heat/payoff/hook signals would otherwise collapse the output to one
+        # clip. These still come from real transcript spans and carry evidence.
+        if segments:
+            candidates.extend(
+                V2.transcript_window_candidates(
+                    segments,
+                    duration_seconds=float(duration),
+                    target=strategy.target,
+                    existing=candidates,
+                    strategy=strategy,
+                    research_snapshot=viral_research,
+                    content_niche=content_niche,
+                )
+            )
+
+        candidates = [
+            V2.enrich_candidate(
+                candidate,
+                segments,
+                viral_research,
+                content_niche,
+                float(duration),
+            )
+            for candidate in candidates
+        ]
+        if CI.story_v2_available(story_v2):
+            for candidate in candidates:
+                guidance = S.as_dict(candidate.get("story_v2_guidance"))
+                if not guidance.get("story_guidance_used"):
+                    guidance = CI.story_guidance_for_window(
+                        story_v2,
+                        S.as_float(candidate.get("raw_start")),
+                        S.as_float(candidate.get("raw_end")),
+                    )
+                    if guidance.get("story_guidance_used"):
+                        candidate["story_v2_guidance"] = guidance
+                        candidate["story_id"] = guidance.get("story_id")
+                        candidate.setdefault("evidence", []).append(
+                            {
+                                "type": "story_analysis_v2",
+                                "timestamp": guidance.get("recommended_start"),
+                                "detail": "Candidate overlaps a Story V2 micro-story",
+                            }
+                        )
+
         report(1.0)
         return PlanningOutcome.completed(
             {
                 "candidate_count": len(candidates),
                 "candidates": candidates,
+                "story_candidate_count": len(story_candidates),
+                "story_guidance_available": CI.story_v2_available(story_v2),
                 "video_duration": S.round3(float(duration)),
+                "content_niche": content_niche,
+                "viral_research_snapshot": viral_research,
+                "internet_trend_research_v2": viral_research,
+                "trend_guidance_source": (
+                    "virality_v2_trend_research"
+                    if isinstance(trend_snapshot, dict)
+                    else "planning_compatibility_fallback"
+                ),
+                "internet_research_available": viral_research.get(
+                    "internet_research_available", False
+                ),
                 "thresholds": {"heat_threshold": HEAT_THRESHOLD},
+                "target_clip_strategy": V2.strategy_dict(strategy),
+                "coverage": _candidate_coverage(candidates, float(duration)),
                 "note": (
                     "Candidates are clip-worthy moments located from the virality "
-                    "heatmap, story payoff arcs, and the opening hook."
+                    "heatmap, story payoff arcs, the opening hook, and V2 multi-pass "
+                    "transcript analysis across the full video, then enriched with "
+                    "niche, research fallback, hook, story, ending, and trend metadata."
                     if candidates
                     else "No region met the heat threshold and no self-contained arcs "
                     "or hook were found, so no candidates were proposed."
@@ -207,7 +323,7 @@ class CandidateGenerationAnalyzer(PlanningAnalyzer):
 # --------------------------------------------------------------------------- #
 class BoundaryRefinementAnalyzer(PlanningAnalyzer):
     name = "boundary_refinement"
-    version = "1"
+    version = "3"
     depends_on = ("candidate_generation",)
 
     async def analyze(
@@ -225,7 +341,21 @@ class BoundaryRefinementAnalyzer(PlanningAnalyzer):
 
         refined: list[dict[str, Any]] = []
         for cand in candidates:
-            start, end = self._snap(cand["raw_start"], cand["raw_end"], segments, duration)
+            original_start = S.as_float(cand.get("raw_start"))
+            original_end = S.as_float(cand.get("raw_end"))
+            raw_start, raw_end = original_start, original_end
+            story_guidance = S.as_dict(cand.get("story_v2_guidance"))
+            story_boundary_used = False
+            if story_guidance.get("story_guidance_used") is True:
+                story_start = CI.as_float(story_guidance.get("recommended_start"), raw_start)
+                story_end = CI.as_float(story_guidance.get("recommended_end"), raw_end)
+                if story_end > story_start:
+                    raw_start, raw_end = story_start, story_end
+                    story_boundary_used = True
+            start, end = self._snap(raw_start, raw_end, segments, duration)
+            boundary_optimization = V2.optimize_boundaries(start, end, segments, float(duration))
+            start = S.as_float(boundary_optimization.get("optimized_start"), start)
+            end = S.as_float(boundary_optimization.get("optimized_end"), end)
             if end - start < MIN_CLIP_SECONDS:
                 continue  # too short to be a viable Short after snapping
             refined.append(
@@ -238,9 +368,22 @@ class BoundaryRefinementAnalyzer(PlanningAnalyzer):
                     "end_frame": round(end * fps),
                     "fps": fps,
                     "boundary_basis": (
-                        "snapped to transcript sentence boundaries"
-                        if segments
-                        else "raw candidate boundaries (no transcript to snap to)"
+                        "Story V2 boundary, then snapped to transcript sentence boundaries"
+                        if story_boundary_used and segments
+                        else (
+                            "snapped to transcript sentence boundaries"
+                            if segments
+                            else "raw candidate boundaries (no transcript to snap to)"
+                        )
+                    ),
+                    "boundary_optimization": boundary_optimization,
+                    "planning_story_integration": CI.build_planning_story_integration(
+                        cand,
+                        original_start=original_start,
+                        original_end=original_end,
+                        final_start=start,
+                        final_end=end,
+                        boundary_used=story_boundary_used,
                     ),
                 }
             )
@@ -287,7 +430,7 @@ class BoundaryRefinementAnalyzer(PlanningAnalyzer):
 # --------------------------------------------------------------------------- #
 class ClipScoringAnalyzer(PlanningAnalyzer):
     name = "clip_scoring"
-    version = "1"
+    version = "5"
     depends_on = ("boundary_refinement",)
 
     async def analyze(
@@ -300,16 +443,48 @@ class ClipScoringAnalyzer(PlanningAnalyzer):
             )
         candidates = S.as_list(refine.get("candidates"))
         signals = _gather_signals(ctx)
+        personalization_settings = get_settings().creator_personalization
         scored: list[dict[str, Any]] = []
         for cand in candidates:
             scores, confidence, evidence = _score_window(cand["start"], cand["end"], signals)
+            story_guidance = S.as_dict(cand.get("story_v2_guidance"))
+            story_used = story_guidance.get("story_guidance_used") is True
+            if story_used:
+                scores = CI.apply_story_scores(scores, story_guidance)
+                evidence.append(
+                    {
+                        "type": "story_analysis_v2",
+                        "detail": (
+                            "Story V2 adjusted completeness/payoff/context scores "
+                            f"for {story_guidance.get('story_id')}"
+                        ),
+                    }
+                )
+            planning_personalization = P.empty_application()
+            if personalization_settings.apply_to_planning:
+                scores, planning_personalization = P.apply_planning_personalization(
+                    scores,
+                    cand,
+                    S.as_dict(signals.get("personalization_directives_v2")) or None,
+                    max_score_delta=personalization_settings.max_score_delta,
+                )
+                if planning_personalization.get("applied"):
+                    evidence.append(
+                        {
+                            "type": "creator_personalization_v2",
+                            "detail": (
+                                "bounded profile preferences adjusted candidate scoring"
+                            ),
+                        }
+                    )
             scored.append(
                 {
                     **cand,
                     "scores": scores,
                     "quality_score": S.round3(S.compute_overall(scores)),
-                    "confidence": S.round3(confidence),
+                    "confidence": S.round3(min(1.0, confidence + (0.08 if story_used else 0.0))),
                     "score_evidence": evidence,
+                    "planning_personalization": planning_personalization,
                 }
             )
         report(1.0)
@@ -331,7 +506,7 @@ class ClipScoringAnalyzer(PlanningAnalyzer):
 # --------------------------------------------------------------------------- #
 class DuplicateDetectionAnalyzer(PlanningAnalyzer):
     name = "duplicate_detection"
-    version = "1"
+    version = "4"
     depends_on = ("clip_scoring",)
 
     async def analyze(
@@ -351,13 +526,25 @@ class DuplicateDetectionAnalyzer(PlanningAnalyzer):
             cs, ce = S.as_float(cand.get("start")), S.as_float(cand.get("end"))
             clash = None
             best_iou = 0.0
+            best_similarity = 0.0
             for keep in survivors:
                 iou = S.temporal_iou(
                     cs, ce, S.as_float(keep.get("start")), S.as_float(keep.get("end"))
                 )
                 if iou > best_iou:
                     best_iou, clash = iou, keep
-            if clash is not None and best_iou >= DUPLICATE_IOU:
+                similarity = _candidate_similarity(cand, keep)
+                if similarity > best_similarity:
+                    best_similarity, clash = similarity, keep
+            if clash is not None and (best_iou >= DUPLICATE_IOU or best_similarity >= 0.82):
+                reason = (
+                    f"overlaps a higher-scoring clip by IoU {S.round3(best_iou)}"
+                    if best_iou >= DUPLICATE_IOU
+                    else (
+                        "repeats a higher-scoring clip by transcript similarity "
+                        f"{S.round3(best_similarity)}"
+                    )
+                )
                 duplicates.append(
                     {
                         "id": S.plan_id(cs, ce),
@@ -365,13 +552,16 @@ class DuplicateDetectionAnalyzer(PlanningAnalyzer):
                             S.as_float(clash["start"]), S.as_float(clash["end"])
                         ),
                         "iou": S.round3(best_iou),
-                        "reason": f"overlaps a higher-scoring clip by IoU {S.round3(best_iou)}",
+                        "similarity": S.round3(best_similarity),
+                        "reason": reason,
                     }
                 )
+                clash["duplicate_group"] = clash.get("duplicate_group") or clash.get("id")
                 clash.setdefault("alternatives", []).append(
                     {
                         "id": S.plan_id(cs, ce),
                         "iou": S.round3(best_iou),
+                        "similarity": S.round3(best_similarity),
                         "quality_score": S.as_float(cand.get("quality_score")),
                     }
                 )
@@ -386,6 +576,14 @@ class DuplicateDetectionAnalyzer(PlanningAnalyzer):
                 "candidates": survivors,
                 "duplicates": duplicates,
                 "iou_threshold": DUPLICATE_IOU,
+                "repetition_control": {
+                    "temporal_iou_threshold": DUPLICATE_IOU,
+                    "transcript_similarity_threshold": 0.82,
+                    "policy": (
+                        "keep the highest-scoring version of repeated moments and store "
+                        "near-duplicates as alternatives"
+                    ),
+                },
                 "note": "Near-identical moments are merged: the highest-scoring clip is "
                 "kept and overlapping ones become ranked alternatives.",
             }
@@ -397,7 +595,7 @@ class DuplicateDetectionAnalyzer(PlanningAnalyzer):
 # --------------------------------------------------------------------------- #
 class BlueprintGenerationAnalyzer(PlanningAnalyzer):
     name = "blueprint_generation"
-    version = "1"
+    version = "5"
     depends_on = ("duplicate_detection",)
 
     async def analyze(
@@ -430,7 +628,7 @@ class BlueprintGenerationAnalyzer(PlanningAnalyzer):
 # --------------------------------------------------------------------------- #
 class RankingAnalyzer(PlanningAnalyzer):
     name = "ranking"
-    version = "1"
+    version = "5"
     depends_on = ("blueprint_generation",)
 
     async def analyze(
@@ -441,7 +639,7 @@ class RankingAnalyzer(PlanningAnalyzer):
             return PlanningOutcome.unavailable(
                 "Requires blueprint generation, which is unavailable."
             )
-        plans = sorted(
+        ranked = sorted(
             S.as_list(blueprint.get("plans")),
             key=lambda p: (
                 S.as_float(p.get("quality_score")),
@@ -450,6 +648,29 @@ class RankingAnalyzer(PlanningAnalyzer):
             ),
             reverse=True,
         )
+        strategy = _selection_strategy(ctx)
+        plans = _select_ranked_plans(
+            ranked,
+            strategy,
+            threshold=S.as_float(strategy.get("primary_threshold")),
+        )
+        selected_floor = S.as_float(strategy.get("primary_threshold"))
+        used_secondary = False
+        if len(plans) < int(strategy.get("minimum", 1)):
+            plans = _select_ranked_plans(
+                ranked,
+                strategy,
+                threshold=S.as_float(strategy.get("secondary_threshold")),
+            )
+            selected_floor = S.as_float(strategy.get("secondary_threshold"))
+            used_secondary = True
+            for plan in plans:
+                if S.as_float(plan.get("quality_score")) < S.as_float(
+                    strategy.get("primary_threshold")
+                ):
+                    plan["lower_confidence_selection"] = True
+        selected_ids = {p.get("id") for p in plans}
+        overflow = [p for p in ranked if p.get("id") not in selected_ids]
         reasons: list[dict[str, Any]] = []
         for i, plan in enumerate(plans):
             plan["rank"] = i + 1
@@ -461,8 +682,29 @@ class RankingAnalyzer(PlanningAnalyzer):
                 "plan_count": len(plans),
                 "plans": plans,
                 "ranking_reasons": reasons,
+                "over_target": [
+                    {
+                        "id": p.get("id"),
+                        "quality_score": p.get("quality_score"),
+                        "reason": (
+                            "below the automatic quality floor or beyond the safe workload cap"
+                        ),
+                    }
+                    for p in overflow
+                ],
+                "selection_strategy": strategy,
+                "selected_quality_floor": selected_floor,
+                "used_secondary_threshold": used_secondary,
+                "low_clip_count_explanation": V2.low_clip_count_explanation(
+                    plans,
+                    ranked,
+                    strategy,
+                ),
                 "note": "Plans are ranked by overall quality, then confidence, then "
-                "lower editing complexity; each adjacent pair is explained.",
+                "lower editing complexity. The final set is automatic: all clips above "
+                "the quality floor are kept up to the safe workload cap, with a lower "
+                "secondary floor only when the source duration would otherwise be "
+                "severely underrepresented.",
             }
         )
 
@@ -472,7 +714,7 @@ class RankingAnalyzer(PlanningAnalyzer):
 # --------------------------------------------------------------------------- #
 class PlanningSummaryAnalyzer(PlanningAnalyzer):
     name = "planning_summary"
-    version = "1"
+    version = "5"
     depends_on = (
         "candidate_generation",
         "boundary_refinement",
@@ -486,21 +728,42 @@ class PlanningSummaryAnalyzer(PlanningAnalyzer):
         self, ctx: PlanningStageContext, report: PlanningProgressReporter
     ) -> PlanningOutcome:
         ranking = ctx.planning_data("ranking") or {}
+        generation = ctx.planning_data("candidate_generation") or {}
         plans = S.as_list(ranking.get("plans"))
         available, pending = _signal_inventory(ctx)
 
         summaries = [
             {
                 "id": p.get("id"),
+                "story_id": p.get("story_id"),
+                "candidate_id": p.get("candidate_id"),
                 "rank": p.get("rank"),
                 "start": p.get("start"),
                 "end": p.get("end"),
                 "duration": p.get("duration"),
                 "quality_score": p.get("quality_score"),
+                "hook_score": p.get("hook_score"),
+                "retention_score": p.get("retention_score"),
+                "clarity_score": p.get("clarity_score"),
+                "payoff_score": p.get("payoff_score"),
+                "virality_score": p.get("virality_score"),
+                "story_score": p.get("story_score"),
+                "story_completion_score": p.get("story_completion_score"),
+                "ending_score": p.get("ending_score"),
+                "trend_score": p.get("trend_score"),
+                "viral_score_v2": p.get("viral_score_v2"),
+                "uniqueness_score": p.get("uniqueness_score"),
+                "platform_score": p.get("platform_score"),
                 "confidence": p.get("confidence"),
+                "content_niche": p.get("content_niche"),
                 "title": S.as_dict(S.as_dict(p.get("blueprint")).get("title_suggestion")).get(
                     "text"
                 ),
+                "hook_line": p.get("hook_line"),
+                "source_candidate_type": p.get("source_candidate_type"),
+                "planning_story_integration": S.as_dict(p.get("planning_story_integration")),
+                "planning_trend_integration": S.as_dict(p.get("planning_trend_integration")),
+                "unified_clip_intelligence": S.as_dict(p.get("unified_clip_intelligence")),
                 "explanation": p.get("explanation"),
             }
             for p in plans
@@ -521,6 +784,21 @@ class PlanningSummaryAnalyzer(PlanningAnalyzer):
                 "plans": summaries,
                 "zero_reason": zero_reason,
                 "score_distribution": distribution,
+                "target_clip_strategy": S.as_dict(generation.get("target_clip_strategy")),
+                "selection_strategy": S.as_dict(ranking.get("selection_strategy")),
+                "content_niche": S.as_dict(generation.get("content_niche")),
+                "viral_research_snapshot": S.as_dict(generation.get("viral_research_snapshot")),
+                "internet_trend_research_v2": S.as_dict(
+                    generation.get("internet_trend_research_v2")
+                ),
+                "internet_research_available": generation.get("internet_research_available"),
+                "low_clip_count_explanation": S.as_dict(ranking.get("low_clip_count_explanation")),
+                "low_output_reason": _low_output_reason(ctx, generation, ranking),
+                "selected_quality_floor": ranking.get("selected_quality_floor"),
+                "used_secondary_threshold": ranking.get("used_secondary_threshold"),
+                "candidate_coverage": S.as_dict(generation.get("coverage")),
+                "story_guidance_available": generation.get("story_guidance_available"),
+                "story_candidate_count": generation.get("story_candidate_count"),
                 "available_signals": available,
                 "pending_signals": pending,
                 "confidence": S.round3(
@@ -537,6 +815,9 @@ class PlanningSummaryAnalyzer(PlanningAnalyzer):
 # --------------------------------------------------------------------------- #
 def _gather_signals(ctx: PlanningStageContext) -> dict[str, Any]:
     summary = ctx.virality_data("virality_summary") or {}
+    generation = ctx.planning_data("candidate_generation") or {}
+    personalization = get_settings().creator_personalization
+    directives = P.load_runtime_directives() if personalization.enabled else None
     return {
         "heatmap": S.as_list(summary.get("heatmap")),
         "category_scores": S.as_dict(summary.get("category_scores")),
@@ -549,6 +830,13 @@ def _gather_signals(ctx: PlanningStageContext) -> dict[str, Any]:
         "hook": ctx.story_data("hook_detection") or {},
         "segments": ctx.transcript_segments() or [],
         "inspection": ctx.cognitive_data("video_inspection") or {},
+        "content_niche": S.as_dict(generation.get("content_niche")),
+        "viral_research_snapshot": S.as_dict(generation.get("viral_research_snapshot")),
+        "internet_trend_research_v2": S.as_dict(
+            generation.get("internet_trend_research_v2")
+        ),
+        "story_analysis_v2": ctx.story_data("story_analysis_v2") or {},
+        "personalization_directives_v2": directives or {},
     }
 
 
@@ -583,6 +871,19 @@ def _score_window(
         if S.as_str(s.get("role")) in ("conflict", "problem")
     ]
     segs_in = S.localize_spans(sig["segments"], start, end)
+    transcript_text = " ".join(_seg_text(s) for s in segs_in).strip()
+    opening_text = _seg_text(segs_in[0]) if segs_in else transcript_text[:220]
+    hook_v2 = V2.hook_analysis(
+        opening_text or transcript_text[:220],
+        sig["viral_research_snapshot"],
+    )
+    story_v2 = V2.storytelling_analysis(transcript_text)
+    ending_v2 = V2.ending_analysis(transcript_text, payoffs_in)
+    trend_v2 = V2.trend_pattern_match(
+        transcript_text,
+        sig["viral_research_snapshot"],
+        sig["content_niche"],
+    )
     hook = sig["hook"]
     hook_start = (
         S.as_float(S.as_dict(hook.get("window")).get("start")) if hook.get("has_hook") else None
@@ -602,23 +903,39 @@ def _score_window(
         if hook_start is not None and start <= hook_start < start + 3
         else (0.6 if hook_start is not None and start <= hook_start < end else 0.0)
     )
+    hook_local = max(hook_local, S.as_float(hook_v2.get("score")))
     emotion_local = S.clamp01(len(turns_in) / 2)
-    story_local = 0.8 if payoffs_in else (0.4 if conflict_secs else 0.2)
+    payoff_local = _payoff_score(payoffs_in, transcript_text)
+    clarity_local = _clarity_score(transcript_text)
+    platform_local = _platform_score(end - start)
+    story_local = max(
+        payoff_local,
+        S.as_float(story_v2.get("score")),
+        0.4 if conflict_secs else 0.2,
+    )
     conflict_local = S.clamp01(len(conflict_secs) / 1)
     info_local = S.clamp01(0.5 * mean_entity + 0.5 * mean_div)
-    novelty_local = S.clamp01(mean_entity)
+    novelty_local = S.clamp01(max(mean_entity, mean_div * 0.7))
+    uniqueness_local = S.clamp01(0.45 + 0.35 * mean_div + 0.2 * (1.0 if not conflict_secs else 0.7))
     replay_local = 0.7 if payoffs_in else 0.2
-    share_local = S.mean([emotion_local, novelty_local, info_local])
+    share_local = S.mean([emotion_local, novelty_local, info_local, payoff_local])
 
     scores: dict[str, float] = {
         "hook": S.round3(_blend(hook_local, _category_prior(cats, "hook"))),
         "retention": S.round3(_blend(mean_density, _category_prior(cats, "retention"))),
+        "clarity": S.round3(clarity_local),
+        "payoff": S.round3(payoff_local),
         "emotion": S.round3(_blend(emotion_local, _category_prior(cats, "emotion"))),
-        "story": S.round3(story_local),
         "virality": S.round3(mean_heat),
+        "uniqueness": S.round3(uniqueness_local),
+        "platform": S.round3(platform_local),
         "information": S.round3(_blend(info_local, _category_prior(cats, "information"))),
         "novelty": S.round3(_blend(novelty_local, _category_prior(cats, "novelty"))),
         "shareability": S.round3(_blend(share_local, _category_prior(cats, "sharing"))),
+        "story": S.round3(story_local),
+        "story_completion": S.round3(S.as_float(story_v2.get("score"))),
+        "ending": S.round3(S.as_float(ending_v2.get("score"))),
+        "trend_fit": S.round3(S.as_float(trend_v2.get("score"))),
         "conflict": S.round3(_blend(conflict_local, _category_prior(cats, "conflict"))),
         "replay": S.round3(_blend(replay_local, _category_prior(cats, "replay"))),
     }
@@ -628,9 +945,19 @@ def _score_window(
     scores["editing_complexity"] = S.round3(complexity)
 
     available = sum(
-        bool(x) for x in (heat_cells, dens, turns_in, payoffs_in, segs_in, hook_start is not None)
+        bool(x)
+        for x in (
+            heat_cells,
+            dens,
+            turns_in,
+            payoffs_in,
+            segs_in,
+            hook_start is not None,
+            sig["viral_research_snapshot"],
+            sig["content_niche"],
+        )
     )
-    confidence = S.coverage_confidence(available, 6)
+    confidence = S.coverage_confidence(available, 8)
     evidence = [
         {
             "type": "local_heat",
@@ -640,10 +967,131 @@ def _score_window(
             "type": "pacing",
             "detail": f"mean density {S.round3(mean_density)} over {len(dens)} window(s)",
         },
+        {
+            "type": "hook_v2",
+            "detail": (
+                f"{S.as_str(hook_v2.get('category'))} hook {S.as_float(hook_v2.get('score'))}"
+            ),
+        },
+        {"type": "clarity", "detail": f"standalone clarity {S.round3(clarity_local)}"},
+        {"type": "payoff", "detail": f"payoff strength {S.round3(payoff_local)}"},
+        {
+            "type": "storytelling_v2",
+            "detail": (
+                f"{S.as_str(story_v2.get('story_shape'))} story {S.as_float(story_v2.get('score'))}"
+            ),
+        },
+        {
+            "type": "ending_v2",
+            "detail": (
+                f"{S.as_str(ending_v2.get('ending_type'))} ending "
+                f"{S.as_float(ending_v2.get('score'))}"
+            ),
+        },
+        {
+            "type": "trend_fit_v2",
+            "detail": f"trend/pattern fit {S.as_float(trend_v2.get('score'))}",
+        },
         {"type": "emotion", "detail": f"{len(turns_in)} emotional shift(s) in window"},
-        {"type": "payoff", "detail": f"{len(payoffs_in)} payoff(s) land in window"},
+        {"type": "platform", "detail": f"short-form duration fit {S.round3(platform_local)}"},
     ]
     return scores, confidence, evidence
+
+
+def _clarity_score(text: str) -> float:
+    words = text.split()
+    if not words:
+        return 0.0
+    word_count = len(words)
+    enough_context = S.clamp01(word_count / 28)
+    concise = 1.0 if word_count <= 160 else S.clamp01(1.0 - (word_count - 160) / 120)
+    low = text.lower().strip()
+    context_penalty = 0.15 if low.startswith(("and ", "but ", "so ", "then ")) else 0.0
+    unresolved = sum(
+        1 for token in words[:18] if token.lower().strip(".,!?") in {"he", "she", "they", "it"}
+    )
+    pronoun_penalty = min(0.2, unresolved * 0.05)
+    return S.clamp01(0.55 * enough_context + 0.45 * concise - context_penalty - pronoun_penalty)
+
+
+def _payoff_score(payoffs: list[dict[str, Any]], text: str) -> float:
+    if payoffs:
+        return 0.86
+    low = text.lower()
+    if any(
+        cue in low
+        for cue in (
+            "because",
+            "finally",
+            "lesson",
+            "so the",
+            "that's why",
+            "therefore",
+            "turns out",
+            "what changed",
+        )
+    ):
+        return 0.68
+    if any(cue in low for cue in ("problem", "mistake", "solution", "reason")):
+        return 0.52
+    return 0.32
+
+
+def _platform_score(duration: float) -> float:
+    if 15.0 <= duration <= 60.0:
+        return 1.0
+    if duration < 15.0:
+        return S.clamp01(duration / 15.0)
+    if duration <= 90.0:
+        return S.clamp01(1.0 - (duration - 60.0) / 60.0)
+    return 0.35
+
+
+def _candidate_similarity(a: dict[str, Any], b: dict[str, Any]) -> float:
+    a_words = _candidate_words(a)
+    b_words = _candidate_words(b)
+    if not a_words or not b_words:
+        return 0.0
+    return len(a_words & b_words) / max(1, len(a_words | b_words))
+
+
+def _candidate_words(candidate: dict[str, Any]) -> set[str]:
+    text = " ".join(
+        filter(
+            None,
+            [
+                S.as_str(candidate.get("uniqueness_fingerprint")),
+                S.as_str(candidate.get("transcript_excerpt")),
+            ],
+        )
+    )
+    stop = {
+        "about",
+        "actually",
+        "because",
+        "could",
+        "every",
+        "from",
+        "have",
+        "just",
+        "like",
+        "really",
+        "that",
+        "their",
+        "there",
+        "this",
+        "what",
+        "when",
+        "with",
+        "would",
+        "your",
+    }
+    words: set[str] = set()
+    for raw in text.lower().split():
+        token = "".join(ch for ch in raw if ch.isalnum())
+        if len(token) >= 4 and token not in stop:
+            words.add(token)
+    return words
 
 
 def _build_plan(
@@ -673,9 +1121,126 @@ def _build_plan(
     mean_density = S.mean([S.as_float(w.get("density")) for w in dens_in])
     pacing = "fast" if mean_density >= 0.5 else "slow" if mean_density <= 0.2 else "medium"
     keywords = _window_keywords(segs_in)
+    opening_text = _seg_text(segs_in[0]) if segs_in else ""
+    transcript_text = " ".join(_seg_text(s) for s in segs_in)
+    content_niche = S.as_dict(sig.get("content_niche"))
+    viral_research = S.as_dict(sig.get("internet_trend_research_v2")) or S.as_dict(
+        sig.get("viral_research_snapshot")
+    )
+    candidate_v2 = S.as_dict(cand.get("v2_candidate_metadata"))
+    hook_v2 = S.as_dict(candidate_v2.get("hook_analysis")) or V2.hook_analysis(
+        opening_text,
+        viral_research,
+    )
+    story_v2 = S.as_dict(candidate_v2.get("storytelling")) or V2.storytelling_analysis(
+        transcript_text,
+    )
+    ending_v2 = S.as_dict(candidate_v2.get("ending")) or V2.ending_analysis(
+        transcript_text,
+        payoffs_in,
+    )
+    trend_v2 = S.as_dict(cand.get("viral_pattern_match")) or V2.trend_pattern_match(
+        transcript_text,
+        viral_research,
+        content_niche,
+    )
+    planning_trend = _planning_trend_integration(viral_research, trend_v2)
+    editing_trend = build_editing_trend_guidance(
+        viral_research,
+        content_niche,
+        trend_v2,
+    )
+    story_guidance = S.as_dict(cand.get("story_v2_guidance"))
+    if not story_guidance.get("story_guidance_used"):
+        story_guidance = CI.story_guidance_for_window(
+            S.as_dict(sig.get("story_analysis_v2")),
+            start,
+            end,
+        )
+    if story_guidance.get("story_guidance_used"):
+        story_v2 = {
+            **story_v2,
+            "source": "story_analysis_v2",
+            "story_id": story_guidance.get("story_id"),
+            "story_shape": story_guidance.get("story_shape") or story_v2.get("story_shape"),
+            "score": story_guidance.get("completeness_score") or story_v2.get("score"),
+            "payoff_line": story_guidance.get("payoff"),
+            "context_risk": story_guidance.get("context_risk"),
+            "why_story_works": story_guidance.get("why_story_works"),
+        }
+        ending_v2 = {
+            **ending_v2,
+            "source": "story_analysis_v2",
+            "ending_line": story_guidance.get("payoff") or ending_v2.get("ending_line"),
+            "score": story_guidance.get("ending_strength") or ending_v2.get("score"),
+            "ending_type": story_guidance.get("ending_reason") or ending_v2.get("ending_type"),
+        }
+    viral_score_v2 = V2.viral_score_v2(scores, hook_v2, story_v2, ending_v2, trend_v2)
+    editing_guidance_v2 = V2.editing_guidance(hook_v2, story_v2, ending_v2, trend_v2)
+    if story_guidance.get("story_guidance_used"):
+        editing_guidance_v2 = {
+            **editing_guidance_v2,
+            "source": "story_analysis_v2+planning_v2",
+            "story_id": story_guidance.get("story_id"),
+            "caption_emphasis_words": S.as_list(
+                S.as_dict(story_guidance.get("editing_guidance")).get("caption_emphasis_words")
+            ),
+            "music_mood": S.as_dict(story_guidance.get("editing_guidance")).get("music_mood"),
+            "ending_hold": S.as_dict(story_guidance.get("editing_guidance")).get(
+                "ending_hold_recommendation"
+            ),
+            "context_caption": S.as_dict(story_guidance.get("planning_guidance")).get(
+                "context_caption"
+            ),
+        }
+    content_category = ctx.project.content_category or "auto"
+    music_decision = V2.music_decision(content_category, enabled=ctx.project.music_enabled)
+    sfx_decision = V2.sfx_decision(hook_v2, enabled=ctx.project.sfx_enabled)
+    caption_decision = V2.caption_decision(
+        content_category,
+        hook_v2,
+        enabled=ctx.project.captions_enabled,
+    )
+    edit_decision = _edit_decision(
+        content_category,
+        ctx.project.editing_intensity,
+        scores,
+        hook_v2,
+        pacing,
+    )
+    personalization_directives = S.as_dict(sig.get("personalization_directives_v2"))
+    planning_personalization = S.as_dict(cand.get("planning_personalization"))
 
     blueprint = {
         "opening_hook": _opening_hook(hook, hook_in_window, segs_in),
+        "hook_v2": {
+            **hook_v2,
+            "first_three_second_editing": {
+                "punch_in": bool(S.as_float(hook_v2.get("score")) >= 0.65),
+                "caption_emphasis": bool(S.as_float(hook_v2.get("score")) >= 0.65),
+                "reason": "first 1-3 seconds need stronger retention pressure",
+            },
+        },
+        "hook_analysis_v2": hook_v2,
+        "storytelling_v2": story_v2,
+        "ending_payoff_v2": ending_v2,
+        "trend_match_v2": trend_v2,
+        "viral_score_v2": viral_score_v2,
+        "editing_guidance_v2": editing_guidance_v2,
+        "story_v2_guidance": story_guidance,
+        "story_trend_guidance": _story_trend_guidance(
+            viral_research,
+            S.as_str(story_guidance.get("story_id")),
+        ),
+        "planning_story_integration": S.as_dict(cand.get("planning_story_integration")),
+        "planning_trend_integration": planning_trend,
+        "editing_trend_guidance": editing_trend,
+        "personalization_directives_v2": personalization_directives,
+        "planning_personalization": planning_personalization,
+        "content_niche": content_niche,
+        "viral_research_snapshot": viral_research,
+        "internet_trend_research_v2": viral_research,
+        "boundary_optimization_v2": S.as_dict(cand.get("boundary_optimization")),
         "closing_payoff": _closing_payoff(payoffs_in, segs_in),
         "title_suggestion": {
             "text": (
@@ -685,6 +1250,8 @@ def _build_plan(
             ),
             "basis": "opening hook line" if hook_in_window else "top keywords",
             "evidence": keywords[:6],
+            "trend_pattern": _first_pattern_label(viral_research, "title"),
+            "trend_safety": "curiosity without unsupported claims",
         },
         "subtitle_style": {
             "style": "word-by-word (karaoke), bold, high-contrast"
@@ -692,6 +1259,8 @@ def _build_plan(
             else "phrase-by-phrase, clean sans-serif",
             "reason": f"matches {pacing} pacing",
         },
+        "caption_decision_v2": caption_decision,
+        "edit_decision_v2": edit_decision,
         "aspect_ratio": {
             "value": "9:16",
             "reason": "vertical source preserved"
@@ -753,6 +1322,8 @@ def _build_plan(
             {"timestamp": S.as_float(r.get("payoff_timestamp")), "reason": "satisfying payoff"}
             for r in payoffs_in
         ],
+        "music_decision_v2": music_decision,
+        "sound_effect_plan_v2": sfx_decision,
         "retention_risks": [
             {
                 "timestamp": S.as_float(w.get("start")),
@@ -765,10 +1336,44 @@ def _build_plan(
             scores.get("editing_complexity", 0.0), len(slow), len(turns_in)
         ),
         "platform_suitability": _platform_suitability(duration, vertical),
+        "v2_metadata": {
+            "content_category": content_category,
+            "content_niche": content_niche,
+            "internet_research_available": viral_research.get("internet_research_available", False),
+            "trend_research_status": viral_research.get("research_status"),
+            "trend_cache_status": viral_research.get("cache_status"),
+            "trend_fallback_used": viral_research.get("fallback_used"),
+            "research_confidence": viral_research.get("confidence"),
+            "editing_intensity": edit_decision["edit_intensity"],
+            "editing_style_chosen": edit_decision["transition_style"],
+            "music_mood_chosen": music_decision.get("category"),
+            "sfx_plan_status": sfx_decision.get("status"),
+            "caption_style": caption_decision.get("style"),
+            "why_selected": _why_selected_v2(
+                cand,
+                hook_v2,
+                scores,
+                payoffs_in,
+                story_v2=story_v2,
+                ending_v2=ending_v2,
+                trend_v2=trend_v2,
+            ),
+            "risk_notes": _risk_notes_v2(hook_v2, music_decision, sfx_decision),
+            "source_timestamps": {"start": start, "end": end},
+            "source_candidate_metadata": {
+                "candidate_id": cand.get("candidate_id"),
+                "story_id": story_guidance.get("story_id") or cand.get("story_id"),
+                "candidate_type": cand.get("candidate_type") or cand.get("source"),
+                "source_reason": cand.get("source_reason"),
+                "topic_cluster": cand.get("topic_cluster"),
+            },
+        },
     }
 
-    return {
+    plan = {
         "id": cand.get("id") or S.plan_id(start, end),
+        "story_id": story_guidance.get("story_id") or cand.get("story_id"),
+        "candidate_id": cand.get("candidate_id"),
         "source_video": {
             "filename": ctx.project.source_filename,
             "storage_key": ctx.project.storage_key,
@@ -780,14 +1385,290 @@ def _build_plan(
         "end_frame": cand.get("end_frame"),
         "fps": cand.get("fps"),
         "scores": scores,
+        "overall_score": S.as_float(cand.get("quality_score")),
+        "hook_score": S.as_float(hook_v2.get("score")),
+        "retention_score": S.as_float(scores.get("retention")),
+        "clarity_score": S.as_float(scores.get("clarity")),
+        "payoff_score": S.as_float(scores.get("payoff")),
+        "virality_score": S.as_float(scores.get("virality")),
+        "emotion_score": S.as_float(scores.get("emotion")),
+        "story_score": S.as_float(scores.get("story")),
+        "story_completion_score": S.as_float(scores.get("story_completion")),
+        "ending_score": S.as_float(scores.get("ending")),
+        "trend_score": S.as_float(scores.get("trend_fit")),
+        "uniqueness_score": S.as_float(scores.get("uniqueness")),
+        "platform_score": S.as_float(scores.get("platform")),
         "quality_score": S.as_float(cand.get("quality_score")),
+        "viral_score_v2": viral_score_v2,
+        "content_niche": content_niche,
         "confidence": S.as_float(cand.get("confidence")),
         "source": cand.get("source"),
+        "source_candidate_type": cand.get("source_candidate_type") or cand.get("source"),
+        "planning_story_integration": S.as_dict(cand.get("planning_story_integration")),
+        "planning_trend_integration": planning_trend,
+        "editing_trend_guidance": editing_trend,
+        "personalization_directives_v2": personalization_directives,
+        "planning_personalization": planning_personalization,
+        "internet_trend_research_v2": viral_research,
+        "story_v2_guidance": story_guidance,
+        "transcript_excerpt": cand.get("transcript_excerpt")
+        or " ".join(_seg_text(s) for s in segs_in),
+        "hook_line": S.as_dict(cand.get("hook_candidate")).get("text")
+        or S.as_dict(blueprint["opening_hook"]).get("text"),
+        "duplicate_group": cand.get("duplicate_group"),
         "explanation": _explanation(cand, hook_in_window, payoffs_in),
         "evidence": S.as_list(cand.get("evidence")) + S.as_list(cand.get("score_evidence")),
         "alternatives": S.as_list(cand.get("alternatives")),
         "blueprint": blueprint,
     }
+    plan["unified_clip_intelligence"] = CI.unified_clip_intelligence(
+        plan=plan,
+        blueprint=blueprint,
+    )
+    return plan
+
+
+def _planning_trend_integration(
+    snapshot: dict[str, Any],
+    trend_match: dict[str, Any],
+) -> dict[str, Any]:
+    matched = [
+        S.as_dict(item)
+        for item in S.as_list(trend_match.get("matched_patterns"))
+        if S.as_dict(item)
+    ]
+    fit = S.as_float(trend_match.get("trend_fit_score"), S.as_float(trend_match.get("score")))
+    fallback = snapshot.get("fallback_used") is True
+    if fallback:
+        effect = "fallback"
+    elif fit >= 0.62:
+        effect = "boosted"
+    elif fit <= 0.3:
+        effect = "penalized"
+    else:
+        effect = "neutral"
+    return {
+        "trend_snapshot_id": snapshot.get("snapshot_id"),
+        "trend_guidance_used": bool(snapshot),
+        "trend_patterns_used": [
+            item.get("pattern_id") or item.get("id") for item in matched[:5]
+        ],
+        "pattern_diversity_reason": "Set during ranked selection across candidate patterns.",
+        "trend_fit_score": S.round3(fit),
+        "selection_effect": effect,
+        "warning": (
+            "Evergreen fallback influenced only the small trend-fit component."
+            if fallback
+            else None
+        ),
+    }
+
+
+def _story_trend_guidance(snapshot: dict[str, Any], story_id: str) -> dict[str, Any]:
+    if not story_id:
+        return {}
+    for item in S.as_list(snapshot.get("story_trend_guidance")):
+        guidance = S.as_dict(item)
+        if S.as_str(guidance.get("story_id")) == story_id:
+            return guidance
+    return {}
+
+
+def _first_pattern_label(snapshot: dict[str, Any], category: str) -> str | None:
+    for item in S.as_list(snapshot.get("extracted_patterns")):
+        pattern = S.as_dict(item)
+        if S.as_str(pattern.get("category")) == category:
+            return S.as_str(pattern.get("label")) or None
+    return None
+
+
+def _why_selected_v2(
+    cand: dict[str, Any],
+    hook: dict[str, Any],
+    scores: dict[str, Any],
+    payoffs_in: list[dict[str, Any]],
+    *,
+    story_v2: dict[str, Any] | None = None,
+    ending_v2: dict[str, Any] | None = None,
+    trend_v2: dict[str, Any] | None = None,
+) -> str:
+    bits = [f"candidate came from {S.as_str(cand.get('source')).replace('_', ' ')}"]
+    hook_score = S.as_float(hook.get("score"))
+    if hook_score >= 0.65:
+        bits.append(f"strong {S.as_str(hook.get('category')).replace('_', ' ')} hook")
+    if payoffs_in:
+        bits.append("contains a payoff")
+    story = S.as_dict(story_v2)
+    ending = S.as_dict(ending_v2)
+    trend = S.as_dict(trend_v2)
+    if S.as_float(story.get("score")) >= 0.65:
+        bits.append(f"{S.as_str(story.get('story_shape')).replace('_', ' ')} story shape")
+    if S.as_float(ending.get("score")) >= 0.65:
+        bits.append(f"{S.as_str(ending.get('ending_type')).replace('_', ' ')} ending")
+    matched = S.as_list(trend.get("matched_patterns"))
+    if matched:
+        label = S.as_str(S.as_dict(matched[0]).get("label"))
+        bits.append(f"matches {label.lower() if label else 'evergreen'} viral pattern")
+    if S.as_float(scores.get("retention")) >= 0.55:
+        bits.append("good retention potential")
+    if S.as_float(scores.get("clarity")) >= 0.55:
+        bits.append("understandable without heavy context")
+    return "; ".join(bits) + "."
+
+
+def _edit_decision(
+    content_category: str,
+    requested_intensity: str | None,
+    scores: dict[str, Any],
+    hook: dict[str, Any],
+    pacing: str,
+) -> dict[str, Any]:
+    category = (content_category or "auto").lower()
+    requested = (requested_intensity or "auto").lower()
+    hook_score = S.as_float(hook.get("score"))
+    energy = S.mean(
+        [
+            S.as_float(scores.get("retention")),
+            S.as_float(scores.get("emotion")),
+            S.as_float(scores.get("shareability")),
+            hook_score,
+        ]
+    )
+    if requested in {"clean", "balanced", "high-energy", "aggressive viral", "cinematic"}:
+        intensity = "high-energy" if requested == "aggressive viral" else requested
+        reason = "user/editor intent selected this intensity"
+    elif category in {"stream", "entertainment", "gaming", "funny"} or energy >= 0.68:
+        intensity = "high-energy"
+        reason = "content has high retention/emotion/shareability signals"
+    elif category in {"motivation", "motivational", "emotional"}:
+        intensity = "cinematic"
+        reason = "content category benefits from cinematic pacing"
+    elif category in {"educational", "podcast", "podcast / talking", "interview", "business"}:
+        intensity = "balanced"
+        reason = "talking/educational content needs clarity-first editing"
+    else:
+        intensity = "balanced" if energy >= 0.45 else "clean"
+        reason = "auto mode inferred intensity from clip scores"
+
+    zoom_frequency = {
+        "clean": "low",
+        "balanced": "medium",
+        "cinematic": "medium",
+        "high-energy": "high",
+    }.get(intensity, "medium")
+    return {
+        "edit_intensity": intensity,
+        "pacing": "fast" if intensity == "high-energy" else pacing,
+        "zoom_frequency": zoom_frequency,
+        "caption_style": "bold viral" if intensity == "high-energy" else "clean emphasis",
+        "transition_style": "fast punch-ins" if intensity == "high-energy" else "clean cuts",
+        "music_style": "cinematic" if intensity == "cinematic" else "subtle bed",
+        "sfx_density": "medium" if intensity == "high-energy" else "low",
+        "reason": reason,
+    }
+
+
+def _risk_notes_v2(
+    hook: dict[str, Any],
+    music_decision: dict[str, Any],
+    sfx_decision: dict[str, Any],
+) -> list[str]:
+    notes: list[str] = []
+    if S.as_float(hook.get("score")) < 0.55:
+        notes.append("Hook is moderate; cold-open overlay or tighter first cut may be needed.")
+    if hook.get("clickbait_risk"):
+        notes.append("Hook contains clickbait-like phrasing; keep captions faithful to transcript.")
+    if music_decision.get("status") == "unavailable":
+        notes.append(S.as_str(music_decision.get("reason")))
+    if sfx_decision.get("status") == "unavailable":
+        notes.append(S.as_str(sfx_decision.get("reason")))
+    return notes
+
+
+def _selection_strategy(ctx: PlanningStageContext) -> dict[str, Any]:
+    generation = ctx.planning_data("candidate_generation") or {}
+    strategy = S.as_dict(generation.get("target_clip_strategy"))
+    if strategy:
+        return strategy
+    return V2.strategy_dict(V2.clip_count_strategy(ctx.video_duration(), None))
+
+
+def _select_ranked_plans(
+    plans: list[dict[str, Any]],
+    strategy: dict[str, Any],
+    *,
+    threshold: float,
+) -> list[dict[str, Any]]:
+    maximum = max(1, int(S.as_float(strategy.get("maximum"), 10)))
+    bins = max(1, int(S.as_float(strategy.get("coverage_bins"), 6)))
+    duration = max((S.as_float(p.get("end")) for p in plans), default=0.0)
+    per_bucket_limit = max(2, (maximum // bins) + 2)
+    bucket_counts: dict[int, int] = {}
+    pattern_counts: dict[str, int] = {}
+    pattern_limit = max(1, (maximum + 1) // 2)
+    selected: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    for plan in plans:
+        if S.as_float(plan.get("quality_score")) < threshold:
+            continue
+        bucket = _timeline_bucket(S.as_float(plan.get("start")), duration, bins)
+        if bucket_counts.get(bucket, 0) >= per_bucket_limit:
+            continue
+        pattern_id = _primary_trend_pattern(plan)
+        if pattern_id and pattern_counts.get(pattern_id, 0) >= pattern_limit:
+            deferred.append(plan)
+            continue
+        selected.append(plan)
+        bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
+        if pattern_id:
+            pattern_counts[pattern_id] = pattern_counts.get(pattern_id, 0) + 1
+        _mark_pattern_diversity(plan, pattern_id, repeated=False)
+        if len(selected) >= maximum:
+            break
+    for plan in deferred:
+        if len(selected) >= maximum:
+            break
+        bucket = _timeline_bucket(S.as_float(plan.get("start")), duration, bins)
+        if bucket_counts.get(bucket, 0) >= per_bucket_limit:
+            continue
+        pattern_id = _primary_trend_pattern(plan)
+        selected.append(plan)
+        bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
+        if pattern_id:
+            pattern_counts[pattern_id] = pattern_counts.get(pattern_id, 0) + 1
+        _mark_pattern_diversity(plan, pattern_id, repeated=True)
+    return selected
+
+
+def _primary_trend_pattern(plan: dict[str, Any]) -> str:
+    integration = S.as_dict(plan.get("planning_trend_integration"))
+    patterns = S.as_list(integration.get("trend_patterns_used"))
+    return S.as_str(patterns[0]) if patterns else ""
+
+
+def _mark_pattern_diversity(
+    plan: dict[str, Any], pattern_id: str, *, repeated: bool
+) -> None:
+    integration = S.as_dict(plan.get("planning_trend_integration"))
+    if not integration:
+        return
+    if not pattern_id:
+        reason = "No matched trend pattern; quality and timeline coverage decided selection."
+    elif repeated:
+        reason = (
+            f"Repeated {pattern_id.replace('_', ' ')} only after diverse candidates were used."
+        )
+    else:
+        reason = f"Selected early to preserve diversity around {pattern_id.replace('_', ' ')}."
+    integration["pattern_diversity_reason"] = reason
+    plan["planning_trend_integration"] = integration
+    plan["timeline_diversity_reason"] = reason
+
+
+def _timeline_bucket(start: float, duration: float, bins: int) -> int:
+    if duration <= 0 or bins <= 1:
+        return 0
+    return max(0, min(bins - 1, int((start / duration) * bins)))
 
 
 def _opening_hook(
@@ -929,6 +1810,7 @@ def _rank_reason(higher: dict[str, Any], lower: dict[str, Any]) -> dict[str, Any
 
 def _signal_inventory(ctx: PlanningStageContext) -> tuple[list[str], list[dict[str, str]]]:
     checks = {
+        "trend_research": ctx.virality_data("trend_research") is not None,
         "virality_heatmap": bool(
             S.as_list((ctx.virality_data("virality_summary") or {}).get("heatmap"))
         ),
@@ -961,3 +1843,40 @@ def _zero_reason(ctx: PlanningStageContext) -> str:
         "Candidates were found but none survived boundary refinement, scoring, and "
         "de-duplication at a quality worth proposing."
     )
+
+
+def _low_output_reason(
+    ctx: PlanningStageContext,
+    generation: dict[str, Any],
+    ranking: dict[str, Any],
+) -> dict[str, Any] | None:
+    plans = S.as_list(ranking.get("plans"))
+    strategy = S.as_dict(generation.get("target_clip_strategy"))
+    target = int(S.as_float(strategy.get("target"), 0.0))
+    minimum = int(S.as_float(strategy.get("minimum"), 1.0))
+    if plans and (target <= 0 or len(plans) >= max(1, min(target, minimum))):
+        return None
+    story_v2 = ctx.story_data("story_analysis_v2") or {}
+    summary = ctx.virality_data("virality_summary") or {}
+    rejected: list[str] = []
+    rejected.extend(
+        S.as_str(item.get("reason"))
+        for item in S.as_list(ranking.get("over_target"))
+        if S.as_str(item.get("reason"))
+    )
+    low_clip = S.as_dict(ranking.get("low_clip_count_explanation"))
+    if low_clip.get("explanation"):
+        rejected.append(S.as_str(low_clip.get("explanation")))
+    return {
+        "source_duration": generation.get("video_duration") or ctx.video_duration(),
+        "story_candidate_count": generation.get("story_candidate_count", 0),
+        "viral_candidate_count": len(S.as_list(summary.get("heatmap"))),
+        "planned_clip_count": len(plans),
+        "rendered_clip_count": None,
+        "rejected_reasons": rejected[:6],
+        "explanation": (
+            "Planning produced fewer clips than the target because available Story/Virality "
+            "signals did not yield enough distinct high-confidence candidates."
+        ),
+        "confidence": 0.65 if CI.story_v2_available(story_v2) else 0.45,
+    }

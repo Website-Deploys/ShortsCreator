@@ -17,6 +17,7 @@ These verify the *honest* contract of render execution:
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -65,7 +66,9 @@ from olympus.domain.entities.render_pipeline import (
 from olympus.editing import build_default_editing_analyzers
 from olympus.editing.pipeline import EditingPipeline
 from olympus.rendering import RenderPipeline, build_default_render_stages
-from olympus.rendering.ffmpeg_renderer import FfmpegClipRenderer
+from olympus.rendering import assets as render_assets
+from olympus.rendering import command as render_command
+from olympus.rendering.ffmpeg_renderer import FfmpegClipRenderer, _render_metadata
 from olympus.services.optimization import OptimizationService
 from olympus.services.projects import ProjectService
 from olympus.services.rendering import RenderingService
@@ -102,6 +105,362 @@ TRANSCRIPT = [
 _FAKE_MP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isomSTUB-RENDER-FIXTURE-BYTES"
 
 
+def test_video_filter_escapes_windows_subtitle_path_for_ffmpeg() -> None:
+    rendered = render_command.video_filter({}, 1080, 1920, srt_path=r"D:\Olympus\work\captions.srt")
+
+    assert "subtitles='D\\:/Olympus/work/captions.srt'" in rendered
+    assert r"\Olympus" not in rendered
+
+
+def test_video_filter_preserves_short_format_when_zooming() -> None:
+    timeline = {"tracks": [{"kind": "video", "events": [{"type": "zoom_in", "start": 0.0}]}]}
+
+    rendered = render_command.video_filter(timeline, 1080, 1920, fps=30)
+
+    assert "zoompan=z=" in rendered
+    assert "s=1080x1920:fps=30" in rendered
+    assert "eq=contrast" in rendered
+    assert "unsharp" in rendered
+
+
+def test_video_filter_consumes_face_tracking_plan() -> None:
+    timeline = {
+        "metadata": {
+            "face_tracking_plan": {
+                "mode": "single_face_tracking",
+                "crop_keyframes": [
+                    {"time": 0.0, "x_center": 0.35, "y_center": 0.42, "confidence": 0.8},
+                    {"time": 2.0, "x_center": 0.55, "y_center": 0.44, "confidence": 0.85},
+                ],
+            }
+        }
+    }
+
+    rendered = render_command.video_filter(timeline, 1080, 1920, fps=30)
+
+    assert "crop=1080:1920:x=" in rendered
+    assert "between(t,0.000,2.000)" in rendered
+    assert render_command.crop_op(timeline)["face_tracking_applied"] is True
+
+
+def test_invalid_face_tracking_falls_back_to_center_crop() -> None:
+    timeline = {
+        "metadata": {
+            "face_tracking_plan": {
+                "mode": "center_fallback",
+                "fallback_reason": "low_confidence",
+                "crop_keyframes": [],
+            }
+        }
+    }
+
+    rendered = render_command.video_filter(timeline, 1080, 1920, fps=30)
+
+    assert "crop=1080:1920," in rendered
+    assert "crop=1080:1920:x=" not in rendered
+
+
+def test_ass_caption_generation_highlights_words() -> None:
+    timeline = {
+        "metadata": {
+            "editing_v2": {
+                "caption_style": {"style": "motivational_cinematic"},
+            }
+        }
+    }
+    ass = render_command.build_ass(
+        [
+            {
+                "start": 0.0,
+                "end": 1.4,
+                "text": "never forget this truth",
+                "highlighted_words": ["never", "truth"],
+            }
+        ],
+        timeline,
+    )
+
+    assert "[V4+ Styles]" in ass
+    assert "Dialogue:" in ass
+    assert "NEVER" in ass
+    assert r"\c&H0032F4FF&" in ass
+
+
+def test_audio_video_filtergraph_includes_v2_effects() -> None:
+    timeline = {
+        "duration": 8.0,
+        "tracks": [
+            {
+                "kind": "video",
+                "events": [{"type": "hook_punch_zoom", "start": 0.0, "end": 0.8, "scale": 1.16}],
+            }
+        ],
+        "metadata": {
+            "editing_v2": {
+                "video_enhancement_plan": {"profile": "high_energy"},
+                "voice_enhancement_plan": {"filters": ["highpass", "loudnorm"]},
+            }
+        },
+    }
+
+    graph = render_command.filter_complex(timeline, 1080, 1920, 30, None)
+
+    assert "zoompan=z=" in graph
+    assert "eq=contrast" in graph
+    assert "highpass=f=80" in graph
+    assert "loudnorm=I=-16" in graph
+
+
+def test_ffmpeg_command_uses_exact_trim_reset_and_no_shortest() -> None:
+    timeline = {
+        "source_start": 3.0,
+        "source_end": 11.0,
+        "duration": 8.0,
+        "tracks": [{"kind": "video", "events": []}, {"kind": "caption", "events": []}],
+        "metadata": {},
+    }
+
+    args = render_command.build_ffmpeg_command(
+        binary="ffmpeg",
+        source_path="source.mp4",
+        output_path="out.mp4",
+        timeline=timeline,
+        width=1080,
+        height=1920,
+        fps=30,
+        video_bitrate_kbps=4500,
+        audio_bitrate_kbps=160,
+    )
+    graph = args[args.index("-filter_complex") + 1]
+
+    assert "trim=start=3.000:end=11.000,setpts=PTS-STARTPTS" in graph
+    assert "atrim=start=3.000:end=11.000,asetpts=PTS-STARTPTS" in graph
+    assert "amix=inputs=1:duration=first" in graph
+    assert "-shortest" not in args
+    assert "-ss" not in args
+    assert "-to" not in args
+    assert args[args.index("-t") + 1] == "8.000"
+
+
+def test_asset_resolution_is_honest_when_missing(tmp_path: Path) -> None:
+    timeline = {"metadata": {"v2_metadata": {"content_category": "motivational"}}}
+
+    resolved = render_assets.resolve_assets(timeline, tmp_path)
+
+    assert resolved["music"]["mixed"] is False
+    assert resolved["music"]["status"] == "unavailable"
+    assert resolved["sfx"]["mixed_count"] == 0
+
+
+def test_static_sfx_assets_are_rejected_by_default(tmp_path: Path) -> None:
+    assets = tmp_path
+    (assets / "sfx").mkdir()
+    (assets / "sfx" / "static.wav").write_bytes(b"static")
+    (assets / "sfx" / "pop.wav").write_bytes(b"pop")
+    (assets / "manifest.json").write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "id": "sfx_static",
+                        "filename": "sfx/static.wav",
+                        "type": "sfx",
+                        "categories": ["whoosh", "noise"],
+                        "usage_allowed": True,
+                        "noise_like": True,
+                        "safe_default": False,
+                    },
+                    {
+                        "id": "sfx_pop",
+                        "filename": "sfx/pop.wav",
+                        "type": "sfx",
+                        "categories": ["pop", "caption"],
+                        "usage_allowed": True,
+                        "noise_like": False,
+                        "safe_default": True,
+                        "recommended_gain_db": -15,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    timeline = {
+        "duration": 8.0,
+        "tracks": [
+            {
+                "kind": "markers",
+                "events": [{"type": "sfx_pop", "start": 0.2, "reason": "caption accent"}],
+            }
+        ],
+    }
+
+    selected = render_assets.select_sfx(timeline, assets)
+
+    assert selected["mixed_count"] == 1
+    assert selected["events"][0]["asset_id"] == "sfx_pop"
+    assert selected["safety_applied"] is True
+    assert "rejected_noise_like_sfx" in selected["skipped_reasons"]
+
+
+def test_generated_installer_does_not_create_static_whoosh() -> None:
+    source = Path("tools/install_editing_assets.py").read_text(encoding="utf-8")
+
+    assert "anoisesrc" not in source
+    assert "noise_like" in source
+    assert "sine-envelope whoosh" in source
+
+
+def test_music_gain_policy_is_audible_but_speech_first(tmp_path: Path) -> None:
+    assets = tmp_path
+    (assets / "music").mkdir()
+    (assets / "music" / "bed.wav").write_bytes(b"music")
+    (assets / "manifest.json").write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "id": "music_bed",
+                        "filename": "music/bed.wav",
+                        "type": "music",
+                        "categories": ["educational", "talking_head"],
+                        "duration": 36.0,
+                        "energy_level": 0.4,
+                        "folder_type": "generated",
+                        "usage_allowed": True,
+                        "license": "project_generated_safe",
+                        "license_verified": True,
+                        "safe_default": True,
+                        "speech_safe": True,
+                        "has_vocals": False,
+                        "loopable": True,
+                        "source": "generated_validation_asset",
+                        "quality_status": "passed",
+                        "auto_select_allowed": True,
+                        "recommended_gain_db": -30,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    selected = render_assets.select_music(
+        {"duration": 9.0, "metadata": {"v2_metadata": {"content_category": "educational"}}},
+        assets,
+    )
+
+    assert selected["mixed"] is True
+    assert selected["gain_db"] == -24.0
+    assert selected["looped"] is False
+    assert selected["duration_used"] == 9.0
+
+
+def test_render_metadata_stores_sync_validation_warning() -> None:
+    metadata = _render_metadata(
+        {"duration": 8.0, "source_start": 0.0, "source_end": 8.0, "metadata": {}},
+        logs=[],
+        probe={
+            "format": {"duration": "7.600"},
+            "streams": [
+                {"codec_type": "video", "duration": "7.600"},
+                {"codec_type": "audio", "duration": "7.200"},
+            ],
+        },
+    )
+
+    assert metadata["sync_validation"]["passed"] is False
+    assert metadata["duration_validation"]["passed"] is False
+    assert metadata["sync_validation"]["audio_video_delta"] == -0.4
+
+
+def test_render_metadata_preserves_unified_clip_intelligence() -> None:
+    metadata = _render_metadata(
+        {
+            "clip_id": "clip_a",
+            "plan_id": "clip_a",
+            "duration": 8.0,
+            "source_start": 10.0,
+            "source_end": 18.0,
+            "metadata": {
+                "editing_v2": {
+                    "editing_style": "podcast_talking_head",
+                    "caption_style": {"highlight_words": ["constraints"]},
+                },
+                "unified_clip_intelligence": {
+                    "clip_id": "clip_a",
+                    "story_id": "story_a",
+                    "story": {"story_shape": "problem_solution"},
+                    "virality": {"hook_line": "Why do people fail?"},
+                    "trend_research": {
+                        "snapshot_id": "trend_test",
+                        "research_status": "skipped",
+                        "cache_status": "fallback",
+                        "fallback_used": True,
+                    },
+                },
+            },
+        },
+        logs=[],
+        probe={
+            "format": {"duration": "8.000"},
+            "streams": [
+                {"codec_type": "video", "duration": "8.000"},
+                {"codec_type": "audio", "duration": "8.000"},
+            ],
+        },
+    )
+
+    unified = metadata["unified_clip_intelligence"]
+    assert unified["story_id"] == "story_a"
+    assert unified["story"]["story_shape"] == "problem_solution"
+    assert unified["virality"]["hook_line"] == "Why do people fail?"
+    assert unified["trend_research"]["snapshot_id"] == "trend_test"
+    assert unified["rendering"]["sync_validation"]["passed"] is True
+
+
+def test_command_includes_music_and_sfx_inputs_when_assets_resolved(tmp_path: Path) -> None:
+    music = tmp_path / "music.wav"
+    sfx = tmp_path / "hit.wav"
+    music.write_bytes(b"music")
+    sfx.write_bytes(b"sfx")
+    timeline = {
+        "source_start": 0.0,
+        "source_end": 8.0,
+        "duration": 8.0,
+        "tracks": [{"kind": "video", "events": []}, {"kind": "caption", "events": []}],
+        "metadata": {
+            "render_assets_v2": {
+                "music": {"mixed": True, "path": str(music), "gain_db": -24},
+                "sfx": {
+                    "mixed_count": 1,
+                    "events": [{"mixed": True, "path": str(sfx), "time": 0.2, "gain_db": -12}],
+                },
+            }
+        },
+    }
+
+    args = render_command.build_ffmpeg_command(
+        binary="ffmpeg",
+        source_path="source.mp4",
+        output_path="out.mp4",
+        timeline=timeline,
+        width=1080,
+        height=1920,
+        fps=30,
+        video_bitrate_kbps=4500,
+        audio_bitrate_kbps=160,
+    )
+
+    assert str(music) in args
+    assert str(sfx) in args
+    assert "-filter_complex" in args
+    graph = args[args.index("-filter_complex") + 1]
+    assert "amix=inputs=3" in graph
+    assert "duration=first" in graph
+    assert "apad,atrim=0:8.000" in graph
+
+
 class StubClipRenderer(ClipRenderer):
     """A test renderer that writes a real file (exercises the COMPLETED path).
 
@@ -133,7 +492,52 @@ class StubClipRenderer(ClipRenderer):
             audio_sample_rate=48000,
             size_bytes=len(_FAKE_MP4),
             logs=[f"[stub] rendered {spec.clip_id} at {spec.width}x{spec.height}"],
+            metadata={
+                "music_mixed": False,
+                "sfx_mixed_count": 0,
+                "voice_enhancement_applied": True,
+                "video_enhancement_applied": True,
+            },
         )
+
+
+class CaptionProofStubRenderer(StubClipRenderer):
+    """A stub whose metadata proves the pre-manifest caption render steps."""
+
+    async def render_clip(self, spec: ClipRenderSpec, storage: StoragePort) -> ClipRenderOutput:
+        output = await super().render_clip(spec, storage)
+        output.metadata.update(
+            {
+                "caption_render_validation": {
+                    "captions_planned": True,
+                    "ass_file_exists": True,
+                    "ass_event_count": 2,
+                    "ass_styles_count": 6,
+                    "ffmpeg_filter_present": True,
+                    "render_manifest_confirmed": False,
+                    "output_exists": True,
+                    "passed": True,
+                    "warnings": [],
+                },
+                "caption_intelligence_v2": {
+                    "style_decision": {"caption_style": "clean_podcast"},
+                    "validation": {
+                        "captions_planned": True,
+                        "captions_rendered": True,
+                        "render_manifest_confirmed": False,
+                        "passed": True,
+                        "warnings": [],
+                    },
+                },
+                "render_effects_v2": {
+                    "captions": {
+                        "included": True,
+                        "validation": {"passed": True},
+                    }
+                },
+            }
+        )
+        return output
 
 
 @pytest.fixture
@@ -197,33 +601,8 @@ def _analysis() -> Analysis:
 
 def _planning() -> ClipPlanningAnalysis:
     now = utc_now()
-    plan = {
-        "id": "clip_a",
-        "rank": 1,
-        "source_video": {"filename": "clip.mp4", "storage_key": "uploads/u1/source.mp4"},
-        "start": 0.0,
-        "end": 40.0,
-        "duration": 40.0,
-        "start_frame": 0,
-        "end_frame": 1200,
-        "fps": 30,
-        "scores": {"hook": 0.7},
-        "quality_score": 0.72,
-        "confidence": 0.6,
-        "explanation": "test clip",
-        "evidence": [],
-        "alternatives": [],
-        "blueprint": {
-            "opening_hook": {"text": "Why do people fail?", "timestamp": 0.0, "evidence": "q"},
-            "pacing": {"value": "fast", "reason": "dense"},
-            "aspect_ratio": {"value": "9:16", "reason": "vertical"},
-            "subtitle_style": {"style": "karaoke", "reason": "fast"},
-            "zoom_suggestions": [{"timestamp": 5.0, "reason": "emphasis"}],
-            "jump_cuts": [{"timestamp": 7.0, "reason": "filler removal"}],
-            "scene_cuts": {"cuts": [], "note": "none"},
-            "speaker_switches": {"switches": [], "note": "single"},
-        },
-    }
+    plans = _plans(1)
+    plans[0]["id"] = "clip_a"
     return ClipPlanningAnalysis(
         project_id="placeholder",
         pipeline_version="1",
@@ -234,10 +613,58 @@ def _planning() -> ClipPlanningAnalysis:
             PlanningStageResult(
                 stage="ranking",
                 status=PlanningStageStatus.COMPLETED,
-                data={"plan_count": 1, "plans": [plan]},
+                data={"plan_count": len(plans), "plans": plans},
             )
         ],
     )
+
+
+def _planning_many(count: int) -> ClipPlanningAnalysis:
+    planning = _planning()
+    plans = _plans(count)
+    planning.stages[0].data = {"plan_count": len(plans), "plans": plans}
+    return planning
+
+
+def _plans(count: int) -> list[dict[str, object]]:
+    plans: list[dict[str, object]] = []
+    for index in range(count):
+        start = float(index * 12)
+        end = start + 10.0
+        plans.append(
+            {
+                "id": f"clip_{index}",
+                "rank": index + 1,
+                "source_video": {"filename": "clip.mp4", "storage_key": "uploads/u1/source.mp4"},
+                "start": start,
+                "end": end,
+                "duration": end - start,
+                "start_frame": round(start * 30),
+                "end_frame": round(end * 30),
+                "fps": 30,
+                "scores": {"hook": 0.7},
+                "quality_score": 0.72,
+                "confidence": 0.6,
+                "explanation": "test clip",
+                "evidence": [],
+                "alternatives": [],
+                "blueprint": {
+                    "opening_hook": {
+                        "text": "Why do people fail?",
+                        "timestamp": start,
+                        "evidence": "q",
+                    },
+                    "pacing": {"value": "fast", "reason": "dense"},
+                    "aspect_ratio": {"value": "9:16", "reason": "vertical"},
+                    "subtitle_style": {"style": "karaoke", "reason": "fast"},
+                    "zoom_suggestions": [{"timestamp": start + 5.0, "reason": "emphasis"}],
+                    "jump_cuts": [{"timestamp": start + 7.0, "reason": "filler removal"}],
+                    "scene_cuts": {"cuts": [], "note": "none"},
+                    "speaker_switches": {"switches": [], "note": "single"},
+                },
+            }
+        )
+    return plans
 
 
 async def _editing(storage: LocalStorage, analysis: Analysis, planning: ClipPlanningAnalysis):
@@ -369,8 +796,108 @@ async def test_stub_render_produces_manifest_and_files(
     rv = manifest.renders[0]
     assert rv.checksum and rv.checksum.startswith("sha256:")
     assert rv.subtitles_included is True
+    assert rv.metadata["voice_enhancement_applied"] is True
+    assert rv.metadata["video_enhancement_applied"] is True
+    assert rv.metadata["music_mixed"] is False
+    assert rv.metadata["copyright_safety_v2"]["overall"]["risk_level"] == "unknown"
+    assert rv.metadata["copyright_safety_v2"]["manual_review"]["required"] is True
+    assert rv.metadata["copyright_safety_v2"]["overall"]["disclaimer"] == (
+        "This is a technical risk assessment, not legal advice."
+    )
+    assert rv.metadata["unified_clip_intelligence"]["copyright_safety"][
+        "manual_review_required"
+    ] is True
+    upload_metadata = rv.metadata["upload_metadata_v2"]
+    assert upload_metadata["generator_version"] == "2"
+    assert upload_metadata["youtube_shorts"]["title"]
+    assert upload_metadata["universal"]["manual_review_required"] is True
+    assert upload_metadata["artifact"]["status"] == "available"
+    assert await storage.exists(upload_metadata["artifact"]["storage_key"])
+    assert rv.metadata["unified_clip_intelligence"]["upload_metadata"][
+        "youtube_title"
+    ] == upload_metadata["youtube_shorts"]["title"]
     assert manifest.render_id and manifest.rendering_version
     assert manifest.timeline_version == editing.pipeline_version
+
+
+async def test_upload_metadata_failure_does_not_block_manifest(
+    storage: LocalStorage,
+    run_repo: StorageRenderRunRepository,
+    manifest_store,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from olympus.rendering import stages as render_stages
+
+    def fail_metadata(**_kwargs: object) -> object:
+        raise RuntimeError("metadata test failure")
+
+    monkeypatch.setattr(render_stages, "generate_upload_metadata", fail_metadata)
+    analysis, planning = _analysis(), _planning()
+    editing = await _editing(storage, analysis, planning)
+    project = _project()
+    await storage.put(project.storage_key, _FAKE_MP4, content_type="video/mp4")
+
+    run = await _render_pipeline(run_repo).run(
+        project, storage, StubClipRenderer(), manifest_store, editing=editing
+    )
+    manifest = await manifest_store.load(project.id)
+
+    assert run.stage("generate_render_manifest").status is RenderStageStatus.COMPLETED
+    assert manifest is not None
+    upload_metadata = manifest.renders[0].metadata["upload_metadata_v2"]
+    assert upload_metadata["status"] == "unavailable"
+    assert "metadata test failure" in upload_metadata["reason"]
+
+
+async def test_manifest_confirms_caption_render_truth(
+    storage: LocalStorage, run_repo: StorageRenderRunRepository, manifest_store
+) -> None:
+    analysis, planning = _analysis(), _planning()
+    editing = await _editing(storage, analysis, planning)
+    project = _project()
+    await storage.put(project.storage_key, _FAKE_MP4, content_type="video/mp4")
+
+    run = await _render_pipeline(run_repo).run(
+        project,
+        storage,
+        CaptionProofStubRenderer(),
+        manifest_store,
+        editing=editing,
+    )
+    manifest = await manifest_store.load(project.id)
+
+    assert run.stage("generate_render_manifest").status is RenderStageStatus.COMPLETED
+    assert manifest is not None
+    metadata = manifest.renders[0].metadata
+    assert metadata["caption_render_validation"]["render_manifest_confirmed"] is True
+    assert metadata["caption_render_validation"]["passed"] is True
+    assert metadata["caption_intelligence_v2"]["validation"][
+        "render_manifest_confirmed"
+    ] is True
+    assert metadata["unified_clip_intelligence"]["caption_intelligence"][
+        "render_validation_passed"
+    ] is True
+
+
+async def test_stub_render_produces_manifest_for_all_selected_timelines(
+    storage: LocalStorage, run_repo: StorageRenderRunRepository, manifest_store
+) -> None:
+    analysis, planning = _analysis(), _planning_many(3)
+    editing = await _editing(storage, analysis, planning)
+    project = _project()
+    await storage.put(project.storage_key, _FAKE_MP4, content_type="video/mp4")
+
+    run = await _render_pipeline(run_repo).run(
+        project, storage, StubClipRenderer(), manifest_store, editing=editing
+    )
+
+    assert run.status is RenderRunStatus.COMPLETED
+    assert run.stage("full_resolution_render").data["rendered_count"] == 3
+    manifest = await manifest_store.load(project.id)
+    assert manifest is not None
+    assert [render.clip_id for render in manifest.renders] == ["clip_0", "clip_1", "clip_2"]
+    exists = [await storage.exists(render.storage_key) for render in manifest.renders]
+    assert all(exists)
 
 
 async def test_manifest_is_what_optimization_consumes(
@@ -453,12 +980,16 @@ async def test_repository_roundtrip_and_delete(
         project, storage, StubClipRenderer(), manifest_store, editing=editing
     )
     assert await run_repo.load(project.id) is not None
-    assert await manifest_store.load(project.id) is not None
+    manifest = await manifest_store.load(project.id)
+    assert manifest is not None
+    upload_key = manifest.renders[0].metadata["upload_metadata_v2"]["artifact"]["storage_key"]
+    assert await storage.exists(upload_key)
     await run_repo.delete(project.id)
     await manifest_store.delete(project.id)
     assert await run_repo.load(project.id) is None
     assert await manifest_store.load(project.id) is None
     assert not await storage.exists(f"render/{project.id}/clips/clip_a.mp4")
+    assert not await storage.exists(upload_key)
 
 
 # --------------------------------------------------------------------------- #

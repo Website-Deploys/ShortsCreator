@@ -90,3 +90,10 @@ class ViralitySummaryResponse(BaseModel):
 
     project_id: str
     summary: dict[str, Any]
+
+
+class TrendResearchResponse(BaseModel):
+    """The persisted, JSON-safe Internet Trend Research V2 snapshot."""
+
+    project_id: str
+    internet_trend_research_v2: dict[str, Any]

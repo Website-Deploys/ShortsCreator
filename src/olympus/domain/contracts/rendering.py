@@ -129,6 +129,7 @@ class ClipRenderOutput:
     audio_sample_rate: int | None = None
     size_bytes: int | None = None
     logs: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class RendererUnavailableError(RuntimeError):
