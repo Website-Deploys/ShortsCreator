@@ -392,6 +392,95 @@ class WorkflowService:
         self.start_pool()
         return await self._require_cached(project_id)
 
+    async def repair_render_checkpoint_artifact_path(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        """Repair a stale render checkpoint only after full manifest validation."""
+
+        if self._checkpoints is None:
+            raise ValidationError("Checkpoint validation is not configured.")
+        async with self._lock:
+            workflow = await self._require(project_id)
+            project = await self._projects.get(project_id)
+            if project is None:
+                raise NotFoundError("Project not found.", details={"id": project_id})
+            rendering = workflow.job("rendering")
+            if rendering is None:
+                raise NotFoundError(
+                    "Rendering job not found.", details={"project_id": project_id}
+                )
+            previous_status = rendering.status.value
+            previous_artifact_path = rendering.checkpoint.get("artifact_path")
+            checkpoint = await self._checkpoints.repair_render_checkpoint_artifact_path(
+                rendering,
+                project_id,
+            )
+            if not checkpoint.get("valid"):
+                optimization = workflow.job("optimization")
+                return {
+                    "repaired": False,
+                    "project_id": project_id,
+                    "previous_status": previous_status,
+                    "previous_artifact_path": previous_artifact_path,
+                    "checkpoint": checkpoint,
+                    "optimization_status": optimization.status.value if optimization else None,
+                }
+
+            now = utc_now()
+            rendering.status = JobStatus.COMPLETED
+            rendering.error = None
+            rendering.finished_at = now
+            rendering.heartbeat_at = now
+            rendering.worker_id = None
+            rendering.warnings = list(
+                dict.fromkeys(
+                    [
+                        *rendering.warnings,
+                        "Render checkpoint artifact path repaired after manifest and MP4 "
+                        "validation.",
+                    ]
+                )
+            )
+            downstream_rearmed: list[str] = []
+            render_index = workflow.jobs.index(rendering)
+            for downstream in workflow.jobs[render_index + 1 :]:
+                if downstream.status is JobStatus.BLOCKED:
+                    self._reset_job(downstream)
+                    downstream_rearmed.append(downstream.stage)
+            workflow.status = WorkflowStatus.RUNNING
+            workflow.updated_at = now
+            workflow.recovery_reason = (
+                "Render checkpoint path repaired from validated canonical artifact."
+            )
+            self._scheduler.reconcile(workflow, now=now)
+            workflow.status = self._scheduler.overall_status(workflow)
+            workflow.record(
+                WorkflowEvent(
+                    ts=now,
+                    type=EventType.WORKFLOW_RESUMED,
+                    message="render checkpoint artifact path repaired",
+                    stage=rendering.stage,
+                    job_id=rendering.job_id,
+                    detail={
+                        "previous_artifact_path": previous_artifact_path,
+                        "artifact_path": checkpoint.get("artifact_path"),
+                    },
+                )
+            )
+            await self._repo.save(workflow)
+            optimization = workflow.job("optimization")
+            return {
+                "repaired": True,
+                "project_id": project_id,
+                "previous_status": previous_status,
+                "previous_artifact_path": previous_artifact_path,
+                "artifact_path": checkpoint.get("artifact_path"),
+                "checkpoint": checkpoint,
+                "downstream_rearmed": downstream_rearmed,
+                "optimization_status": optimization.status.value if optimization else None,
+            }
+
     @staticmethod
     def _reset_job(job: Job) -> None:
         job.status = JobStatus.PENDING
