@@ -366,9 +366,16 @@ def _sync_validation(
     container_duration = format_duration or 0.0
     video_duration = _to_float(video.get("duration")) or container_duration or None
     audio_duration = _to_float((audio or {}).get("duration")) or container_duration or None
+    video_start = _to_float(video.get("start_time"))
+    audio_start = _to_float((audio or {}).get("start_time"))
     av_delta = (
         audio_duration - video_duration
         if audio_duration is not None and video_duration is not None
+        else None
+    )
+    stream_start_delta = (
+        audio_start - video_start
+        if audio_start is not None and video_start is not None
         else None
     )
     duration_delta = container_duration - expected if container_duration else None
@@ -379,6 +386,11 @@ def _sync_validation(
         passed = False
     elif abs(av_delta) > 0.15:
         warnings.append(f"Audio/video stream durations differ by {abs(av_delta):.3f}s.")
+        passed = False
+    if stream_start_delta is not None and abs(stream_start_delta) > 0.04:
+        warnings.append(
+            f"Audio/video stream start times differ by {abs(stream_start_delta):.3f}s."
+        )
         passed = False
     if duration_delta is None:
         warnings.append("ffprobe did not report a container duration.")
@@ -392,7 +404,17 @@ def _sync_validation(
         "actual_video_duration": round(video_duration, 3) if video_duration is not None else None,
         "actual_audio_duration": round(audio_duration, 3) if audio_duration is not None else None,
         "audio_video_delta": round(av_delta, 3) if av_delta is not None else None,
+        "actual_video_start_time": round(video_start, 3) if video_start is not None else None,
+        "actual_audio_start_time": round(audio_start, 3) if audio_start is not None else None,
+        "stream_start_delta": (
+            round(stream_start_delta, 3) if stream_start_delta is not None else None
+        ),
         "duration_delta": round(duration_delta, 3) if duration_delta is not None else None,
+        "voice_filter_latency_compensation_seconds": C.VOICE_PROCESSING_LATENCY_SECONDS,
+        "content_marker_alignment_checked": False,
+        "validation_scope": (
+            "container and stream timing; content markers require synthetic validation"
+        ),
         "passed": passed,
         "warnings": warnings,
     }
@@ -695,7 +717,25 @@ def _render_metadata(
             "warnings": music_validation.get("warnings") or [],
         }
     music_mixed = bool(music_validation.get("mixed"))
+    source_window = copy.deepcopy(C.source_window_metadata(timeline))
+    timeline_metadata = _dict_value(meta, "timeline")
+    boundary_warnings = list(
+        dict.fromkeys(
+            [
+                *list(source_window.get("warnings") or []),
+                *list(timeline_metadata.get("boundary_warnings") or []),
+            ]
+        )
+    )
+    timeline_truth = {
+        **source_window,
+        "sync_validation": sync,
+        "duration_validation": duration,
+        "boundary_validation": _dict_value(timeline_metadata, "boundary_validation"),
+        "boundary_warnings": boundary_warnings,
+    }
     metadata = {
+        "timeline": timeline_truth,
         "editing_v2": editing,
         "render_effects_v2": {
             "captions": {
@@ -742,6 +782,7 @@ def _render_metadata(
                 "applied": True,
                 "filters": voice.get("filters"),
                 "target": voice.get("loudness_target"),
+                "latency_compensation_seconds": C.VOICE_PROCESSING_LATENCY_SECONDS,
             },
             "video_enhancement": {
                 "applied": True,

@@ -27,6 +27,7 @@ _TRANSITION_TOKENS = ("transition", "crossfade", "dissolve", "fade")
 _BROLL_TOKENS = ("broll", "b_roll", "b-roll")
 _MUSIC_TOKENS = ("music",)
 _SFX_TOKENS = ("sfx", "impact", "whoosh", "pop", "riser", "hit")
+VOICE_PROCESSING_LATENCY_SECONDS = 0.025
 
 
 # -- coercion (local, to keep this module engine-independent) -----------------
@@ -66,22 +67,52 @@ def _matches(event_type: str, tokens: tuple[str, ...]) -> bool:
 
 
 # -- source range ------------------------------------------------------------
-def source_range(timeline: dict[str, Any]) -> tuple[float, float]:
-    """The (start, end) range in the *source* video this clip is taken from."""
+def source_window_metadata(timeline: dict[str, Any]) -> dict[str, Any]:
+    """Return canonical repaired-window truth with a legacy-safe fallback."""
+
+    direct = _as_dict(timeline.get("source_window_v1"))
+    nested = _as_dict(_as_dict(timeline.get("metadata")).get("timeline"))
+    for canonical in (direct, nested):
+        repaired_start = _as_float(canonical.get("repaired_start_seconds"), -1.0)
+        repaired_end = _as_float(canonical.get("repaired_end_seconds"), -1.0)
+        if repaired_start >= 0.0 and repaired_end > repaired_start:
+            return canonical
 
     start = _as_float(timeline.get("source_start"))
     end = _as_float(timeline.get("source_end"))
     if end <= start:
-        end = start + _as_float(timeline.get("duration"))
-    return start, end
+        end = start + max(0.1, _as_float(timeline.get("duration"), 0.1))
+    return {
+        "contract_version": "legacy",
+        "project_id": timeline.get("project_id"),
+        "clip_id": timeline.get("clip_id"),
+        "requested_start_seconds": start,
+        "requested_end_seconds": end,
+        "repaired_start_seconds": start,
+        "repaired_end_seconds": end,
+        "duration_seconds": end - start,
+        "preroll_seconds": 0.0,
+        "postroll_seconds": 0.0,
+        "boundary_repair_applied": False,
+        "start_reason": "legacy timeline fallback",
+        "end_reason": "legacy timeline fallback",
+        "warnings": ["Canonical repaired source-window metadata was unavailable."],
+    }
+
+
+def source_range(timeline: dict[str, Any]) -> tuple[float, float]:
+    """The (start, end) range in the *source* video this clip is taken from."""
+
+    source_window = source_window_metadata(timeline)
+    return (
+        _as_float(source_window.get("repaired_start_seconds")),
+        _as_float(source_window.get("repaired_end_seconds")),
+    )
 
 
 def expected_duration(timeline: dict[str, Any]) -> float:
     start, end = source_range(timeline)
-    duration = _as_float(timeline.get("duration"), end - start)
-    if duration <= 0:
-        duration = max(0.1, end - start)
-    return max(0.1, duration)
+    return max(0.1, end - start)
 
 
 # -- video / audio segments --------------------------------------------------
@@ -841,6 +872,16 @@ def voice_filter_chain() -> str:
     )
 
 
+def voice_timing_compensation_filter() -> str:
+    """Advance speech by the deterministic latency measured in the voice chain."""
+
+    return (
+        f"asetpts=PTS-STARTPTS-{VOICE_PROCESSING_LATENCY_SECONDS:.3f}/TB,"
+        "atrim=start=0,asetpts=PTS-STARTPTS,"
+        "aresample=48000:async=1:first_pts=0"
+    )
+
+
 def _audio_filter_complex(
     timeline: dict[str, Any], duration: float, start: float, end: float
 ) -> tuple[list[str], list[str]]:
@@ -850,7 +891,8 @@ def _audio_filter_complex(
     voice_label = "voice"
     parts = [
         f"[0:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS,"
-        f"{voice_filter_chain()},apad,atrim=0:{duration:.3f},asetpts=PTS-STARTPTS[voice]"
+        f"{voice_filter_chain()},{voice_timing_compensation_filter()},"
+        f"apad,atrim=0:{duration:.3f},asetpts=PTS-STARTPTS[voice]"
     ]
     inputs = ["[voice]"]
     if music.get("mixed") and music.get("path"):
@@ -977,7 +1019,6 @@ def build_ffmpeg_command(
     bitrate/fps. This is exactly what the FFmpeg renderer executes.
     """
 
-    duration = expected_duration(timeline)
     args = [
         binary,
         "-y",
@@ -1009,8 +1050,6 @@ def build_ffmpeg_command(
             "48000",
             "-b:a",
             f"{audio_bitrate_kbps}k",
-            "-t",
-            f"{duration:.3f}",
             "-movflags",
             "+faststart",
             output_path,
@@ -1027,7 +1066,8 @@ def build_ffprobe_command(*, binary: str, path: str) -> list[str]:
         "-v",
         "error",
         "-show_entries",
-        "format=duration,bit_rate:stream=codec_type,codec_name,width,height,sample_rate,r_frame_rate,duration",
+        "format=duration,start_time,bit_rate:stream=codec_type,codec_name,width,height,"
+        "sample_rate,r_frame_rate,duration,start_time",
         "-of",
         "json",
         path,

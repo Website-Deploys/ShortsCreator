@@ -481,6 +481,36 @@ def _merge_fast_adjacent_events(events: list[dict[str, Any]]) -> list[dict[str, 
     return merged
 
 
+def _bounded_word_timings(
+    values: object,
+    clip_duration: float,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    bounded: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for raw in T.as_list(values):
+        item = T.as_dict(raw)
+        start = T.as_float(item.get("start"), -1.0)
+        end = T.as_float(item.get("end"), -1.0)
+        if end <= 0.0 or start >= clip_duration or end <= start:
+            warnings.append("A caption word outside the repaired clip window was removed.")
+            continue
+        bounded_start = max(0.0, start)
+        bounded_end = min(clip_duration, end)
+        if bounded_end <= bounded_start:
+            warnings.append("A caption word with no in-window duration was removed.")
+            continue
+        if abs(bounded_start - start) > 0.001 or abs(bounded_end - end) > 0.001:
+            warnings.append("A caption word was clipped to the repaired clip window.")
+        bounded.append(
+            {
+                **item,
+                "start": T.round3(bounded_start),
+                "end": T.round3(bounded_end),
+            }
+        )
+    return bounded, warnings
+
+
 def timed_caption_events(
     chunks: list[dict[str, Any]], clip_duration: float
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -528,7 +558,14 @@ def timed_caption_events(
             continue
         for timed in timed_group:
             chunk = T.as_dict(timed.get("chunk"))
-            start = max(0.0, T.as_float(timed.get("start")))
+            raw_start = T.as_float(timed.get("start"))
+            raw_end = T.as_float(timed.get("end"))
+            if raw_end <= 0.0 or raw_start >= clip_duration:
+                warnings.append("A caption outside the repaired clip window was removed.")
+                continue
+            start = max(0.0, raw_start)
+            if raw_start < 0.0:
+                warnings.append("A negative caption start was shifted to the repaired clip origin.")
             available_duration = max(0.0, clip_duration - start)
             if available_duration < settings.min_display_time_seconds - 0.001:
                 warnings.append(
@@ -536,11 +573,13 @@ def timed_caption_events(
                     "the clip boundary and was skipped."
                 )
                 continue
-            raw_end = min(clip_duration, T.as_float(timed.get("end")))
+            if raw_end > clip_duration:
+                warnings.append("A caption end was clipped to the repaired clip duration.")
+            bounded_raw_end = min(clip_duration, raw_end)
             end = min(
                 clip_duration,
                 start + settings.max_display_time_seconds,
-                max(raw_end, start + settings.min_display_time_seconds),
+                max(bounded_raw_end, start + settings.min_display_time_seconds),
             )
             if end <= start:
                 warnings.append(
@@ -551,6 +590,11 @@ def timed_caption_events(
             if not text:
                 continue
             timing_source = T.as_str(chunk.get("timing_source")) or "estimated"
+            word_timings, word_warnings = _bounded_word_timings(
+                chunk.get("word_timings"),
+                clip_duration,
+            )
+            warnings.extend(word_warnings)
             events.append(
                 T.event(
                     "caption",
@@ -565,7 +609,7 @@ def timed_caption_events(
                     evidence=[{"type": "transcript", "detail": text[:80]}],
                     text=text,
                     speaker=chunk.get("speaker"),
-                    word_timings=T.as_list(chunk.get("word_timings")),
+                    word_timings=word_timings,
                     timing_source=timing_source,
                     timing_quality=T.as_str(chunk.get("timing_quality")) or "segment_level",
                     estimated=timing_source != "word_level",
