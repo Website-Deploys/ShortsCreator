@@ -3,16 +3,16 @@
 Persists a project's render-run state (the pipeline's progress) through the
 storage abstraction, mirroring the other engines' repository layout:
 
-- An **index** at ``render/{project_id}/run/index.json`` (overall status +
-  per-stage summaries).
+- An **index** at ``render/{project_id}/run/index.json`` (overall status,
+  per-stage summaries, and the published manifest once available).
 - One **stage artifact** per stage at
   ``render/{project_id}/run/stages/{stage}.json`` holding that stage's full
   result (including its logs and built render plan).
 
-The rendered MP4s themselves live under ``render/{project_id}/clips/`` and the
-published manifest at ``render/{project_id}/index.json`` (written by the manifest
-store), so run state never collides with output. A database-backed
-implementation can later replace this behind the same contract.
+The rendered MP4s themselves live under ``render/{project_id}/clips/``. The old
+root manifest remains a compatibility copy, while the run index is now the
+canonical checkpoint handoff. A database-backed implementation can later replace
+this behind the same contract.
 """
 
 from __future__ import annotations

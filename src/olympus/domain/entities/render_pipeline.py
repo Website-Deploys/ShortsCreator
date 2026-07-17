@@ -178,7 +178,7 @@ class RenderRun:
         return next((s for s in self.stages if s.stage == name), None)
 
     def index(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "project_id": self.project_id,
             "pipeline_version": self.pipeline_version,
             "status": self.status.value,
@@ -186,6 +186,10 @@ class RenderRun:
             "updated_at": self.updated_at.isoformat(),
             "stages": [s.summary() for s in self.stages],
         }
+        manifest_stage = self.stage("generate_render_manifest")
+        if manifest_stage is not None and isinstance(manifest_stage.data.get("manifest"), dict):
+            payload["render_manifest"] = manifest_stage.data["manifest"]
+        return payload
 
 
 def _parse_dt(value: Any) -> datetime | None:

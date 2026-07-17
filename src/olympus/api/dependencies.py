@@ -269,8 +269,18 @@ def rendering_service_provider() -> RenderingService:
     """
 
     storage = build_storage()
+    settings = get_settings()
 
     async def _start_optimization(project: object, _run: object) -> None:
+        project_id = str(getattr(project, "id", ""))
+        checkpoint = await CheckpointValidator(
+            storage,
+            ffprobe_binary=settings.rendering.ffprobe_binary,
+        ).inspect_render(project_id)
+        if not checkpoint.get("valid"):
+            warnings = [str(item) for item in checkpoint.get("warnings", []) if item]
+            detail = warnings[0] if warnings else "render checkpoint is invalid"
+            raise RuntimeError(f"Optimization handoff blocked: {detail}")
         await optimization_service_provider().start(project)  # type: ignore[arg-type]
 
     return RenderingService(
@@ -451,7 +461,10 @@ def build_workflow_service(*, run_in_process: bool | None = None) -> WorkflowSer
         ),
         worker_poll_interval_seconds=settings.durable_jobs.worker_poll_interval_seconds,
         lock_manager=durable_store.locks if durable_store is not None else None,
-        checkpoint_validator=CheckpointValidator(storage),
+        checkpoint_validator=CheckpointValidator(
+            storage,
+            ffprobe_binary=settings.rendering.ffprobe_binary,
+        ),
         max_logs_tail_chars=settings.durable_jobs.max_logs_tail_chars,
     )
 
