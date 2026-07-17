@@ -8,6 +8,8 @@ import { mediaUrls } from "@/lib/apiClient";
 import {
   useActivateCreatorProfile,
   useBobaBrain,
+  useBobaCreatorMemory,
+  useBobaProjectMemory,
   useCreateCreatorProfile,
   useCreatorProfiles,
   useExportCreatorProfile,
@@ -21,6 +23,8 @@ import { formatBytes, formatDuration, isTerminal } from "@/lib/rendering";
 import type {
   ClipFeedbackInput,
   BobaBrainStateV1,
+  BobaCreatorMemoryV1,
+  BobaProjectMemoryV1,
   ClipPlan,
   CreatorProfileV2,
   RenderRun,
@@ -1008,8 +1012,69 @@ function bobaClipSummary(render: RenderedVideo) {
     editorialPolicy: asString(boba.editorial_policy_summary),
     missingSignals: asArray(boba.missing_signals).map(asString).filter(Boolean),
     warnings: asArray(boba.warnings).map(asString).filter(Boolean),
+    memoryUsed: asArray(boba.memory_used).map(asString).filter(Boolean),
     applied: boba.applied === true,
   };
+}
+
+function BobaMemoryPanel({
+  projectMemory,
+  creatorMemory,
+}: {
+  projectMemory: BobaProjectMemoryV1 | null | undefined;
+  creatorMemory: BobaCreatorMemoryV1 | null | undefined;
+}) {
+  return (
+    <section className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Memory</p>
+          <p className="text-xs text-muted">
+            Local, explicit, bounded memory. No cloud sync or passive learning.
+          </p>
+        </div>
+        <span className="rounded bg-cyan-300/10 px-2 py-1 text-[11px] text-cyan-100">
+          {projectMemory ? `${projectMemory.memory_records.length} project record(s)` : "Not available"}
+        </span>
+      </div>
+      {projectMemory ? (
+        <div className="mt-3 grid gap-2 text-xs text-muted sm:grid-cols-2">
+          <p className="sm:col-span-2">What BOBA remembers: {projectMemory.source_summary || "Not available"}</p>
+          <p>Selected / rejected: {projectMemory.selected_clip_ids.length} / {projectMemory.rejected_clip_ids.length}</p>
+          <p>Used source ranges: {projectMemory.used_source_ranges.length}</p>
+          <p className="sm:col-span-2">
+            Unused opportunities: {projectMemory.unused_opportunities.slice(0, 3).join("; ") || "Not available"}
+          </p>
+          {projectMemory.known_limitations.length > 0 && (
+            <p className="sm:col-span-2 text-amber-100">
+              Known limitations: {projectMemory.known_limitations.slice(0, 3).join("; ")}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">Project Memory Summary is not available.</p>
+      )}
+      <div className="mt-3 border-t border-white/10 pt-3 text-xs text-muted">
+        <p className="font-semibold text-white">Creator memory</p>
+        {creatorMemory ? (
+          <>
+            <p className="mt-1">{creatorMemory.style_summary || "No style summary is available."}</p>
+            <p className="mt-1">
+              Learned preferences: {creatorMemory.preferred_clip_traits.slice(0, 4).join(", ") || "Not available"}
+            </p>
+            <p>
+              Avoided patterns: {creatorMemory.known_bad_patterns.slice(0, 4).join(", ") || "Not available"}
+            </p>
+            <p>
+              {creatorMemory.feedback_count} explicit feedback item(s) · {formatPercent(creatorMemory.confidence)} confidence · Reset/export available through local memory API
+            </p>
+          </>
+        ) : (
+          <p className="mt-1">Creator memory is not available.</p>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function BobaBrainPanel({ brain }: { brain: BobaBrainStateV1 | null | undefined }) {
@@ -1203,6 +1268,9 @@ function ClipCard({
                   BOBA confidence: {formatPercent(boba.confidence)} · Mode: {boba.mode.replace(/_/g, " ")}
                 </p>
                 <p>Applied to editing: {boba.applied ? "Yes" : "No, advisory only"}</p>
+                <p>
+                  Memory used: {boba.memoryUsed.length > 0 ? `${boba.memoryUsed.length} bounded record(s)` : "Not available"}
+                </p>
                 {boba.missingSignals.length > 0 && (
                   <p>Missing signals: {boba.missingSignals.slice(0, 5).join(", ")}</p>
                 )}
@@ -1733,12 +1801,21 @@ export function ResultsSection({
   const activeProfile = profilesQuery.data?.profiles.find(
     (profile) => profile.profile_id === profilesQuery.data.active_profile_id,
   );
+  const projectMemoryQuery = useBobaProjectMemory(projectId);
+  const creatorMemoryQuery = useBobaCreatorMemory(activeProfile?.profile_id);
+  const memoryPanel = (
+    <BobaMemoryPanel
+      projectMemory={projectMemoryQuery.data}
+      creatorMemory={creatorMemoryQuery.data}
+    />
+  );
 
   if (renders.length > 0) {
     return (
       <div className="space-y-4">
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
+        {memoryPanel}
         {renders.map((rendered) => (
           <ClipCard
             key={rendered.clip_id}
@@ -1757,6 +1834,7 @@ export function ResultsSection({
       <div className="space-y-4">
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
+        {memoryPanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
           title="Generating clips from the full video"
@@ -1771,6 +1849,7 @@ export function ResultsSection({
       <div className="space-y-4">
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
+        {memoryPanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
           title="Rendering selected clips"
@@ -1785,6 +1864,7 @@ export function ResultsSection({
     <div className="space-y-4">
       <PersonalizationPanel />
       <BobaBrainPanel brain={bobaQuery.data} />
+      {memoryPanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}
         title="No rendered clips yet"

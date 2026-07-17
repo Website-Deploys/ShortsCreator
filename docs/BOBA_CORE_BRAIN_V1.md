@@ -123,7 +123,8 @@ work/boba/projects/<project_id>/
 
 Memory rules:
 
-- project memory is fully supported;
+- BOBA Core project state is fully supported; BOBA Memory System V1 now adds bounded project,
+  creator, and seeded global long-term scopes under `work/boba/memory/`.
 - creator/global learning is interface-only;
 - all text is bounded by `max_excerpt_chars`;
 - secret-like keys or credential-like text are rejected;
@@ -286,7 +287,8 @@ stores large transcript/lyric/script text in global memory.
 - BOBA is advisory and does not control Planning or Editing.
 - It does not scout YouTube or other platforms.
 - It does not consume real post-publication analytics.
-- Creator/global learning is interface-only; project memory is the only implemented scope.
+- Creator/global memory is implemented by BOBA Memory System V1, but remains local,
+  explicit-feedback-only, seeded/advisory, and non-autonomous.
 - Deterministic heuristics depend on the quality of existing Olympus artifacts.
 - BOBA does not fix A/V sync perception, voice delay, random abrupt cuts, face-tracking proof, or
   music audibility. Those remain separate rendering/quality work unless independently fixed.

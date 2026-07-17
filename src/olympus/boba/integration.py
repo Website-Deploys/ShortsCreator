@@ -15,6 +15,15 @@ from olympus.boba.contracts import (
 )
 from olympus.boba.decision_bus import BobaDecisionBus
 from olympus.boba.editorial_policy import create_editorial_policy
+from olympus.boba.global_memory import build_and_save_global_memory
+from olympus.boba.memory_application import create_memory_application
+from olympus.boba.memory_contracts import BobaProjectMemoryV1
+from olympus.boba.memory_retrieval import (
+    retrieve_for_clip_decision,
+    retrieve_for_editorial_policy,
+    retrieve_for_project,
+)
+from olympus.boba.project_memory import build_and_save_project_memory
 from olympus.boba.ranking import rank_candidates
 from olympus.boba.reasoning import explain_clip_selection, summarize_project_understanding
 from olympus.boba.store import BobaMemoryStore
@@ -45,12 +54,24 @@ class BobaIntegration:
         store: BobaMemoryStore,
         *,
         mode: str = "advise",
+        memory_enabled: bool = True,
+        allow_global_memory: bool = True,
     ) -> None:
         self.storage = storage
         self.projects = StorageProjectRepository(storage)
         self.store = store
         self.brain = BobaBrain(store, mode=mode)  # type: ignore[arg-type]
         self.bus = BobaDecisionBus(store)
+        self.memory_enabled = memory_enabled
+        self.allow_global_memory = allow_global_memory
+
+    def _ensure_global_memory(self) -> None:
+        if (
+            self.memory_enabled
+            and self.allow_global_memory
+            and self.store.load_global_memory() is None
+        ):
+            build_and_save_global_memory(self.store)
 
     async def _json(self, key: str) -> dict[str, Any]:
         if not await self.storage.exists(key):
@@ -103,6 +124,19 @@ class BobaIntegration:
         )
         face_available = face.get("status") == "completed" and bool(_data(face))
         speaker_available = speakers.get("status") == "completed" and bool(_data(speakers))
+        speaker_data = _data(speakers)
+        speaker_roles = [
+            str(
+                item.get("role")
+                or item.get("name")
+                or item.get("label")
+                or item.get("speaker_id")
+                or item.get("id")
+                or ""
+            )
+            for item in _list(speaker_data.get("speakers"))
+            if isinstance(item, dict)
+        ]
         visual_available = bool(
             video.get("status") == "completed"
             and (scenes.get("status") == "completed" or face_available)
@@ -226,6 +260,7 @@ class BobaIntegration:
                 for item in micro_stories
                 if item
             ][:20],
+            "speakers_or_roles": [item for item in speaker_roles if item][:20],
             "emotional_moments": [
                 str(item.get("description") or item.get("excerpt") or "")
                 for item in _list(_data(emotions).get("turning_points"))
@@ -239,6 +274,11 @@ class BobaIntegration:
                 {"start": float(item.get("start") or 0.0), "end": float(item.get("end") or 0.0)}
                 for item in _list(_data(ranking).get("over_target"))
                 if isinstance(item, dict) and (item.get("start") is not None)
+            ],
+            "rejected_candidates": [
+                _dict(item)
+                for item in _list(_data(ranking).get("over_target"))
+                if _dict(item)
             ],
             "unused_opportunities": [
                 str(item.get("summary") or item.get("reason") or "")
@@ -255,6 +295,15 @@ class BobaIntegration:
             "safety": safety,
             "creator_profile": _dict(personalization_directives),
             "story_summary": summary_data,
+            "editing_summary": {
+                "timeline_count": len(timelines),
+                "status": editing.get("status"),
+            },
+            "render_summary": {
+                "manifest_available": manifest_available,
+                "render_count": len(_list(render_manifest.get("renders"))),
+                "status": render_manifest.get("status"),
+            },
         }
 
     async def collect_clip_signals(self, project_id: str, clip_id: str) -> dict[str, Any]:
@@ -283,6 +332,23 @@ class BobaIntegration:
     async def generate_boba_for_project(self, project_id: str) -> BobaBrainStateV1:
         signals = await self.collect_project_signals(project_id)
         state = self.brain.create_brain_state(project_id, signals)
+        memory_application = None
+        if self.memory_enabled:
+            self._ensure_global_memory()
+            build_and_save_project_memory(
+                self.store,
+                project_id,
+                signals,
+                decisions=self.store.list_decisions(project_id),
+            )
+            creator_profile_id = (
+                str(_dict(signals.get("creator_profile")).get("profile_id") or "")
+                or None
+            )
+            retrieval = retrieve_for_project(self.store, project_id, creator_profile_id)
+            memory_application = create_memory_application(
+                project_id, "planning", retrieval
+            )
         explanation = summarize_project_understanding(signals)
         decision = BobaDecisionV1(
             decision_id=new_id("decision"),
@@ -307,9 +373,27 @@ class BobaIntegration:
                 "priority": 40,
                 "constraints": ["Do not present advisory reasoning as applied editing."],
             },
+            memory_application_v1=memory_application,
         )
         self.brain.register_decision(project_id, decision)
+        if self.memory_enabled:
+            build_and_save_project_memory(
+                self.store,
+                project_id,
+                signals,
+                decisions=self.store.list_decisions(project_id),
+            )
         return self.store.load_brain_state(project_id) or state
+
+    async def build_project_memory(self, project_id: str) -> BobaProjectMemoryV1:
+        signals = await self.collect_project_signals(project_id)
+        self._ensure_global_memory()
+        return build_and_save_project_memory(
+            self.store,
+            project_id,
+            signals,
+            decisions=self.store.list_decisions(project_id),
+        )
 
     async def rank_project_candidates(self, project_id: str) -> BobaClipRankingV1:
         signals = await self.collect_project_signals(project_id)
@@ -319,7 +403,56 @@ class BobaIntegration:
         ranking = rank_candidates(
             project_id,
             candidates,
+            used_source_ranges=_list(signals.get("already_selected_ranges")),
         )
+        if self.memory_enabled:
+            self._ensure_global_memory()
+            if self.store.load_project_memory(project_id) is None:
+                build_and_save_project_memory(
+                    self.store,
+                    project_id,
+                    signals,
+                    decisions=self.store.list_decisions(project_id),
+                )
+            creator_profile_id = (
+                str(_dict(signals.get("creator_profile")).get("profile_id") or "")
+                or None
+            )
+            clip_traits = [
+                str(signals.get("content_niche") or "unknown"),
+                *[str(item) for item in _list(signals.get("main_topics"))[:8]],
+            ]
+            retrieval = retrieve_for_clip_decision(
+                self.store, project_id, clip_traits, creator_profile_id
+            )
+            application = create_memory_application(project_id, "ranking", retrieval)
+            if any(
+                item.get("field") == "emotional_payoff_advisory"
+                for item in application.adjustments
+            ):
+                for insight in ranking.ranked_candidates:
+                    delta = min(0.08, 0.08 * insight.emotional_strength)
+                    insight.overall_recommendation = round(
+                        min(1.0, insight.overall_recommendation + delta), 3
+                    )
+                    insight.reasons = list(
+                        dict.fromkeys(
+                            [
+                                *insight.reasons,
+                                "bounded creator-memory emotional-payoff advisory",
+                            ]
+                        )
+                    )
+                ranking.ranked_candidates.sort(
+                    key=lambda item: item.overall_recommendation, reverse=True
+                )
+            ranking.memory_application_v1 = application
+            if application.memory_used:
+                ranking.reasoning_summary = (
+                    f"{ranking.reasoning_summary} BOBA consulted "
+                    f"{len(application.memory_used)} local memory record(s); "
+                    "only bounded advisory adjustments were allowed."
+                )[:800]
         self.store.save_candidate_ranking(ranking)
         return ranking
 
@@ -341,6 +474,38 @@ class BobaIntegration:
                 "manual_review_required": signals.get("safety_manual_review_required"),
             },
         )
+        memory_application = None
+        if self.memory_enabled:
+            self._ensure_global_memory()
+            if self.store.load_project_memory(project_id) is None:
+                build_and_save_project_memory(
+                    self.store,
+                    project_id,
+                    signals,
+                    decisions=self.store.list_decisions(project_id),
+                )
+            creator_profile_id = (
+                str(_dict(signals.get("creator_profile")).get("profile_id") or "")
+                or None
+            )
+            retrieval = retrieve_for_editorial_policy(
+                self.store, project_id, clip_id, creator_profile_id
+            )
+            memory_application = create_memory_application(
+                project_id,
+                "editorial_policy",
+                retrieval,
+                clip_id=clip_id,
+            )
+            policy.memory_application_v1 = memory_application
+            if any(
+                item.get("field") == "ending_hold_advisory"
+                for item in memory_application.adjustments
+            ):
+                policy.ending_directives = {
+                    **policy.ending_directives,
+                    "memory_advisory": "preserve_payoff_tail",
+                }
         self.store.save_editorial_policy(policy)
         explanation = explain_clip_selection(
             {
@@ -379,6 +544,7 @@ class BobaIntegration:
                 "priority": 60,
                 "constraints": policy.safety_constraints,
             },
+            memory_application_v1=memory_application,
         )
         self.bus.register_decision(project_id, decision)
         return policy

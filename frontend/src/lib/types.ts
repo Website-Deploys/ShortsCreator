@@ -938,6 +938,79 @@ export interface BobaBrainStateV1 {
   };
 }
 
+export interface BobaProjectMemoryV1 {
+  project_id: string;
+  created_at: string;
+  updated_at: string;
+  version: "1";
+  source_summary: string;
+  video_duration?: number | null;
+  main_topics: string[];
+  speakers_or_roles: string[];
+  story_threads: string[];
+  emotional_moments: string[];
+  candidate_count: number;
+  selected_clip_ids: string[];
+  rejected_clip_ids: string[];
+  used_source_ranges: Array<{ start: number; end: number }>;
+  unused_opportunities: string[];
+  decisions_count: number;
+  feedback_count: number;
+  known_limitations: string[];
+  memory_records: string[];
+  warnings: string[];
+}
+
+export interface BobaCreatorMemoryV1 {
+  creator_memory_id: string;
+  creator_profile_id: string;
+  created_at: string;
+  updated_at: string;
+  version: "1";
+  learning_enabled: boolean;
+  explicit_feedback_only: true;
+  style_summary: string;
+  preferred_clip_traits: string[];
+  avoided_clip_traits: string[];
+  preferred_hook_styles: string[];
+  avoided_hook_styles: string[];
+  preferred_title_styles: string[];
+  avoided_title_styles: string[];
+  preferred_caption_styles: string[];
+  avoided_caption_styles: string[];
+  preferred_music_moods: string[];
+  avoided_music_moods: string[];
+  preferred_motion_styles: string[];
+  avoided_motion_styles: string[];
+  banned_hashtags: string[];
+  preferred_hashtags: string[];
+  known_good_patterns: string[];
+  known_bad_patterns: string[];
+  feedback_count: number;
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaGlobalMemoryV1 {
+  global_memory_id: string;
+  created_at: string;
+  updated_at: string;
+  version: "1";
+  principles: string[];
+  platform_patterns: string[];
+  hook_patterns: string[];
+  editing_patterns: string[];
+  caption_patterns: string[];
+  music_patterns: string[];
+  motion_patterns: string[];
+  metadata_patterns: string[];
+  safety_principles: string[];
+  known_limitations: string[];
+  source_attribution: string[];
+  confidence: number;
+  warnings: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;
