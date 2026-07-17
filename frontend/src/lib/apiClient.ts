@@ -69,6 +69,9 @@ import type {
   AlertsResponse,
   AuditResponse,
   BobaBrainStateV1,
+  BobaCreatorMemoryV1,
+  BobaGlobalMemoryV1,
+  BobaProjectMemoryV1,
   CostEstimate,
   EnginesResponse,
   FailuresResponse,
@@ -147,6 +150,11 @@ export const api = {
   getProject: (id: string) => request<Project>(`/projects/${id}`),
   getBobaBrain: (id: string) =>
     request<BobaBrainStateV1>(`/boba/projects/${id}/brain`),
+  getBobaProjectMemory: (id: string) =>
+    request<BobaProjectMemoryV1>(`/boba/memory/projects/${id}`),
+  getBobaCreatorMemory: (profileId: string) =>
+    request<BobaCreatorMemoryV1>(`/boba/memory/creators/${profileId}`),
+  getBobaGlobalMemory: () => request<BobaGlobalMemoryV1>("/boba/memory/global"),
   createProject: (input: CreateProjectInput) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify(input) }),
   createProjectFromLink: (input: CreateProjectFromLinkInput) =>

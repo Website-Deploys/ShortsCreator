@@ -48,6 +48,8 @@ import type {
   AlertsResponse,
   AuditResponse,
   BobaBrainStateV1,
+  BobaCreatorMemoryV1,
+  BobaProjectMemoryV1,
   CostEstimate,
   EnginesResponse,
   FailuresResponse,
@@ -64,6 +66,8 @@ export const queryKeys = {
   projects: ["projects"] as const,
   project: (id: string) => ["projects", id] as const,
   bobaBrain: (id: string) => ["boba", "projects", id, "brain"] as const,
+  bobaProjectMemory: (id: string) => ["boba", "memory", "projects", id] as const,
+  bobaCreatorMemory: (id: string) => ["boba", "memory", "creators", id] as const,
   creatorProfiles: ["personalization", "profiles"] as const,
   creatorPersonalizationSummary: ["personalization", "summary"] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
@@ -148,6 +152,37 @@ export function useBobaBrain(id: string) {
     },
     staleTime: 30_000,
     retry: 1,
+  });
+}
+
+export function useBobaProjectMemory(id: string) {
+  return useQuery<BobaProjectMemoryV1 | null>({
+    queryKey: queryKeys.bobaProjectMemory(id),
+    queryFn: async () => {
+      try {
+        return await api.getBobaProjectMemory(id);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(id),
+  });
+}
+
+export function useBobaCreatorMemory(profileId?: string) {
+  return useQuery<BobaCreatorMemoryV1 | null>({
+    queryKey: queryKeys.bobaCreatorMemory(profileId ?? "unavailable"),
+    queryFn: async () => {
+      if (!profileId) return null;
+      try {
+        return await api.getBobaCreatorMemory(profileId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(profileId),
   });
 }
 
