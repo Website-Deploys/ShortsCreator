@@ -95,6 +95,22 @@ mode generates local synthetic media with aligned flash/beep markers, repairs a 
 renders through the production FFmpeg command builder, validates ASS timing, detects marker offset,
 checks final-word tail, and confirms no early-cutoff flags. It uses no user media or network service.
 
+## Real-Readiness Hardening
+
+Manual real-video validation was skipped at the user's request. The follow-up hardening suite adds
+automated scenarios for clean marker alignment, production voice-filter latency, final-word tail
+preservation, mid-word starts, transcript fallback, source-end clamping, source-time captions, and
+music/SFX streams shorter than speech. Run it before future releases:
+
+```powershell
+D:\Olympus\.venv\Scripts\python.exe tools\validate_av_sync_boundaries.py --stress-simulate
+```
+
+Stress reports are written only under `work/validation_reports/av_sync_boundaries/`. The validator
+uses generated local fixtures without real media, downloads, network calls, or external APIs. This
+coverage improves automated confidence but is not a substitute for human playback or representative
+user-approved media validation, and it does not establish release readiness by itself.
+
 ## What This Fixes
 
 - one canonical repaired source window;
