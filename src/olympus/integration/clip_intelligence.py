@@ -330,6 +330,14 @@ def unified_clip_intelligence(
     existing_upload_metadata = as_dict(existing.get("upload_metadata"))
     existing_personalization = as_dict(existing.get("personalization"))
     existing_boba = as_dict(existing.get("boba"))
+    boundary_quality = as_dict(
+        render_metadata.get("boundary_quality")
+        or editing_v2.get("boundary_quality")
+        or clip.get("boundary_quality")
+        or plan.get("boundary_quality")
+        or blueprint.get("boundary_quality")
+        or existing_planning.get("boundary_quality")
+    )
     caption_intelligence = as_dict(
         render_metadata.get("caption_intelligence_v2")
         or editing_v2.get("caption_intelligence_v2")
@@ -528,6 +536,7 @@ def unified_clip_intelligence(
             or existing_planning.get("timeline_diversity_reason"),
             "boundary_optimization": blueprint.get("boundary_optimization_v2")
             or existing_planning.get("boundary_optimization"),
+            "boundary_quality": boundary_quality,
             "expected_output_reason": v2_meta.get("risk_notes")
             or existing_planning.get("expected_output_reason"),
             "planning_story_integration": plan.get("planning_story_integration")

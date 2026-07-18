@@ -27,6 +27,7 @@ from olympus.domain.contracts.planning import (
 )
 from olympus.integration import clip_intelligence as CI  # noqa: N812 (module alias is intentional)
 from olympus.personalization import apply as P  # noqa: N812 (module alias is intentional)
+from olympus.planning import boundary_quality as BQ  # noqa: N812 (module alias is intentional)
 from olympus.planning import scoring as S  # noqa: N812 (module alias is intentional)
 from olympus.planning import v2 as V2  # noqa: N812 (module alias is intentional)
 from olympus.platform.config import get_settings
@@ -323,7 +324,7 @@ class CandidateGenerationAnalyzer(PlanningAnalyzer):
 # --------------------------------------------------------------------------- #
 class BoundaryRefinementAnalyzer(PlanningAnalyzer):
     name = "boundary_refinement"
-    version = "3"
+    version = "4"
     depends_on = ("candidate_generation",)
 
     async def analyze(
@@ -338,9 +339,14 @@ class BoundaryRefinementAnalyzer(PlanningAnalyzer):
         segments = ctx.transcript_segments() or []
         fps = ctx.fps()
         duration = ctx.video_duration() or S.as_float(gen.get("video_duration"))
+        story_v2 = ctx.story_data("story_analysis_v2") or {}
+        hook_signal = ctx.story_data("hook_detection") or {}
+        payoff_signals = S.as_list(
+            (ctx.story_data("payoff_detection") or {}).get("relationships")
+        )
 
         refined: list[dict[str, Any]] = []
-        for cand in candidates:
+        for candidate_index, cand in enumerate(candidates):
             original_start = S.as_float(cand.get("raw_start"))
             original_end = S.as_float(cand.get("raw_end"))
             raw_start, raw_end = original_start, original_end
@@ -356,6 +362,38 @@ class BoundaryRefinementAnalyzer(PlanningAnalyzer):
             boundary_optimization = V2.optimize_boundaries(start, end, segments, float(duration))
             start = S.as_float(boundary_optimization.get("optimized_start"), start)
             end = S.as_float(boundary_optimization.get("optimized_end"), end)
+            boundary_quality = BQ.recommend_clip_boundaries(
+                {
+                    **cand,
+                    "clip_id": cand.get("candidate_id") or cand.get("id"),
+                    "requested_start_seconds": original_start,
+                    "requested_end_seconds": original_end,
+                    "start": start,
+                    "end": end,
+                },
+                {
+                    "project_id": ctx.project.id,
+                    "transcript_segments": segments,
+                    "story_analysis_v2": story_v2,
+                    "story_guidance": story_guidance,
+                    "hook_signal": hook_signal,
+                    "payoff_signals": payoff_signals,
+                    "overlap_ranges": [
+                        {
+                            "start": S.as_float(other.get("raw_start")),
+                            "end": S.as_float(other.get("raw_end")),
+                        }
+                        for index, other in enumerate(candidates)
+                        if index != candidate_index
+                    ],
+                    "source_duration_seconds": float(duration),
+                    "minimum_duration_seconds": MIN_CLIP_SECONDS,
+                    "maximum_duration_seconds": MAX_CLIP_SECONDS,
+                },
+            )
+            boundary_quality_data = boundary_quality.to_dict()
+            start = boundary_quality.recommended_start_seconds
+            end = boundary_quality.recommended_end_seconds
             if end - start < MIN_CLIP_SECONDS:
                 continue  # too short to be a viable Short after snapping
             refined.append(
@@ -377,6 +415,8 @@ class BoundaryRefinementAnalyzer(PlanningAnalyzer):
                         )
                     ),
                     "boundary_optimization": boundary_optimization,
+                    "boundary_quality": boundary_quality_data,
+                    "boundary_quality_decision": boundary_quality_data.get("decision"),
                     "planning_story_integration": CI.build_planning_story_integration(
                         cand,
                         original_start=original_start,
@@ -395,7 +435,8 @@ class BoundaryRefinementAnalyzer(PlanningAnalyzer):
                 "candidates": refined,
                 "fps": fps,
                 "note": "Boundaries snapped to sentence edges and clamped to a viable "
-                "short-form length; exact start/end frames computed from the source fps.",
+                "short-form length, then scored and recommended for editorial hook/context/"
+                "payoff completeness; exact frames are computed from the source fps.",
             }
         )
 
@@ -447,6 +488,50 @@ class ClipScoringAnalyzer(PlanningAnalyzer):
         scored: list[dict[str, Any]] = []
         for cand in candidates:
             scores, confidence, evidence = _score_window(cand["start"], cand["end"], signals)
+            boundary_quality = S.as_dict(cand.get("boundary_quality"))
+            if boundary_quality:
+                scores["hook"] = S.round3(
+                    0.65 * S.as_float(scores.get("hook"))
+                    + 0.35 * S.as_float(boundary_quality.get("hook_score"))
+                )
+                scores["clarity"] = S.round3(
+                    0.65 * S.as_float(scores.get("clarity"))
+                    + 0.35 * S.as_float(boundary_quality.get("context_score"))
+                )
+                scores["payoff"] = S.round3(
+                    0.6 * S.as_float(scores.get("payoff"))
+                    + 0.4 * S.as_float(boundary_quality.get("payoff_score"))
+                )
+                scores["story_completion"] = S.round3(
+                    0.55 * S.as_float(scores.get("story_completion"))
+                    + 0.45 * S.as_float(boundary_quality.get("completeness_score"))
+                )
+                scores["ending"] = S.round3(
+                    max(
+                        0.0,
+                        0.75 * S.as_float(scores.get("ending"))
+                        + 0.25
+                        * (1.0 - S.as_float(boundary_quality.get("abrupt_end_risk"))),
+                    )
+                )
+                scores["uniqueness"] = S.round3(
+                    0.75 * S.as_float(scores.get("uniqueness"))
+                    + 0.25 * (1.0 - S.as_float(boundary_quality.get("duplicate_risk")))
+                )
+                confidence = min(
+                    1.0,
+                    confidence
+                    + 0.1 * S.as_float(boundary_quality.get("boundary_confidence")),
+                )
+                evidence.append(
+                    {
+                        "type": "boundary_quality_v1",
+                        "detail": (
+                            "editorial boundary quality "
+                            f"{S.as_float(boundary_quality.get('quality_score'))}"
+                        ),
+                    }
+                )
             story_guidance = S.as_dict(cand.get("story_v2_guidance"))
             story_used = story_guidance.get("story_guidance_used") is True
             if story_used:
@@ -595,7 +680,7 @@ class DuplicateDetectionAnalyzer(PlanningAnalyzer):
 # --------------------------------------------------------------------------- #
 class BlueprintGenerationAnalyzer(PlanningAnalyzer):
     name = "blueprint_generation"
-    version = "5"
+    version = "6"
     depends_on = ("duplicate_detection",)
 
     async def analyze(
@@ -1151,6 +1236,7 @@ def _build_plan(
         trend_v2,
     )
     story_guidance = S.as_dict(cand.get("story_v2_guidance"))
+    boundary_quality = S.as_dict(cand.get("boundary_quality"))
     if not story_guidance.get("story_guidance_used"):
         story_guidance = CI.story_guidance_for_window(
             S.as_dict(sig.get("story_analysis_v2")),
@@ -1241,6 +1327,8 @@ def _build_plan(
         "viral_research_snapshot": viral_research,
         "internet_trend_research_v2": viral_research,
         "boundary_optimization_v2": S.as_dict(cand.get("boundary_optimization")),
+        "boundary_quality": boundary_quality,
+        "boundary_quality_decision": S.as_dict(cand.get("boundary_quality_decision")),
         "closing_payoff": _closing_payoff(payoffs_in, segs_in),
         "title_suggestion": {
             "text": (
@@ -1360,6 +1448,7 @@ def _build_plan(
             ),
             "risk_notes": _risk_notes_v2(hook_v2, music_decision, sfx_decision),
             "source_timestamps": {"start": start, "end": end},
+            "boundary_quality": boundary_quality,
             "source_candidate_metadata": {
                 "candidate_id": cand.get("candidate_id"),
                 "story_id": story_guidance.get("story_id") or cand.get("story_id"),
@@ -1411,6 +1500,8 @@ def _build_plan(
         "planning_personalization": planning_personalization,
         "internet_trend_research_v2": viral_research,
         "story_v2_guidance": story_guidance,
+        "boundary_quality": boundary_quality,
+        "boundary_quality_decision": S.as_dict(cand.get("boundary_quality_decision")),
         "transcript_excerpt": cand.get("transcript_excerpt")
         or " ".join(_seg_text(s) for s in segs_in),
         "hook_line": S.as_dict(cand.get("hook_candidate")).get("text")
