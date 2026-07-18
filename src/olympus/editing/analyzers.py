@@ -495,7 +495,7 @@ def _layout_regions_for_faces(tracks: list[dict[str, Any]], mode: str) -> list[d
 # --------------------------------------------------------------------------- #
 class TimelineInitializationAnalyzer(EditingAnalyzer):
     name = "timeline_initialization"
-    version = "3"
+    version = "4"
 
     async def analyze(
         self, ctx: EditingStageContext, report: EditingProgressReporter
@@ -508,8 +508,15 @@ class TimelineInitializationAnalyzer(EditingAnalyzer):
         source_duration = ctx.video_duration()
         clips: list[dict[str, Any]] = []
         for plan in plans:
-            requested_start = T.as_float(plan.get("start"))
-            requested_end = T.as_float(plan.get("end"))
+            boundary_quality = T.as_dict(plan.get("boundary_quality"))
+            requested_start = T.as_float(
+                boundary_quality.get("recommended_start_seconds"),
+                T.as_float(plan.get("start")),
+            )
+            requested_end = T.as_float(
+                boundary_quality.get("recommended_end_seconds"),
+                T.as_float(plan.get("end")),
+            )
             clip_id = T.as_str(plan.get("id"))
             blueprint = T.as_dict(plan.get("blueprint"))
             source_window = BR.repair_clip_source_window(
@@ -541,6 +548,11 @@ class TimelineInitializationAnalyzer(EditingAnalyzer):
                     "source_end": T.round3(end),
                     "duration": T.round3(duration),
                     "source_window_v1": source_window_data,
+                    "boundary_quality": boundary_quality,
+                    "boundary_quality_decision": T.as_dict(
+                        plan.get("boundary_quality_decision")
+                        or boundary_quality.get("decision")
+                    ),
                     "boundary_validation": boundary_validation,
                     "boundary_warnings": boundary_validation["warnings"],
                     "fps": fps,
@@ -1445,7 +1457,7 @@ class BrollPlannerAnalyzer(EditingAnalyzer):
 # --------------------------------------------------------------------------- #
 class TimelineValidationAnalyzer(EditingAnalyzer):
     name = "timeline_validation"
-    version = "11"
+    version = "12"
     depends_on = (
         "timeline_initialization",
         "speech_cleanup",
@@ -1642,6 +1654,8 @@ def _assemble_timeline(
         "source_end": clip.get("source_end"),
         "duration": duration,
         "source_window_v1": T.as_dict(clip.get("source_window_v1")),
+        "boundary_quality": T.as_dict(clip.get("boundary_quality")),
+        "boundary_quality_decision": T.as_dict(clip.get("boundary_quality_decision")),
         "fps": clip.get("fps"),
         "tracks": [
             {"kind": "video", "events": video_events},
@@ -1652,6 +1666,10 @@ def _assemble_timeline(
         "metadata": {
             "timeline": {
                 **T.as_dict(clip.get("source_window_v1")),
+                "boundary_quality": T.as_dict(clip.get("boundary_quality")),
+                "boundary_quality_decision": T.as_dict(
+                    clip.get("boundary_quality_decision")
+                ),
                 "boundary_validation": T.as_dict(clip.get("boundary_validation")),
                 "boundary_warnings": T.as_list(clip.get("boundary_warnings")),
             },
@@ -1680,6 +1698,9 @@ def _assemble_timeline(
             "story_v2_guidance": T.as_dict(blueprint.get("story_v2_guidance")),
             "story_trend_guidance": T.as_dict(blueprint.get("story_trend_guidance")),
             "planning_story_integration": T.as_dict(blueprint.get("planning_story_integration")),
+            "boundary_quality": T.as_dict(
+                clip.get("boundary_quality") or blueprint.get("boundary_quality")
+            ),
             "planning_trend_integration": T.as_dict(
                 blueprint.get("planning_trend_integration")
             ),
@@ -1747,6 +1768,9 @@ def _editing_v2_contract(
     sfx = T.as_dict(blueprint.get("sound_effect_plan_v2"))
     story_guidance = T.as_dict(blueprint.get("story_v2_guidance"))
     planning_story = T.as_dict(blueprint.get("planning_story_integration"))
+    boundary_quality = T.as_dict(
+        clip.get("boundary_quality") or blueprint.get("boundary_quality")
+    )
     editing_guidance_v2 = T.as_dict(blueprint.get("editing_guidance_v2"))
     trend_snapshot = T.as_dict(
         blueprint.get("internet_trend_research_v2")
@@ -1934,6 +1958,11 @@ def _editing_v2_contract(
         "source_start": clip.get("source_start"),
         "source_end": clip.get("source_end"),
         "output_duration": duration,
+        "boundary_quality": boundary_quality,
+        "boundary_quality_decision": T.as_dict(
+            clip.get("boundary_quality_decision")
+            or boundary_quality.get("decision")
+        ),
         "editing_style": preset["style"],
         "edit_intensity": intensity,
         "hook_strategy": {
@@ -2092,6 +2121,7 @@ def _editing_v2_contract(
         "personalization_applied_v2": personalization_applied,
         "upstream_guidance": {
             "story_id": story_guidance.get("story_id"),
+            "boundary_quality": boundary_quality,
             "planning_story_integration": planning_story,
             "planning_trend_integration": T.as_dict(
                 blueprint.get("planning_trend_integration")
