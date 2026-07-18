@@ -239,7 +239,7 @@ def test_ffmpeg_command_uses_exact_trim_reset_and_no_shortest() -> None:
     assert "-shortest" not in args
     assert "-ss" not in args
     assert "-to" not in args
-    assert args[args.index("-t") + 1] == "8.000"
+    assert "-t" not in args
 
 
 def test_asset_resolution_is_honest_when_missing(tmp_path: Path) -> None:
@@ -358,7 +358,24 @@ def test_music_gain_policy_is_audible_but_speech_first(tmp_path: Path) -> None:
 
 def test_render_metadata_stores_sync_validation_warning() -> None:
     metadata = _render_metadata(
-        {"duration": 8.0, "source_start": 0.0, "source_end": 8.0, "metadata": {}},
+        {
+            "duration": 8.0,
+            "source_start": 0.0,
+            "source_end": 8.0,
+            "source_window_v1": {
+                "contract_version": "1",
+                "requested_start_seconds": 0.2,
+                "requested_end_seconds": 7.8,
+                "repaired_start_seconds": 0.0,
+                "repaired_end_seconds": 8.0,
+                "duration_seconds": 8.0,
+                "preroll_seconds": 0.2,
+                "postroll_seconds": 0.2,
+                "boundary_repair_applied": True,
+                "warnings": [],
+            },
+            "metadata": {},
+        },
         logs=[],
         probe={
             "format": {"duration": "7.600"},
@@ -372,6 +389,9 @@ def test_render_metadata_stores_sync_validation_warning() -> None:
     assert metadata["sync_validation"]["passed"] is False
     assert metadata["duration_validation"]["passed"] is False
     assert metadata["sync_validation"]["audio_video_delta"] == -0.4
+    assert metadata["timeline"]["requested_start_seconds"] == 0.2
+    assert metadata["timeline"]["repaired_end_seconds"] == 8.0
+    assert metadata["timeline"]["sync_validation"] == metadata["sync_validation"]
 
 
 def test_render_metadata_preserves_unified_clip_intelligence() -> None:

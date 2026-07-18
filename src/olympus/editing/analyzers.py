@@ -26,6 +26,7 @@ from olympus.domain.contracts.editing import (
     EditingProgressReporter,
     EditingStageContext,
 )
+from olympus.editing import boundary_repair as BR  # noqa: N812 (module alias is intentional)
 from olympus.editing import captions as CAP  # noqa: N812 (module alias is intentional)
 from olympus.editing import motion as MOT  # noqa: N812 (module alias is intentional)
 from olympus.editing import timeline as T  # noqa: N812 (module alias is intentional)
@@ -494,7 +495,7 @@ def _layout_regions_for_faces(tracks: list[dict[str, Any]], mode: str) -> list[d
 # --------------------------------------------------------------------------- #
 class TimelineInitializationAnalyzer(EditingAnalyzer):
     name = "timeline_initialization"
-    version = "2"
+    version = "3"
 
     async def analyze(
         self, ctx: EditingStageContext, report: EditingProgressReporter
@@ -503,24 +504,48 @@ class TimelineInitializationAnalyzer(EditingAnalyzer):
         if not plans:
             return EditingOutcome.unavailable(_NO_CLIPS)
         fps = ctx.fps()
+        transcript_segments = ctx.transcript_segments() or []
+        source_duration = ctx.video_duration()
         clips: list[dict[str, Any]] = []
         for plan in plans:
-            start = T.as_float(plan.get("start"))
-            end = T.as_float(plan.get("end"))
-            duration = T.as_float(plan.get("duration"), end - start)
+            requested_start = T.as_float(plan.get("start"))
+            requested_end = T.as_float(plan.get("end"))
+            clip_id = T.as_str(plan.get("id"))
+            blueprint = T.as_dict(plan.get("blueprint"))
+            source_window = BR.repair_clip_source_window(
+                project_id=ctx.project.id,
+                clip_id=clip_id,
+                requested_start_seconds=requested_start,
+                requested_end_seconds=requested_end,
+                transcript_segments=transcript_segments,
+                source_duration_seconds=source_duration,
+                planning_metadata=plan,
+                story_metadata=blueprint,
+            )
+            boundary_validation = BR.validate_clip_source_window(
+                source_window,
+                transcript_segments,
+            )
+            source_window_data = source_window.to_dict()
+            start = source_window.repaired_start_seconds
+            end = source_window.repaired_end_seconds
+            duration = source_window.duration_seconds
             confidence = T.as_float(plan.get("confidence"))
             clips.append(
                 {
-                    "clip_id": T.as_str(plan.get("id")),
-                    "plan_id": T.as_str(plan.get("id")),
+                    "clip_id": clip_id,
+                    "plan_id": clip_id,
                     "rank": plan.get("rank"),
                     "source_video": T.as_dict(plan.get("source_video")),
                     "source_start": T.round3(start),
                     "source_end": T.round3(end),
                     "duration": T.round3(duration),
+                    "source_window_v1": source_window_data,
+                    "boundary_validation": boundary_validation,
+                    "boundary_warnings": boundary_validation["warnings"],
                     "fps": fps,
-                    "start_frame": plan.get("start_frame"),
-                    "end_frame": plan.get("end_frame"),
+                    "start_frame": round(start * fps),
+                    "end_frame": round(end * fps),
                     "quality_score": T.as_float(plan.get("quality_score")),
                     "confidence": confidence,
                     "base_video_event": T.event(
@@ -550,9 +575,8 @@ class TimelineInitializationAnalyzer(EditingAnalyzer):
                 "clip_count": len(clips),
                 "clips": clips,
                 "fps": fps,
-                "note": "One base, non-destructive timeline per approved clip. "
-                "All later events are clip-relative; source_start/source_end map "
-                "each clip back to the original video for exact reproduction.",
+                "note": "One canonical repaired source window per approved clip. All later "
+                "events are clip-relative and share its source-time origin.",
             }
         )
 
@@ -1421,7 +1445,7 @@ class BrollPlannerAnalyzer(EditingAnalyzer):
 # --------------------------------------------------------------------------- #
 class TimelineValidationAnalyzer(EditingAnalyzer):
     name = "timeline_validation"
-    version = "10"
+    version = "11"
     depends_on = (
         "timeline_initialization",
         "speech_cleanup",
@@ -1617,6 +1641,7 @@ def _assemble_timeline(
         "source_start": clip.get("source_start"),
         "source_end": clip.get("source_end"),
         "duration": duration,
+        "source_window_v1": T.as_dict(clip.get("source_window_v1")),
         "fps": clip.get("fps"),
         "tracks": [
             {"kind": "video", "events": video_events},
@@ -1625,6 +1650,11 @@ def _assemble_timeline(
             {"kind": "markers", "events": markers},
         ],
         "metadata": {
+            "timeline": {
+                **T.as_dict(clip.get("source_window_v1")),
+                "boundary_validation": T.as_dict(clip.get("boundary_validation")),
+                "boundary_warnings": T.as_list(clip.get("boundary_warnings")),
+            },
             "aspect_ratio": T.as_str(T.as_dict(blueprint.get("aspect_ratio")).get("value"))
             or "9:16",
             "pacing": T.as_str(T.as_dict(blueprint.get("pacing")).get("value")),

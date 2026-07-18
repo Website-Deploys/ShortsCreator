@@ -109,6 +109,16 @@ class EditingStageContext:
             return float(inspection["fps"])
         return 30.0
 
+    def video_duration(self) -> float | None:
+        """Best available source duration for safe boundary clamping."""
+
+        inspection = self.cognitive_data("video_inspection")
+        if inspection and isinstance(inspection.get("duration_seconds"), int | float):
+            return float(inspection["duration_seconds"])
+        if self.project.duration_seconds:
+            return float(self.project.duration_seconds)
+        return None
+
     # -- Story Engine accessors -----------------------------------------------
     def story_data(self, stage: str) -> dict[str, Any] | None:
         """Return a completed story stage's data, or ``None``."""
