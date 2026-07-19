@@ -15,6 +15,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, NoReturn
 from unittest.mock import patch
 
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +23,6 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-import olympus.boba.integration as boba_integration_module  # noqa: E402
 from olympus.api.v1.routes import boba as boba_routes  # noqa: E402
 from olympus.boba import (  # noqa: E402
     BobaBrainStateV1,
@@ -49,6 +49,7 @@ from olympus.boba.validation import validate_constitution  # noqa: E402
 from olympus.data.repositories import StorageProjectRepository  # noqa: E402
 from olympus.data.storage.local import LocalStorage  # noqa: E402
 from olympus.domain.entities.project import Project, ProjectStatus  # noqa: E402
+from olympus.personalization import apply as personalization_apply  # noqa: E402
 from olympus.personalization.contracts import (  # noqa: E402
     ClipFeedbackV2,
     FeedbackLabels,
@@ -596,7 +597,7 @@ async def _run_scenario(
         with (
             _network_guard(network_attempts),
             patch.object(
-                boba_integration_module.personalization,
+                personalization_apply,
                 "load_runtime_directives",
                 return_value=personalization_directives,
             ),
@@ -863,7 +864,11 @@ async def _run_scenario(
                 integration,
                 settings,
             )
-            route_paths = {route.path for route in boba_routes.router.routes}
+            route_paths = {
+                route.path
+                for route in boba_routes.router.routes
+                if isinstance(route, APIRoute)
+            }
             _set_check(
                 report,
                 "api_surface_checked",

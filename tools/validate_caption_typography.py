@@ -294,11 +294,15 @@ def _report(args: argparse.Namespace) -> dict[str, Any]:
             report["pass_fail"] = report["ass_validation"].get("ass_valid") is True
     elif args.simulate:
         report["mode"] = "simulate"
-        intelligence, ass_validation = _simulation(args.niche, args.hook_category)
-        report.update(_metadata_summary({"caption_intelligence_v2": intelligence}))
-        report["ass_validation"] = ass_validation
+        simulated_intelligence, simulated_ass_validation = _simulation(
+            args.niche, args.hook_category
+        )
+        report.update(
+            _metadata_summary({"caption_intelligence_v2": simulated_intelligence})
+        )
+        report["ass_validation"] = simulated_ass_validation
         report["pass_fail"] = bool(
-            ass_validation.get("ass_valid")
+            simulated_ass_validation.get("ass_valid")
             and report["readability_validation"]
             and report["readability_validation"].get("passed") is True
         )
@@ -311,15 +315,15 @@ def _report(args: argparse.Namespace) -> dict[str, Any]:
             report["warnings"].append(
                 "A render manifest is required to prove captions were applied."
             )
-        render_validation = report.get("render_validation")
-        readability = report.get("readability_validation")
+        rendered_validation = report.get("render_validation")
+        rendered_readability = report.get("readability_validation")
         report["pass_fail"] = bool(
             report["ffprobe"].get("available")
-            and isinstance(render_validation, dict)
-            and render_validation.get("passed") is True
-            and render_validation.get("render_manifest_confirmed") is True
-            and isinstance(readability, dict)
-            and readability.get("passed") is True
+            and isinstance(rendered_validation, dict)
+            and rendered_validation.get("passed") is True
+            and rendered_validation.get("render_manifest_confirmed") is True
+            and isinstance(rendered_readability, dict)
+            and rendered_readability.get("passed") is True
         )
     elif args.project_id:
         report["mode"] = "project"
@@ -343,22 +347,24 @@ def _report(args: argparse.Namespace) -> dict[str, Any]:
         report["failed_clips"] = failed_clips
         report["warnings"].extend(warnings)
         report["pass_fail"] = bool(clips) and not failed_clips
-    intelligence = report.get("caption_intelligence")
-    intelligence = intelligence if isinstance(intelligence, dict) else {}
+    raw_intelligence = report.get("caption_intelligence")
+    intelligence = raw_intelligence if isinstance(raw_intelligence, dict) else {}
     intelligence_validation = intelligence.get("validation")
     intelligence_validation = (
         intelligence_validation if isinstance(intelligence_validation, dict) else {}
     )
-    ass_validation = report.get("ass_validation")
-    ass_validation = ass_validation if isinstance(ass_validation, dict) else {}
-    render_validation = report.get("render_validation")
-    render_validation = render_validation if isinstance(render_validation, dict) else {}
-    style_decision = report.get("style_decision")
-    style_decision = style_decision if isinstance(style_decision, dict) else {}
-    timing_quality = report.get("timing_quality")
-    timing_quality = timing_quality if isinstance(timing_quality, dict) else {}
-    readability = report.get("readability_validation")
-    readability = readability if isinstance(readability, dict) else {}
+    raw_ass_validation = report.get("ass_validation")
+    ass_validation = raw_ass_validation if isinstance(raw_ass_validation, dict) else {}
+    raw_render_validation = report.get("render_validation")
+    render_validation = (
+        raw_render_validation if isinstance(raw_render_validation, dict) else {}
+    )
+    raw_style_decision = report.get("style_decision")
+    style_decision = raw_style_decision if isinstance(raw_style_decision, dict) else {}
+    raw_timing_quality = report.get("timing_quality")
+    timing_quality = raw_timing_quality if isinstance(raw_timing_quality, dict) else {}
+    raw_readability = report.get("readability_validation")
+    readability = raw_readability if isinstance(raw_readability, dict) else {}
     flattened_warnings = list(report.get("warnings") or [])
     flattened_warnings.extend(ass_validation.get("warnings") or [])
     flattened_warnings.extend(render_validation.get("warnings") or [])

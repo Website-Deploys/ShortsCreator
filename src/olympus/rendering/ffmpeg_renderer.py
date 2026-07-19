@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from olympus.domain.contracts.rendering import (
     ClipRenderer,
@@ -59,6 +59,16 @@ _RENDER_TIMEOUT_SECONDS = 1800.0
 _PROBE_TIMEOUT_SECONDS = 60.0
 
 
+class _BinarySeekable(Protocol):
+    def flush(self) -> None: ...
+
+    def seek(self, offset: int, whence: int = 0) -> int: ...
+
+    def tell(self) -> int: ...
+
+    def read(self, size: int = -1) -> bytes: ...
+
+
 def _option_value(args: list[str], option: str) -> str | None:
     try:
         index = args.index(option) + 1
@@ -87,7 +97,7 @@ def _command_summary(args: list[str]) -> dict[str, Any]:
     }
 
 
-def _stderr_tail(handle: Any) -> list[str]:
+def _stderr_tail(handle: _BinarySeekable) -> list[str]:
     handle.flush()
     handle.seek(0, 2)
     size = handle.tell()

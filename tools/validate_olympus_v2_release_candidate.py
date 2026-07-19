@@ -130,9 +130,9 @@ def _run_static_suites(
     timeout = min(args.timeout_seconds, 3600.0)
     environment = _subprocess_environment()
     commands = {
-        "ruff": (ROOT, [python, "-m", "ruff", "check", "src", "tests", "tools"]),
-        "pytest": (ROOT, [python, "-m", "pytest"]),
-        "mypy": (ROOT, [python, "-m", "mypy", "src"]),
+        "ruff": (ROOT, [str(python), "-m", "ruff", "check", "src", "tests", "tools"]),
+        "pytest": (ROOT, [str(python), "-m", "pytest"]),
+        "mypy": (ROOT, [str(python), "-m", "mypy", "src"]),
     }
     for name, (cwd, command) in commands.items():
         top["test_suites"][name] = run_command(
@@ -672,7 +672,8 @@ def _probe_backend_contracts(base_url: str) -> dict[str, Any]:
                 openapi = payload
         except (OSError, ValueError, urllib.error.URLError) as exc:
             checks.append({"path": path, "status": None, "passed": False, "error": str(exc)})
-    paths = openapi.get("paths") if isinstance(openapi.get("paths"), dict) else {}
+    raw_paths = openapi.get("paths")
+    paths: dict[str, Any] = dict(raw_paths) if isinstance(raw_paths, dict) else {}
     required_fragments = (
         "/api/v1/projects",
         "/api/v1/jobs",
@@ -698,7 +699,7 @@ def _probe_backend_contracts(base_url: str) -> dict[str, Any]:
 def _discover_samples(explicit: Path | None) -> list[dict[str, Any]]:
     candidates: list[Path] = []
     explicit_resolved = explicit.resolve() if explicit else None
-    if explicit:
+    if explicit_resolved is not None:
         candidates.append(explicit_resolved)
     for directory in (
         ROOT / "validation_samples",
@@ -942,7 +943,7 @@ def _run_local_pipeline(
 
 
 def _project_metadata_evidence(storage_root: Path, project_ids: list[str]) -> dict[str, Any]:
-    keys = {
+    keys: dict[str, Any] = {
         "safety_metadata_present": False,
         "upload_metadata_present": False,
         "paths": [],

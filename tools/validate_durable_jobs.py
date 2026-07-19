@@ -49,6 +49,9 @@ class ValidationRunner(EngineRunner):
         return EngineRunResult(status="completed", summary={"calls": self.calls})
 
     async def _write_checkpoint(self, project: Project) -> None:
+        storage = self.storage
+        if storage is None:
+            raise RuntimeError("Checkpoint storage is unavailable.")
         indexes = {
             "cognitive": f"analysis/{project.id}/index.json",
             "story": f"story/{project.id}/index.json",
@@ -59,7 +62,7 @@ class ValidationRunner(EngineRunner):
         }
         if self.engine in indexes:
             payload = {"status": "completed", "pipeline_version": "validation-v2"}
-            await self.storage.put(
+            await storage.put(
                 indexes[self.engine],
                 json.dumps(payload).encode(),
                 content_type="application/json",
@@ -67,7 +70,7 @@ class ValidationRunner(EngineRunner):
         elif self.engine == "rendering":
             data = await asyncio.to_thread(_validation_mp4)
             render_key = f"render/{project.id}/clips/validation.mp4"
-            await self.storage.put(render_key, data, content_type="video/mp4")
+            await storage.put(render_key, data, content_type="video/mp4")
             manifest = {
                 "status": "completed",
                 "rendering_version": "validation-v2",
@@ -80,7 +83,7 @@ class ValidationRunner(EngineRunner):
                     }
                 ],
             }
-            await self.storage.put(
+            await storage.put(
                 f"render/{project.id}/index.json",
                 json.dumps(manifest).encode(),
                 content_type="application/json",

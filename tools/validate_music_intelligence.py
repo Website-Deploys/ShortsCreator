@@ -12,6 +12,10 @@ from olympus.music import load_music_assets, plan_music_intelligence, resolve_mu
 from olympus.platform.config import get_settings
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _probe(path: Path) -> dict[str, Any]:
     completed = subprocess.run(
         [
@@ -165,11 +169,7 @@ def _report(args: argparse.Namespace) -> dict[str, Any]:
     elif args.rendered_file:
         manifest = _manifest_music(args.manifest) if args.manifest else {}
         validation = manifest.get("music_validation") if isinstance(manifest, dict) else None
-        rendered_intelligence = (
-            manifest.get("music_intelligence_v2")
-            if isinstance(manifest.get("music_intelligence_v2"), dict)
-            else {}
-        )
+        rendered_intelligence = _dict(manifest.get("music_intelligence_v2"))
         report.update(
             {
                 "mode": "rendered_file",
@@ -198,11 +198,10 @@ def _report(args: argparse.Namespace) -> dict[str, Any]:
         ]
         manifest_path = next((path for path in candidates if path.exists()), candidates[0])
         project_validation = _manifest_music(manifest_path) if manifest_path.exists() else None
-        project_intelligence = (
+        project_intelligence = _dict(
             project_validation.get("music_intelligence_v2")
             if isinstance(project_validation, dict)
-            and isinstance(project_validation.get("music_intelligence_v2"), dict)
-            else {}
+            else None
         )
         report.update(
             {
