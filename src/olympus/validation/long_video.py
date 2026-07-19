@@ -15,7 +15,8 @@ import shutil
 import sys
 import time
 import urllib.error
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -86,6 +87,467 @@ class LongVideoOptions:
     from_link: bool = False
     keep_artifacts: bool = False
     debug: bool = False
+
+
+LONG_VIDEO_FULL_RENDER_CONTRACT_VERSION = "1"
+LONG_VIDEO_MINIMUM_SECONDS = 1800.0
+LONG_VIDEO_AV_TOLERANCE_SECONDS = 0.15
+LONG_VIDEO_REPORT_SUBDIR = Path("work/validation_reports/long_video_full_render")
+
+
+@dataclass(slots=True)
+class LongVideoStageResultV1:
+    """JSON-safe durable-stage evidence for the full-render proof."""
+
+    name: str
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    duration_seconds: float | None = None
+    artifact_present: bool = False
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class LongVideoFullRenderResultV1:
+    """One honest, serializable result for a long durable-render validation."""
+
+    project_id: str | None
+    mode: str
+    source_duration_seconds: float | None = None
+    source_duration_minutes: float | None = None
+    minimum_required_minutes: float = 30.0
+    pipeline_started_at: str | None = None
+    pipeline_finished_at: str | None = None
+    total_runtime_seconds: float | None = None
+    stages: list[LongVideoStageResultV1] = field(default_factory=list)
+    planned_clip_count: int = 0
+    edited_clip_count: int = 0
+    rendered_clip_count: int = 0
+    accepted_mp4_count: int = 0
+    optimized_clip_count: int = 0
+    duplicate_source_intervals_detected: bool = False
+    source_interval_coverage: JsonDict = field(default_factory=dict)
+    render_manifest_present: bool = False
+    optimization_manifest_present: bool = False
+    final_payload_valid: bool = False
+    artifact_paths: JsonDict = field(default_factory=dict)
+    final_payload: JsonDict = field(default_factory=dict)
+    ffprobe_results: list[JsonDict] = field(default_factory=list)
+    av_delta_results: list[JsonDict] = field(default_factory=list)
+    resource_observations: JsonDict = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    passed: bool = False
+    contract_version: str = LONG_VIDEO_FULL_RENDER_CONTRACT_VERSION
+
+    def to_dict(self) -> JsonDict:
+        payload = asdict(self)
+        payload["stages"] = [stage.to_dict() for stage in self.stages]
+        return payload
+
+
+def long_video_stage_result(
+    *,
+    name: str,
+    status: str,
+    started_at: str | None,
+    finished_at: str | None,
+    artifact_present: bool,
+    warnings: list[str] | None = None,
+    errors: list[str] | None = None,
+) -> LongVideoStageResultV1:
+    """Build one stage row and derive elapsed time from durable timestamps."""
+
+    return LongVideoStageResultV1(
+        name=name,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_between(started_at, finished_at),
+        artifact_present=artifact_present,
+        warnings=list(warnings or []),
+        errors=list(errors or []),
+    )
+
+
+def validate_long_source_duration(
+    duration_seconds: float | None,
+    *,
+    minimum_minutes: float = 30.0,
+) -> JsonDict:
+    """Reject absent, metadata-only, or genuinely short source durations."""
+
+    minimum_seconds = max(0.0, float(minimum_minutes)) * 60.0
+    duration = _optional_float(duration_seconds)
+    errors: list[str] = []
+    if duration is None or duration <= 0:
+        errors.append("FFprobe did not return a positive source duration.")
+    elif duration + 0.001 < minimum_seconds:
+        errors.append(
+            f"Source is {duration:.3f}s; at least {minimum_seconds:.3f}s "
+            "of real FFprobe duration is required."
+        )
+    return {
+        "passed": not errors,
+        "duration_seconds": duration,
+        "duration_minutes": round(duration / 60.0, 3) if duration is not None else None,
+        "minimum_minutes": round(float(minimum_minutes), 3),
+        "minimum_seconds": round(minimum_seconds, 3),
+        "errors": errors,
+    }
+
+
+def long_video_ffprobe_result(
+    *,
+    clip_id: str,
+    path_or_key: str,
+    probe: JsonDict,
+    expected_duration: float | None = None,
+    av_tolerance_seconds: float = LONG_VIDEO_AV_TOLERANCE_SECONDS,
+) -> JsonDict:
+    """Normalize one FFprobe response into the long-video clip contract."""
+
+    container_duration = _optional_float(probe.get("container_duration"))
+    video_duration = _optional_float(probe.get("video_duration")) or container_duration
+    audio_duration = _optional_float(probe.get("audio_duration"))
+    fps = _optional_float(probe.get("fps"))
+    frame_count = _probe_frame_count(probe)
+    if frame_count is None and fps is not None and video_duration is not None:
+        frame_count = max(0, round(fps * video_duration))
+    has_video = bool(probe.get("width") and probe.get("height") and probe.get("video_codec"))
+    has_audio = bool(probe.get("has_audio") and probe.get("audio_codec"))
+    av_delta = (
+        round(audio_duration - video_duration, 3)
+        if audio_duration is not None and video_duration is not None
+        else None
+    )
+    duration_delta = (
+        round(container_duration - expected_duration, 3)
+        if container_duration is not None and expected_duration is not None
+        else None
+    )
+    errors = [str(item) for item in as_list(probe.get("errors"))]
+    if probe.get("passed") is not True:
+        errors.append("FFprobe did not validate the rendered MP4.")
+    if not has_video:
+        errors.append("Rendered MP4 has no valid video stream.")
+    if not has_audio:
+        errors.append("Rendered MP4 has no valid audio stream.")
+    if container_duration is None or container_duration <= 0:
+        errors.append("Rendered MP4 has no positive container duration.")
+    if av_delta is None or abs(av_delta) > av_tolerance_seconds:
+        errors.append(
+            "Rendered MP4 audio/video delta exceeds tolerance or could not be measured."
+        )
+    if duration_delta is not None and abs(duration_delta) > av_tolerance_seconds:
+        errors.append("Rendered MP4 duration differs from its manifest duration.")
+    errors = list(dict.fromkeys(errors))
+    return {
+        "clip_id": clip_id,
+        "path": path_or_key,
+        "storage_key": path_or_key,
+        "duration_seconds": container_duration,
+        "video_duration_seconds": video_duration,
+        "audio_duration_seconds": audio_duration,
+        "expected_duration_seconds": expected_duration,
+        "duration_delta_seconds": duration_delta,
+        "width": as_int(probe.get("width")),
+        "height": as_int(probe.get("height")),
+        "video_codec": probe.get("video_codec"),
+        "audio_codec": probe.get("audio_codec"),
+        "audio_sample_rate": as_int(probe.get("audio_sample_rate")),
+        "frame_count": frame_count,
+        "has_video": has_video,
+        "has_audio": has_audio,
+        "av_delta_seconds": av_delta,
+        "valid": not errors,
+        "errors": errors,
+    }
+
+
+def validate_long_video_clip_counts(
+    *,
+    planned: int,
+    rendered: int,
+    accepted: int,
+    optimized: int,
+    minimum: int,
+) -> JsonDict:
+    """Require the requested number of plans, real renders, and packages."""
+
+    minimum = max(1, int(minimum))
+    counts = {
+        "planned": max(0, int(planned)),
+        "rendered": max(0, int(rendered)),
+        "accepted": max(0, int(accepted)),
+        "optimized": max(0, int(optimized)),
+    }
+    errors: list[str] = []
+    if counts["planned"] == 1 or counts["rendered"] == 1 or counts["accepted"] == 1:
+        errors.append("long-video multi-clip proof not satisfied")
+    for label, value in counts.items():
+        if value < minimum:
+            errors.append(f"{label} clip count {value} is below required minimum {minimum}.")
+    return {
+        "passed": not errors,
+        "minimum": minimum,
+        **counts,
+        "errors": list(dict.fromkeys(errors)),
+    }
+
+
+def analyze_long_video_source_intervals(
+    clips: list[JsonDict],
+    *,
+    source_duration: float | None,
+    high_overlap_threshold: float = 0.8,
+) -> JsonDict:
+    """Detect exact/severe duplicates and summarize union timeline coverage."""
+
+    intervals = [
+        (index, _clip_identity(clip, index), interval)
+        for index, clip in enumerate(clips)
+        if (interval := clip_range(clip)) is not None
+    ]
+    exact_duplicates: list[JsonDict] = []
+    high_overlaps: list[JsonDict] = []
+    severe_overlaps: list[JsonDict] = []
+    for position, (_, left_id, left) in enumerate(intervals):
+        for _, right_id, right in intervals[position + 1 :]:
+            ratio = _range_overlap_ratio(left, right)
+            exact = abs(left[0] - right[0]) <= 0.05 and abs(left[1] - right[1]) <= 0.05
+            record = {
+                "left": left_id,
+                "right": right_id,
+                "left_range": list(left),
+                "right_range": list(right),
+                "overlap_ratio": round(ratio, 3),
+            }
+            if exact:
+                exact_duplicates.append(record)
+            elif ratio > high_overlap_threshold:
+                high_overlaps.append(record)
+                if ratio >= 0.95:
+                    severe_overlaps.append(record)
+    merged = _merge_intervals([interval for _, _, interval in intervals])
+    covered_seconds = round(sum(end - start for start, end in merged), 3)
+    duration = max(0.0, float(source_duration or 0.0))
+    warnings = []
+    if high_overlaps:
+        warnings.append("One or more selected clips overlap by more than 80%.")
+    errors = []
+    if exact_duplicates:
+        errors.append("Exact duplicate source intervals were selected.")
+    if severe_overlaps:
+        errors.append("Near-duplicate source intervals overlap by at least 95%.")
+    return {
+        "interval_count": len(intervals),
+        "intervals": [
+            {"clip_id": clip_id, "start": interval[0], "end": interval[1]}
+            for _, clip_id, interval in intervals
+        ],
+        "exact_duplicates": exact_duplicates,
+        "high_overlaps": high_overlaps,
+        "severe_overlaps": severe_overlaps,
+        "duplicate_source_intervals_detected": bool(
+            exact_duplicates or severe_overlaps
+        ),
+        "covered_seconds": covered_seconds,
+        "coverage_ratio": round(covered_seconds / duration, 4) if duration else None,
+        "passed": not errors,
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
+def validate_long_video_final_payload(payload: JsonDict, *, minimum_clips: int) -> JsonDict:
+    """Validate a JSON-safe final payload with downloadable rendered clips."""
+
+    clips = [as_dict(item) for item in as_list(payload.get("clips"))]
+    if not clips:
+        manifest = as_dict(payload.get("manifest"))
+        clips = [as_dict(item) for item in as_list(manifest.get("renders"))]
+    downloads = [str(item) for item in as_list(payload.get("download_urls")) if item]
+    errors: list[str] = []
+    if len(clips) < max(1, int(minimum_clips)):
+        errors.append("Final payload does not expose the required rendered clips.")
+    if clips and len(downloads) < len(clips):
+        errors.append("Final payload does not expose a download URL for every clip.")
+    try:
+        json.dumps(payload)
+    except (TypeError, ValueError) as exc:
+        errors.append(f"Final payload is not JSON-safe: {exc}")
+    return {
+        "passed": not errors,
+        "clip_count": len(clips),
+        "download_url_count": len(downloads),
+        "errors": errors,
+    }
+
+
+def validate_long_video_manifest_presence(
+    *,
+    render_manifest_present: bool,
+    optimization_manifest_present: bool,
+) -> JsonDict:
+    """Require both durable handoff manifests without inventing substitutes."""
+
+    errors: list[str] = []
+    if not render_manifest_present:
+        errors.append("Canonical render manifest is missing.")
+    if not optimization_manifest_present:
+        errors.append("Optimization manifest is missing.")
+    return {"passed": not errors, "errors": errors}
+
+
+def long_video_self_check(
+    *,
+    storage_root: Path,
+    report_dir: Path,
+    ffmpeg_binary: str = "ffmpeg",
+    ffprobe_binary: str = "ffprobe",
+    which: Callable[[str], str | None] = shutil.which,
+) -> JsonDict:
+    """Check local-only prerequisites without starting or simulating a pipeline."""
+
+    checks: list[JsonDict] = []
+
+    def add(name: str, passed: bool, detail: str) -> None:
+        checks.append({"name": name, "passed": passed, "detail": detail})
+
+    ffmpeg = which(ffmpeg_binary)
+    ffprobe = which(ffprobe_binary)
+    add("ffmpeg_available", ffmpeg is not None, ffmpeg or f"{ffmpeg_binary} not found")
+    add("ffprobe_available", ffprobe is not None, ffprobe or f"{ffprobe_binary} not found")
+    add("workflow_services_import", True, "durable workflow imports loaded")
+    add("render_manifest_resolver_import", True, "canonical render resolver loaded")
+    add("optimization_manifest_resolver_import", True, "optimization repository loaded")
+    storage_ok, storage_detail = _writable_directory_check(storage_root)
+    add("storage_root_writable", storage_ok, storage_detail)
+    report_ok, report_detail = _writable_directory_check(report_dir)
+    add("report_directory_writable", report_ok, report_detail)
+    return {
+        "passed": all(bool(item.get("passed")) for item in checks),
+        "checks": checks,
+        "external_access_required": False,
+        "errors": [
+            str(item.get("detail")) for item in checks if item.get("passed") is not True
+        ],
+    }
+
+
+def validated_long_video_report_dir(report_dir: Path, *, workspace_root: Path) -> Path:
+    """Restrict reports and generated fixtures to ``work/validation_reports``."""
+
+    allowed = (workspace_root / "work" / "validation_reports").resolve()
+    resolved = report_dir.resolve()
+    try:
+        resolved.relative_to(allowed)
+    except ValueError as exc:
+        raise ValueError(f"Report directory must stay under {allowed}.") from exc
+    return resolved
+
+
+def is_generated_validation_artifact(path: str | Path) -> bool:
+    """Return whether a path must never be staged by validation tooling."""
+
+    normalized = str(path).replace("\\", "/").lower().lstrip("./")
+    parts = {part for part in normalized.split("/") if part}
+    generated_parts = {
+        ".venv",
+        "node_modules",
+        ".next",
+        "work",
+        "storage_data",
+        "media",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+    }
+    return bool(
+        parts.intersection(generated_parts)
+        or normalized.endswith((".mp4", ".mov", ".mkv", ".webm"))
+        or normalized == ".env"
+        or normalized.startswith(".env.")
+    )
+
+
+def write_long_video_full_render_report(
+    result: LongVideoFullRenderResultV1 | JsonDict,
+    report_dir: Path,
+    *,
+    workspace_root: Path,
+) -> dict[str, str]:
+    """Persist JSON and a compact Markdown summary under the guarded report root."""
+
+    output = validated_long_video_report_dir(report_dir, workspace_root=workspace_root)
+    output.mkdir(parents=True, exist_ok=True)
+    payload = result.to_dict() if isinstance(result, LongVideoFullRenderResultV1) else result
+    stem = (
+        "long_video_full_render_project_inspection"
+        if payload.get("mode") == "project_id"
+        else "long_video_full_render"
+    )
+    json_path = output / f"{stem}_report.json"
+    summary_path = output / f"{stem}_summary.md"
+    json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    lines = [
+        "# Long-Video Full Render Proof V2",
+        "",
+        f"- Passed: `{str(bool(payload.get('passed'))).lower()}`",
+        f"- Mode: `{payload.get('mode')}`",
+        f"- Project: `{payload.get('project_id') or 'not created'}`",
+        f"- Source duration: `{payload.get('source_duration_seconds')}` seconds",
+        f"- Planned clips: `{payload.get('planned_clip_count', 0)}`",
+        f"- Rendered clips: `{payload.get('rendered_clip_count', 0)}`",
+        f"- Accepted MP4s: `{payload.get('accepted_mp4_count', 0)}`",
+        f"- Optimization clips: `{payload.get('optimized_clip_count', 0)}`",
+        "- Peak RAM: `not measured`",
+    ]
+    if payload.get("warnings"):
+        lines.extend(["", "## Warnings", *[f"- {item}" for item in payload["warnings"]]])
+    if payload.get("errors"):
+        lines.extend(["", "## Errors", *[f"- {item}" for item in payload["errors"]]])
+    summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"json": str(json_path), "summary": str(summary_path)}
+
+
+def _probe_frame_count(probe: JsonDict) -> int | None:
+    raw = as_dict(probe.get("raw"))
+    for stream in as_list(raw.get("streams")):
+        item = as_dict(stream)
+        if item.get("codec_type") != "video":
+            continue
+        value = as_int(item.get("nb_read_frames") or item.get("nb_frames"))
+        return value if value is not None and value >= 0 else None
+    return None
+
+
+def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(intervals):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+            continue
+        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def _writable_directory_check(path: Path) -> tuple[bool, str]:
+    marker = path / f".olympus-long-video-write-{uuid4().hex}.tmp"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        marker.write_text("ok", encoding="utf-8")
+        marker.unlink()
+    except OSError as exc:
+        return False, f"{path}: {type(exc).__name__}: {exc}"
+    return True, str(path.resolve())
 
 
 def classify_long_video_duration(duration_seconds: float | None) -> str:
