@@ -20,7 +20,7 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -751,7 +751,10 @@ def check_environment(
 ) -> dict[str, Any]:
     """Populate dependency and local path truth without requiring a URL."""
 
-    environment = _summary(report)["environment"]
+    raw_environment: object = _summary(report).get("environment")
+    if not isinstance(raw_environment, dict):
+        raise ValueError("Link ingestion environment summary is invalid.")
+    environment = cast(dict[str, Any], raw_environment)
     environment["virtual_environment"] = (
         sys.prefix if sys.prefix != getattr(sys, "base_prefix", sys.prefix) else None
     )
@@ -2099,17 +2102,17 @@ def _list(value: object) -> list[Any]:
 
 
 def _as_float(value: object) -> float | None:
+    if not isinstance(value, int | float | str):
+        return None
     try:
-        return float(value) if value is not None else None
+        return float(value)
     except (TypeError, ValueError):
         return None
 
 
 def _as_int(value: object) -> int | None:
-    try:
-        return int(float(value)) if value is not None else None
-    except (TypeError, ValueError):
-        return None
+    number = _as_float(value)
+    return int(number) if number is not None else None
 
 
 def _invalid_cli_issue(

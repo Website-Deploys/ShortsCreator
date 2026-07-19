@@ -17,10 +17,25 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any, cast
 from uuid import uuid4
 
+JsonObject = dict[str, Any]
 
-def _json_request(base: str, method: str, path: str, payload: dict | None = None) -> dict:
+
+def _json_object(raw: str | bytes) -> JsonObject:
+    value: object = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("Expected a JSON object response.")
+    return cast(JsonObject, value)
+
+
+def _json_request(
+    base: str,
+    method: str,
+    path: str,
+    payload: JsonObject | None = None,
+) -> JsonObject:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         urllib.parse.urljoin(base, path),
@@ -29,10 +44,10 @@ def _json_request(base: str, method: str, path: str, payload: dict | None = None
         headers={"Content-Type": "application/json"} if payload is not None else {},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+        return _json_object(response.read())
 
 
-def _get_json_or_none(base: str, path: str) -> dict | None:
+def _get_json_or_none(base: str, path: str) -> JsonObject | None:
     try:
         return _json_request(base, "GET", path)
     except urllib.error.HTTPError as exc:
@@ -41,7 +56,7 @@ def _get_json_or_none(base: str, path: str) -> dict | None:
         raise
 
 
-def _upload(base: str, video: Path) -> dict:
+def _upload(base: str, video: Path) -> JsonObject:
     boundary = f"----olympus-{uuid4().hex}"
     head = (
         f"--{boundary}\r\n"
@@ -57,10 +72,10 @@ def _upload(base: str, video: Path) -> dict:
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
     )
     with urllib.request.urlopen(request, timeout=120) as response:
-        return json.loads(response.read().decode("utf-8"))
+        return _json_object(response.read())
 
 
-def _create_project(base: str, upload: dict, content_category: str) -> dict:
+def _create_project(base: str, upload: JsonObject, content_category: str) -> JsonObject:
     return _json_request(
         base,
         "POST",
@@ -90,7 +105,7 @@ def _download(base: str, path: str, destination: Path) -> None:
         destination.write_bytes(response.read())
 
 
-def _probe(path: Path) -> dict:
+def _probe(path: Path) -> JsonObject:
     if shutil.which("ffprobe") is None:
         return {"unavailable": "ffprobe unavailable"}
     completed = subprocess.run(
@@ -108,10 +123,10 @@ def _probe(path: Path) -> dict:
         capture_output=True,
         text=True,
     )
-    return json.loads(completed.stdout)
+    return _json_object(completed.stdout)
 
 
-def _validate_probe(path: Path, probe: dict, *, require_audio: bool) -> None:
+def _validate_probe(path: Path, probe: JsonObject, *, require_audio: bool) -> None:
     streams = probe.get("streams") or []
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
     audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
@@ -139,7 +154,7 @@ def main() -> None:
     project_id = project["id"]
     print(f"PROJECT {project_id}")
 
-    manifest: dict | None = None
+    manifest: JsonObject | None = None
     while time.monotonic() - started < args.timeout_seconds:
         info = _json_request(args.base, "GET", "/api/v1/system/info")
         analysis = _get_json_or_none(args.base, f"/api/v1/projects/{project_id}/analysis")

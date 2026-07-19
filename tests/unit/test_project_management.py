@@ -206,7 +206,7 @@ async def _render_manifest(storage: LocalStorage, pid: str) -> RenderManifest:
                 rank=1,
                 width=1080,
                 height=1920,
-                duration=38.0,
+                duration=38.45,
                 fps=30.0,
                 video_codec="h264",
                 audio_codec="aac",
@@ -306,7 +306,7 @@ async def test_clip_library_has_real_per_clip_facts(storage: LocalStorage) -> No
     assert len(clips) == 1
     clip = clips[0]
     assert clip.clip_id == "clip_a"
-    assert clip.duration == 38.0
+    assert clip.duration == pytest.approx(38.45, abs=0.001)
     assert clip.viral_score == 0.72  # planner quality score
     assert clip.status == "rendered"  # a render exists
     assert clip.render_version == "1"
