@@ -37,6 +37,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
 
+from olympus.dependencies import require_optional_dependency
 from olympus.domain.contracts.ai import (
     TranscriptionProvider,
     TranscriptResult,
@@ -122,9 +123,16 @@ class FasterWhisperTranscriptionProvider(TranscriptionProvider):
         if self._device != "auto":
             return self._device
         try:
-            import ctranslate2  # type: ignore[import-untyped]
-
-            return "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+            ctranslate2 = require_optional_dependency(
+                "ctranslate2",
+                "Automatic faster-whisper CUDA discovery",
+            )
+            get_cuda_device_count = getattr(ctranslate2, "get_cuda_device_count", None)
+            return (
+                "cuda"
+                if callable(get_cuda_device_count) and get_cuda_device_count() > 0
+                else "cpu"
+            )
         except Exception:
             return "cpu"
 
@@ -136,18 +144,21 @@ class FasterWhisperTranscriptionProvider(TranscriptionProvider):
     def _build_model_factory(self) -> _ModelFactory:
         if self._model_factory is not None:
             return self._model_factory
-        try:
-            from faster_whisper import WhisperModel  # type: ignore[import-untyped]
-        except ImportError as exc:  # pragma: no cover - covered via ConfigurationError
+        module = require_optional_dependency(
+            "faster_whisper",
+            "The faster-whisper transcription provider",
+        )
+        whisper_model = getattr(module, "WhisperModel", None)
+        if not callable(whisper_model):
             raise ConfigurationError(
-                "faster-whisper is not installed. Install it to use the "
-                "'faster-whisper' transcription provider."
-            ) from exc
+                "The installed faster-whisper package does not expose WhisperModel.",
+                details={"dependency": "faster_whisper", "available": True},
+            )
 
         def _factory(
             model: str, *, device: str, compute_type: str, download_root: str | None
         ) -> Any:
-            return WhisperModel(
+            return whisper_model(
                 model, device=device, compute_type=compute_type, download_root=download_root
             )
 

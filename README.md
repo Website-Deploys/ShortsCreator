@@ -153,6 +153,11 @@ Current V2 planning chooses the desired music mood and SFX category, but if no
 local asset exists it marks the decision as `unavailable` with a reason. It does
 not use copyrighted popular music automatically.
 
+Clean clones include an intentionally empty, rights-safe
+`assets/music/music_manifest.json`. Add only locally held music with verified
+rights through the music-library tooling; an empty library never fabricates a
+music selection.
+
 ## Testing
 
 Backend:
