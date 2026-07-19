@@ -52,7 +52,7 @@ from olympus.domain.entities.project import Project  # noqa: E402
 from olympus.domain.entities.render_pipeline import RenderRun  # noqa: E402
 from olympus.domain.entities.rendering import RenderManifest  # noqa: E402
 from olympus.domain.entities.workflow import Job, Workflow  # noqa: E402
-from olympus.jobs import CheckpointValidator  # noqa: E402
+from olympus.jobs import CheckpointValidator, LocalDurableJobStore  # noqa: E402
 from olympus.rendering.artifacts import (  # noqa: E402
     canonical_render_manifest_path,
     legacy_render_manifest_path,
@@ -96,6 +96,7 @@ ProbeFunction = Callable[[Path], dict[str, Any]]
 class RuntimeBundle:
     workflow: WorkflowService
     project_repo: StorageProjectRepository
+    runners: dict[str, EngineRunner]
 
 
 class FixtureTranscriptionProvider(TranscriptionProvider):
@@ -314,6 +315,7 @@ def _build_runtime(
     transcription_provider: TranscriptionProvider | None = None,
     renderer: ClipRenderer | None = None,
     render_settings: RenderSettings | None = None,
+    durable_store: LocalDurableJobStore | None = None,
 ) -> RuntimeBundle:
     project_repo = StorageProjectRepository(storage)
     analysis_repo = StorageAnalysisRepository(storage)
@@ -420,7 +422,7 @@ def _build_runtime(
         }
     )
     workflow = WorkflowService(
-        repository=StorageWorkflowRepository(storage),
+        repository=StorageWorkflowRepository(storage, durable_store=durable_store),
         project_repo=project_repo,
         runners=runners,
         concurrency=1,
@@ -429,12 +431,13 @@ def _build_runtime(
         heartbeat_interval_seconds=2.0,
         stale_after_seconds=max(120.0, timeout_seconds),
         worker_poll_interval_seconds=0.02,
+        lock_manager=durable_store.locks if durable_store is not None else None,
         checkpoint_validator=CheckpointValidator(
             storage,
             ffprobe_binary=ffprobe_binary,
         ),
     )
-    return RuntimeBundle(workflow=workflow, project_repo=project_repo)
+    return RuntimeBundle(workflow=workflow, project_repo=project_repo, runners=runners)
 
 
 async def create_local_project(
