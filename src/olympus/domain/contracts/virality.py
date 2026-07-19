@@ -86,6 +86,11 @@ class ViralityStageContext:
             return result.data
         return None
 
+    def cognitive_signal(self, signal: str) -> dict[str, Any] | None:
+        """Return normalized signal truth, including unavailable/fallback status."""
+
+        return self.analysis.signal(signal) if self.analysis is not None else None
+
     def transcript_segments(self) -> list[dict[str, Any]] | None:
         """Return the transcript's segments if a transcript is available, else None."""
 

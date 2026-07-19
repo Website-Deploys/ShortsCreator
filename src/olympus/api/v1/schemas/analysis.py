@@ -61,10 +61,14 @@ class AnalysisResponse(BaseModel):
     completed_stages: int
     total_stages: int
     stages: list[StageResponse]
+    signal_health: dict[str, Any] | None = None
+    analysis_signals_v2: dict[str, Any] | None = None
 
     @classmethod
     def from_entity(cls, analysis: Analysis, *, include_data: bool = True) -> AnalysisResponse:
         completed = sum(1 for s in analysis.stages if s.status.value == "completed")
+        signals = analysis.signals_v2()
+        signal_health = signals.get("signal_health") if signals else None
         return cls(
             project_id=analysis.project_id,
             pipeline_version=analysis.pipeline_version,
@@ -77,4 +81,6 @@ class AnalysisResponse(BaseModel):
                 StageResponse.from_result(s, include_data=include_data)
                 for s in analysis.stages
             ],
+            signal_health=signal_health if isinstance(signal_health, dict) else None,
+            analysis_signals_v2=signals,
         )

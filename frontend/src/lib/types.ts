@@ -210,6 +210,41 @@ export interface AnalysisStage {
   data: Record<string, unknown> | null;
 }
 
+export type AnalysisSignalState =
+  | "available"
+  | "partial"
+  | "fallback"
+  | "unavailable"
+  | "failed"
+  | "skipped";
+
+export interface AnalysisSignalStatus {
+  signal_name: string;
+  available: boolean;
+  status: AnalysisSignalState;
+  confidence: number;
+  provider: string;
+  fallback_used: boolean;
+  reason: string | null;
+  warnings: string[];
+  metadata: Record<string, unknown>;
+}
+
+export interface AnalysisSignalHealth {
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  total_signals: number;
+  available_count: number;
+  partial_count: number;
+  fallback_count: number;
+  unavailable_count: number;
+  failed_count: number;
+  signals: AnalysisSignalStatus[];
+  warnings: string[];
+  blockers: Array<{ signal_name: string; reason: string }>;
+}
+
 /** A project's complete, evolving video understanding. */
 export interface Analysis {
   project_id: string;
@@ -220,6 +255,8 @@ export interface Analysis {
   completed_stages: number;
   total_stages: number;
   stages: AnalysisStage[];
+  signal_health?: AnalysisSignalHealth | null;
+  analysis_signals_v2?: Record<string, unknown> | null;
 }
 
 /* -------------------------------------------------------------------------- */
