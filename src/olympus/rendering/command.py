@@ -755,14 +755,16 @@ def _stack_post_filters(
     caption_path: str | None,
 ) -> str:
     filters: list[str] = []
-    if zoom_ops(timeline):
+    has_zoom = bool(zoom_ops(timeline))
+    if has_zoom:
         filters.append(
             f"zoompan=z='{_zoom_expression(timeline, fps)}':d=1:"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"s={width}x{height}:fps={fps}"
         )
     filters.extend(video_enhancement_filters(timeline))
-    filters.append(f"fps={max(1, int(fps))}")
+    if not has_zoom:
+        filters.append(f"fps={max(1, int(fps))}")
     if caption_path:
         filters.append(f"subtitles='{_escape_filter_path(caption_path)}'")
     filters.append("format=yuv420p")
@@ -811,7 +813,8 @@ def video_filter(
     face_crop = _face_crop_filter(timeline, width, height)
     filters = [f"scale={width}:{height}:force_original_aspect_ratio=increase"]
     filters.append(face_crop or f"crop={width}:{height}")
-    if zoom_ops(timeline):
+    has_zoom = bool(zoom_ops(timeline))
+    if has_zoom:
         # Timed zoom expression from the Editing V2 motion plan.
         target_fps = max(1, int(fps or 30))
         filters.append(
@@ -820,7 +823,7 @@ def video_filter(
             f"s={width}x{height}:fps={target_fps}"
         )
     filters.extend(video_enhancement_filters(timeline))
-    if fps:
+    if fps and not has_zoom:
         filters.append(f"fps={max(1, int(fps))}")
     if srt_path:
         escaped = _escape_filter_path(srt_path)
@@ -1011,6 +1014,9 @@ def build_ffmpeg_command(
     video_bitrate_kbps: int,
     audio_bitrate_kbps: int,
     srt_path: str | None = None,
+    encoder_preset: str = "medium",
+    encoder_threads: int | None = None,
+    filter_threads: int | None = None,
 ) -> list[str]:
     """Build the full FFmpeg argument vector to render one clip (real, runnable).
 
@@ -1019,12 +1025,35 @@ def build_ffmpeg_command(
     bitrate/fps. This is exactly what the FFmpeg renderer executes.
     """
 
-    args = [
-        binary,
-        "-y",
-        "-i",
-        source_path,
-    ]
+    if encoder_threads is not None and encoder_threads < 1:
+        raise ValueError("encoder_threads must be at least 1 when configured.")
+    if filter_threads is not None and filter_threads < 1:
+        raise ValueError("filter_threads must be at least 1 when configured.")
+    preset = encoder_preset.strip().lower()
+    if preset not in {
+        "ultrafast",
+        "superfast",
+        "veryfast",
+        "faster",
+        "fast",
+        "medium",
+        "slow",
+        "slower",
+        "veryslow",
+    }:
+        raise ValueError(f"Unsupported libx264 encoder preset: {encoder_preset!r}.")
+
+    args = [binary, "-hide_banner", "-nostats", "-loglevel", "warning", "-y"]
+    if filter_threads is not None:
+        args.extend(
+            [
+                "-filter_threads",
+                str(filter_threads),
+                "-filter_complex_threads",
+                str(filter_threads),
+            ]
+        )
+    args.extend(["-i", source_path])
     args.extend(extra_audio_inputs(timeline))
     args.extend(
         [
@@ -1039,11 +1068,17 @@ def build_ffmpeg_command(
             "-c:v",
             "libx264",
             "-preset",
-            "medium",
+            preset,
             "-b:v",
             f"{video_bitrate_kbps}k",
             "-pix_fmt",
             "yuv420p",
+        ]
+    )
+    if encoder_threads is not None:
+        args.extend(["-threads", str(encoder_threads)])
+    args.extend(
+        [
             "-c:a",
             "aac",
             "-ar",

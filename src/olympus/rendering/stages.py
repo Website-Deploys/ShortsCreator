@@ -489,9 +489,30 @@ class _RenderExecutionStage(RenderStageAnalyzer):
                     [str(line) for line in stderr_tail] if isinstance(stderr_tail, list) else []
                 )
                 logs.extend(f"[ffmpeg] {line}" for line in ffmpeg_tail)
+                command_summary = (
+                    details.get("command_summary")
+                    if isinstance(details.get("command_summary"), dict)
+                    else {}
+                )
+                resource_hint = str(details.get("resource_hint") or "")
+                stage_name = str(details.get("stage_name") or self.name)
+                if command_summary:
+                    logs.append(f"[ffmpeg] command_summary={command_summary}")
+                if resource_hint:
+                    logs.append(f"[ffmpeg] resource_hint={resource_hint}")
                 tail_reason = " | ".join(ffmpeg_tail[-3:])
                 reason = f"{exc} {tail_reason}".strip() if tail_reason else str(exc)
-                skipped.append({"clip_id": cid, "reason": reason, "stderr_tail": ffmpeg_tail})
+                skipped.append(
+                    {
+                        "clip_id": cid,
+                        "reason": reason,
+                        "stage_name": stage_name,
+                        "stderr_tail": ffmpeg_tail,
+                        "command_summary": command_summary,
+                        "resource_exhaustion": details.get("resource_exhaustion") is True,
+                        "resource_hint": resource_hint,
+                    }
+                )
                 continue
             logs.extend(out.logs)
             rendered = self._output_dict(t, out)

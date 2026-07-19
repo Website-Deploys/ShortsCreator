@@ -19,6 +19,8 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +67,7 @@ from olympus.domain.entities.render_pipeline import (
 )
 from olympus.editing import build_default_editing_analyzers
 from olympus.editing.pipeline import EditingPipeline
+from olympus.platform.errors import ExternalServiceError
 from olympus.rendering import RenderPipeline, build_default_render_stages
 from olympus.rendering import assets as render_assets
 from olympus.rendering import command as render_command
@@ -121,6 +124,15 @@ def test_video_filter_preserves_short_format_when_zooming() -> None:
     assert "s=1080x1920:fps=30" in rendered
     assert "eq=contrast" in rendered
     assert "unsharp" in rendered
+    assert rendered.count("fps=30") == 1
+    assert ",fps=30," not in rendered
+
+
+def test_video_filter_sets_output_fps_when_zoom_is_absent() -> None:
+    rendered = render_command.video_filter({}, 1080, 1920, fps=30)
+
+    assert rendered.count("fps=30") == 1
+    assert ",fps=30," in rendered
 
 
 def test_video_filter_consumes_face_tracking_plan() -> None:
@@ -240,6 +252,157 @@ def test_ffmpeg_command_uses_exact_trim_reset_and_no_shortest() -> None:
     assert "-ss" not in args
     assert "-to" not in args
     assert "-t" not in args
+
+
+def test_ffmpeg_command_supports_bounded_validation_resources() -> None:
+    args = render_command.build_ffmpeg_command(
+        binary="ffmpeg",
+        source_path="source.mp4",
+        output_path="out.mp4",
+        timeline={"duration": 1.0, "tracks": [], "metadata": {}},
+        width=540,
+        height=960,
+        fps=30,
+        video_bitrate_kbps=1200,
+        audio_bitrate_kbps=128,
+        encoder_preset="veryfast",
+        encoder_threads=2,
+        filter_threads=1,
+    )
+
+    assert args[args.index("-preset") + 1] == "veryfast"
+    assert args[args.index("-threads") + 1] == "2"
+    assert args[args.index("-filter_threads") + 1] == "1"
+    assert args[args.index("-filter_complex_threads") + 1] == "1"
+    assert "-nostats" in args
+    assert args[args.index("-loglevel") + 1] == "warning"
+
+
+async def test_ffmpeg_resource_failure_has_bounded_actionable_details(
+    monkeypatch: Any,
+) -> None:
+    def failing_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        stderr = kwargs["stderr"]
+        stderr.write(("repeated warning\n" * 60).encode())
+        stderr.write(b"Cannot allocate memory\n")
+        stderr.flush()
+        return subprocess.CompletedProcess(args[0], 4294967284)
+
+    monkeypatch.setattr(subprocess, "run", failing_run)
+    renderer = FfmpegClipRenderer()
+
+    with pytest.raises(ExternalServiceError) as caught:
+        await renderer._run(
+            [
+                "ffmpeg",
+                "-i",
+                r"D:\private\source.mp4",
+                "-filter_complex",
+                "zoompan=z=1.1:d=1:s=540x960:fps=30",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                r"D:\private\out.mp4",
+            ],
+            label="full_resolution_render",
+        )
+
+    details = caught.value.details
+    assert caught.value.code == "render_resource_exhausted"
+    assert details["stage_name"] == "full_resolution_render"
+    assert details["returncode"] == 4294967284
+    assert details["signed_returncode"] == -12
+    assert details["resource_exhaustion"] is True
+    assert "zoom/FPS" in details["resource_hint"]
+    assert len(details["stderr_tail"]) <= 40
+    assert details["stderr_tail"][-1] == "Cannot allocate memory"
+    assert details["command_summary"]["zoompan_filters"] == 1
+    assert "private" not in json.dumps(details["command_summary"]).lower()
+
+
+async def test_ffmpeg_windows_resource_error_before_spawn_is_actionable(
+    monkeypatch: Any,
+) -> None:
+    def unavailable_tempfile(*_args: Any, **_kwargs: Any) -> Any:
+        raise OSError(1450, "Insufficient system resources exist to complete the service")
+
+    monkeypatch.setattr(tempfile, "TemporaryFile", unavailable_tempfile)
+    renderer = FfmpegClipRenderer()
+
+    with pytest.raises(ExternalServiceError) as caught:
+        await renderer._run(
+            ["ffmpeg", "-i", "source.mp4", "-c:v", "libx264", "out.mp4"],
+            label="render_preview",
+        )
+
+    details = caught.value.details
+    assert caught.value.code == "render_resource_exhausted"
+    assert details["stage_name"] == "render_preview"
+    assert details["resource_exhaustion"] is True
+    assert "Windows process resources" in details["resource_hint"]
+
+
+async def test_failed_render_cleans_temporary_directory(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    storage = LocalStorage(root=str(tmp_path / "storage"))
+    source_key = "uploads/test/source.mp4"
+    await storage.put(source_key, b"source", content_type="video/mp4")
+    renderer = FfmpegClipRenderer()
+    monkeypatch.setattr(
+        renderer,
+        "availability",
+        lambda: RendererAvailability(available=True, renderer="ffmpeg", version="test"),
+    )
+    monkeypatch.setattr(
+        renderer,
+        "_timeline_with_assets",
+        lambda timeline, _output_key="": timeline,
+    )
+
+    async def fail_run(_args: list[str], *, label: str) -> list[str]:
+        raise ExternalServiceError(
+            f"{label} failed.",
+            code="render_failed",
+            details={"stage_name": label, "stderr_tail": ["failed"]},
+        )
+
+    monkeypatch.setattr(renderer, "_run", fail_run)
+    created: list[Path] = []
+    real_temporary_directory = tempfile.TemporaryDirectory
+
+    def tracked_temporary_directory(*args: Any, **kwargs: Any) -> Any:
+        kwargs["dir"] = tmp_path
+        context = real_temporary_directory(*args, **kwargs)
+        created.append(Path(context.name))
+        return context
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", tracked_temporary_directory)
+    spec = ClipRenderSpec(
+        clip_id="clip_cleanup",
+        source_key=source_key,
+        output_key="render/project/clips/clip_cleanup.mp4",
+        timeline={
+            "source_start": 0.0,
+            "source_end": 1.0,
+            "duration": 1.0,
+            "tracks": [],
+            "metadata": {},
+        },
+        width=540,
+        height=960,
+        fps=30,
+        video_bitrate_kbps=1200,
+        audio_bitrate_kbps=128,
+    )
+
+    with pytest.raises(ExternalServiceError):
+        await renderer.render_clip(spec, storage)
+
+    assert created
+    assert all(not path.exists() for path in created)
 
 
 def test_asset_resolution_is_honest_when_missing(tmp_path: Path) -> None:
