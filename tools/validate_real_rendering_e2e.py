@@ -44,6 +44,8 @@ from olympus.domain.contracts.ai import (  # noqa: E402
     TranscriptResult,
     TranscriptSegment,
 )
+from olympus.domain.contracts.render_pipeline import RenderSettings  # noqa: E402
+from olympus.domain.contracts.rendering import ClipRenderer  # noqa: E402
 from olympus.domain.contracts.workflow import EngineRunner  # noqa: E402
 from olympus.domain.entities.optimization import OptimizationAnalysis  # noqa: E402
 from olympus.domain.entities.project import Project  # noqa: E402
@@ -309,6 +311,9 @@ def _build_runtime(
     render_preset: str,
     render_threads: int,
     render_filter_threads: int,
+    transcription_provider: TranscriptionProvider | None = None,
+    renderer: ClipRenderer | None = None,
+    render_settings: RenderSettings | None = None,
 ) -> RuntimeBundle:
     project_repo = StorageProjectRepository(storage)
     analysis_repo = StorageAnalysisRepository(storage)
@@ -324,7 +329,10 @@ def _build_runtime(
         analysis_repo=analysis_repo,
         project_repo=project_repo,
         storage=storage,
-        transcription_provider=FixtureTranscriptionProvider(storage, duration_seconds),
+        transcription_provider=(
+            transcription_provider
+            or FixtureTranscriptionProvider(storage, duration_seconds)
+        ),
     )
     story = StoryService(
         story_repo=story_repo,
@@ -359,13 +367,16 @@ def _build_runtime(
     rendering = RenderingService(
         render_run_repo=render_run_repo,
         manifest_store=render_manifest_repo,
-        renderer=FfmpegClipRenderer(
-            ffmpeg_binary=ffmpeg_binary,
-            ffprobe_binary=ffprobe_binary,
-            encoder_preset=render_preset,
-            encoder_threads=render_threads,
-            filter_threads=render_filter_threads,
-            render_timeout_seconds=timeout_seconds,
+        renderer=(
+            renderer
+            or FfmpegClipRenderer(
+                ffmpeg_binary=ffmpeg_binary,
+                ffprobe_binary=ffprobe_binary,
+                encoder_preset=render_preset,
+                encoder_threads=render_threads,
+                filter_threads=render_filter_threads,
+                render_timeout_seconds=timeout_seconds,
+            )
         ),
         editing_repo=editing_repo,
         planning_repo=planning_repo,
@@ -374,6 +385,7 @@ def _build_runtime(
         analysis_repo=analysis_repo,
         project_repo=project_repo,
         storage=storage,
+        settings=render_settings,
     )
     optimization = OptimizationService(
         optimization_repo=optimization_repo,
@@ -429,6 +441,8 @@ async def create_local_project(
     media_path: Path,
     storage: LocalStorage,
     probe: dict[str, Any],
+    *,
+    desired_clip_count: int = 1,
 ) -> Project:
     upload = await IntakeService(storage).store_upload(
         filename=media_path.name,
@@ -445,7 +459,7 @@ async def create_local_project(
             duration_seconds=as_float(probe.get("container_duration")),
             width=int(as_float(probe.get("width"))),
             height=int(as_float(probe.get("height"))),
-            desired_clip_count=1,
+            desired_clip_count=desired_clip_count,
             content_category="educational",
             editing_intensity="balanced",
             music_enabled=False,
