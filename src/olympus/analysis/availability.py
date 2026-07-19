@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import importlib.util
 import shutil
 from typing import Any
 
+from olympus.dependencies import is_module_available
+
 
 def module_available(module: str) -> bool:
-    try:
-        return importlib.util.find_spec(module) is not None
-    except (ImportError, ModuleNotFoundError, ValueError):
-        return False
+    """Backward-compatible analysis alias for the shared dependency helper."""
+
+    return is_module_available(module)
 
 
 def analysis_capabilities() -> dict[str, Any]:

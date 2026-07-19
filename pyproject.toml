@@ -36,6 +36,10 @@ dependencies = [
 # lean and starts fine with the default `noop` provider.
 transcription = [
     "faster-whisper>=1.0,<2.0",
+    "ctranslate2>=4.4,<5.0",
+]
+vision = [
+    "opencv-python>=4.10,<5.0",
 ]
 video-links = [
     "yt-dlp>=2025.1.15",

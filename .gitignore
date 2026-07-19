@@ -30,7 +30,10 @@ htmlcov/
 storage_data/
 storage_data_backup_*/
 work/
-assets/
+/assets/*
+!/assets/music/
+/assets/music/*
+!/assets/music/music_manifest.json
 uploads/
 
 # Generated media must never enter source-control history

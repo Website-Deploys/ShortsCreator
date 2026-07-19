@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import wave
 from pathlib import Path
 
 from olympus.integration.clip_intelligence import unified_clip_intelligence
@@ -443,23 +444,67 @@ def test_cli_source_url_and_manifest_modes_write_reports(tmp_path: Path) -> None
     assert (manifest_reports / "copyright_safety_report.json").is_file()
 
 
-def test_cli_music_library_mode_checks_real_local_manifest(tmp_path: Path) -> None:
+def _write_synthetic_music_library(asset_root: Path) -> None:
+    generated = asset_root / "music" / "generated"
+    generated.mkdir(parents=True)
+    audio_path = generated / "fixture.wav"
+    with wave.open(str(audio_path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(8000)
+        handle.writeframes(b"\x00\x00" * 800)
+    manifest = {
+        "music_library_v2": {
+            "version": "2.0",
+            "assets": [
+                {
+                    "asset_id": "synthetic_test_bed",
+                    "title": "Synthetic test bed",
+                    "relative_path": "generated/fixture.wav",
+                    "folder_type": "generated",
+                    "duration_seconds": 0.1,
+                    "mood_tags": ["neutral"],
+                    "energy_score": 0.2,
+                    "speech_safe": True,
+                    "has_vocals": False,
+                    "license": "project_generated_safe",
+                    "license_verified": True,
+                    "source": "unit_test_generated_fixture",
+                    "safe_default": True,
+                    "quality_status": "passed",
+                }
+            ],
+            "rejected_assets": [],
+        }
+    }
+    (asset_root / "music" / "music_manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+
+
+def test_cli_music_library_mode_checks_synthetic_fixture_manifest(tmp_path: Path) -> None:
+    asset_root = tmp_path / "assets"
+    report_dir = tmp_path / "reports"
+    _write_synthetic_music_library(asset_root)
     completed = subprocess.run(
         [
             sys.executable,
             "tools/validate_copyright_safety.py",
             "--music-library",
             "--asset-root",
-            str(Path("assets").resolve()),
+            str(asset_root),
             "--report-dir",
-            str(tmp_path),
+            str(report_dir),
         ],
         cwd=Path.cwd(),
         capture_output=True,
         text=True,
         check=False,
     )
-    payload = json.loads((tmp_path / "copyright_safety_report.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (report_dir / "copyright_safety_report.json").read_text(encoding="utf-8")
+    )
 
     assert completed.returncode == 0, completed.stderr
     assert payload["music_library"]["safe_assets_checked"] >= 1
