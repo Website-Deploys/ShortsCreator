@@ -25,7 +25,12 @@ import {
 import { Card } from "@/components/ui/Card";
 import { formatDuration } from "@/lib/format";
 import { useRerunStage } from "@/lib/queries";
-import type { Analysis, AnalysisStage } from "@/lib/types";
+import type {
+  Analysis,
+  AnalysisSignalHealth,
+  AnalysisSignalState,
+  AnalysisStage,
+} from "@/lib/types";
 
 function stageOf(analysis: Analysis, name: string): AnalysisStage | undefined {
   return analysis.stages.find((s) => s.stage === name);
@@ -109,6 +114,49 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
 
 function num(value: unknown): ReactNode {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : "—";
+}
+
+const SIGNAL_TONE: Record<AnalysisSignalState, string> = {
+  available: "border-green-400/20 bg-green-400/5 text-green-300",
+  partial: "border-blue-400/20 bg-blue-400/5 text-blue-200",
+  fallback: "border-amber-400/20 bg-amber-400/5 text-amber-200",
+  unavailable: "border-white/10 bg-white/[0.02] text-muted",
+  failed: "border-red-400/20 bg-red-400/5 text-red-200",
+  skipped: "border-white/10 bg-white/[0.02] text-muted",
+};
+
+function SignalHealthSection({ health }: { health: AnalysisSignalHealth }) {
+  return (
+    <div>
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <Field label="Available" value={health.available_count} />
+        <Field label="Partial" value={health.partial_count} />
+        <Field label="Fallback" value={health.fallback_count} />
+        <Field label="Unavailable" value={health.unavailable_count} />
+        <Field label="Failed" value={health.failed_count} />
+      </div>
+      <ul className="grid gap-2 md:grid-cols-2">
+        {health.signals.map((signal) => {
+          const detail =
+            signal.warnings[0] ?? signal.reason ?? `${signal.provider} reported no details.`;
+          return (
+            <li
+              key={signal.signal_name}
+              className={`rounded-lg border px-3 py-2.5 ${SIGNAL_TONE[signal.status]}`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium text-white/90">
+                  {signal.signal_name.replaceAll("_", " ")}
+                </span>
+                <span className="text-[11px] uppercase tracking-wide">{signal.status}</span>
+              </div>
+              <p className="mt-1 text-xs leading-relaxed opacity-80">{detail}</p>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 function MetadataSection({ stage }: { stage: AnalysisStage | undefined }) {
@@ -252,6 +300,12 @@ export function AnalysisViewer({ analysis }: { analysis: Analysis }) {
           render={(s) => <MetadataSection stage={s} />}
         />
       </Section>
+
+      {analysis.signal_health && (
+        <Section icon={<BrainIcon className="h-4 w-4" />} title="Analysis signal health">
+          <SignalHealthSection health={analysis.signal_health} />
+        </Section>
+      )}
 
       <Section icon={<TextIcon className="h-4 w-4" />} title="Transcript">
         <Signal

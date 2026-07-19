@@ -37,6 +37,7 @@ from olympus.analysis.analyzers import (
     OcrAnalyzer,
     SceneDetectionAnalyzer,
     ShotDetectionAnalyzer,
+    SignalHealthAnalyzer,
     SpeakerSegmentationAnalyzer,
     SpeechTranscriptionAnalyzer,
     VideoInspectionAnalyzer,
@@ -63,7 +64,7 @@ log = get_logger(__name__)
 
 #: Bumped when the *set* or *ordering* of stages changes (not per-stage logic;
 #: that is tracked by each analyzer's own ``version``).
-PIPELINE_VERSION = "1"
+PIPELINE_VERSION = "2"
 
 #: How many times to retry a stage that raised or returned FAILED. UNAVAILABLE
 #: outcomes are never retried.
@@ -74,7 +75,7 @@ ProgressCallback = Callable[[Analysis], None]
 
 
 def build_default_analyzers() -> list[Analyzer]:
-    """Return the eleven analyzers in pipeline order.
+    """Return the analysis analyzers in pipeline order.
 
     The order mirrors :data:`STAGE_ORDER`; the pipeline validates this on
     construction so the two can never silently drift apart.
@@ -91,6 +92,7 @@ def build_default_analyzers() -> list[Analyzer]:
         FaceDetectionAnalyzer(),
         ObjectDetectionAnalyzer(),
         EmotionTimelineAnalyzer(),
+        SignalHealthAnalyzer(),
         KnowledgeGraphAnalyzer(),
     ]
 
@@ -247,6 +249,7 @@ class AnalysisPipeline:
                 if name not in present:
                     existing.stages.append(StageResult(stage=name))
             existing.stages.sort(key=lambda s: STAGE_ORDER.index(s.stage))
+            existing.pipeline_version = PIPELINE_VERSION
             return existing
         now = utc_now()
         return Analysis(

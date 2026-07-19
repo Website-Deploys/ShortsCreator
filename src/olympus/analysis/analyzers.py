@@ -16,9 +16,21 @@ import os
 import shutil
 import subprocess
 import tempfile
+import wave
 from pathlib import Path
 from typing import Any
 
+from olympus.analysis.audio_signals import analyze_wav_file
+from olympus.analysis.availability import analysis_capabilities
+from olympus.analysis.emotion_signals import build_emotion_timeline
+from olympus.analysis.signals import build_analysis_signals_v2, unavailable_signal_entry
+from olympus.analysis.speaker_signals import build_speaker_segmentation
+from olympus.analysis.visual_signals import (
+    build_scene_signal,
+    build_shot_signal,
+    parse_brightness_metadata,
+    parse_scene_metadata,
+)
 from olympus.domain.contracts.analysis import (
     Analyzer,
     ProgressReporter,
@@ -246,7 +258,7 @@ def _from_ffprobe(probe: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]
 # --------------------------------------------------------------------------- #
 class AudioExtractionAnalyzer(Analyzer):
     name = "audio_extraction"
-    version = "1"
+    version = "2"
     depends_on = ("video_inspection",)
 
     async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
@@ -328,12 +340,31 @@ class AudioExtractionAnalyzer(Analyzer):
                     "audio-dependent stages are reported unavailable rather than "
                     f"failing the whole pipeline. FFmpeg: {detail}"
                 )
+            try:
+                local_signals = await asyncio.to_thread(analyze_wav_file, out_path)
+            except (OSError, EOFError, ValueError, wave.Error) as exc:
+                log.warning("audio_signal_analysis_unavailable", error=str(exc))
+                local_signals = {
+                    name: unavailable_signal_entry(
+                        name,
+                        provider="local_pcm_rms",
+                        reason="insufficient_input",
+                        detail=f"Decoded audio could not be analyzed: {type(exc).__name__}.",
+                    )
+                    for name in ("audio_energy", "silence")
+                }
             audio_bytes = await asyncio.to_thread(Path(out_path).read_bytes)
         audio_key = f"analysis/{ctx.project.id}/audio.wav"
         await ctx.storage.put(audio_key, audio_bytes, content_type="audio/wav")
         report(1.0)
         return StageOutcome.completed(
-            {"audio_key": audio_key, "format": "wav", "sample_rate": 16000, "channels": 1}
+            {
+                "audio_key": audio_key,
+                "format": "wav",
+                "sample_rate": 16000,
+                "channels": 1,
+                **local_signals,
+            }
         )
 
 
@@ -393,6 +424,7 @@ class SpeechTranscriptionAnalyzer(Analyzer):
             {
                 "language": result.language,
                 "confidence": result.confidence,
+                "provider": getattr(provider, "name", "configured_transcription_provider"),
                 "word_count": len(result.text.split()),
                 "has_word_timestamps": any(s.words for s in result.segments),
                 "segments": [
@@ -415,35 +447,33 @@ class SpeechTranscriptionAnalyzer(Analyzer):
 # --------------------------------------------------------------------------- #
 class SpeakerSegmentationAnalyzer(Analyzer):
     name = "speaker_segmentation"
-    version = "1"
-    depends_on = ("speech_transcription",)
+    version = "2"
+    depends_on = ("audio_extraction",)
 
     async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
         transcript = ctx.data_of("speech_transcription")
-        if not transcript:
-            return StageOutcome.unavailable("Requires a transcript to identify speakers.")
-        segments = transcript.get("segments", [])
-        if not any(s.get("speaker") for s in segments):
+        audio = ctx.data_of("audio_extraction") or {}
+        silence = audio.get("silence")
+        silence_timeline = silence.get("timeline") if isinstance(silence, dict) else None
+        silence_events = (
+            silence_timeline.get("events") if isinstance(silence_timeline, dict) else None
+        )
+        result = build_speaker_segmentation(
+            transcript.get("segments", []) if transcript else None,
+            silence_events=silence_events if isinstance(silence_events, list) else None,
+            duration_seconds=float(ctx.project.duration_seconds or 0.0),
+        )
+        if result is None:
             return StageOutcome.unavailable(
-                "The transcript contains no speaker information (diarization not "
-                "provided by the speech-to-text provider)."
+                "No diarization provider, transcript turn boundaries, or usable silence gaps "
+                "are available. Speaker segmentation cannot be inferred honestly."
             )
-        timeline: list[dict[str, Any]] = []
-        for seg in segments:
-            speaker = seg.get("speaker") or "unknown"
-            if timeline and timeline[-1]["speaker"] == speaker:
-                timeline[-1]["end"] = seg.get("end")
-            else:
-                timeline.append(
-                    {"speaker": speaker, "start": seg.get("start"), "end": seg.get("end")}
-                )
         report(1.0)
-        speakers = sorted({t["speaker"] for t in timeline})
-        return StageOutcome.completed({"speakers": speakers, "timeline": timeline})
+        return StageOutcome.completed(result)
 
 
 # --------------------------------------------------------------------------- #
-# 5-9. Vision/audio stages requiring FFmpeg + CV/ML models. Honest unavailable.
+# 5-6. Deterministic local scene and shot analysis.
 # --------------------------------------------------------------------------- #
 class _UnavailableModelStage(Analyzer):
     """Base for stages whose model/tooling is not configured in this environment."""
@@ -454,85 +484,242 @@ class _UnavailableModelStage(Analyzer):
         return StageOutcome.unavailable(self._reason)
 
 
-class SceneDetectionAnalyzer(_UnavailableModelStage):
+class SceneDetectionAnalyzer(Analyzer):
     name = "scene_detection"
-    version = "1"
+    version = "2"
     depends_on = ("video_inspection",)
-    _reason = (
-        "Scene detection requires frame decoding (FFmpeg) and a scene-detection "
-        "step, which are not available in this environment."
-    )
+
+    async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
+        ffmpeg_problem = _ffmpeg_unavailable_reason()
+        if ffmpeg_problem is not None:
+            return StageOutcome.unavailable(ffmpeg_problem)
+        inspection = ctx.data_of("video_inspection") or {}
+        duration = float(inspection.get("duration_seconds") or ctx.project.duration_seconds or 0.0)
+        if duration <= 0:
+            return StageOutcome.unavailable(
+                "Scene detection requires a positive source duration, which is unavailable."
+            )
+        with tempfile.TemporaryDirectory(prefix="olympus-scenes-") as tmp:
+            source_path, source_error = await _materialize_source(ctx, tmp)
+            if source_error is not None:
+                return StageOutcome.unavailable(source_error)
+            assert source_path is not None
+            scene_sink = str(Path(tmp) / "scene.null")
+            try:
+                code, out, err = await _run(
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-nostats",
+                    "-threads",
+                    "1",
+                    "-i",
+                    source_path,
+                    "-an",
+                    "-vf",
+                    (
+                        "scale=320:-2:flags=fast_bilinear,"
+                        "select=gt(scene\\,0.32),"
+                        "metadata=mode=print:key=lavfi.scene_score"
+                    ),
+                    "-filter_threads",
+                    "1",
+                    "-f",
+                    "null",
+                    scene_sink,
+                    timeout=_AUDIO_EXTRACTION_TIMEOUT_SECONDS,
+                )
+            except (OSError, TimeoutError, SubprocessUnavailableError) as exc:
+                return StageOutcome.unavailable(
+                    f"Local FFmpeg scene detection could not run: {type(exc).__name__}: {exc}"
+                )
+            if code != 0:
+                detail = (err or b"").decode(errors="ignore")[-500:].strip()
+                return StageOutcome.unavailable(
+                    "FFmpeg could not decode this source for scene detection. "
+                    f"{detail or f'exit code {code}'}"
+                )
+            boundaries = parse_scene_metadata(
+                (out or b"").decode(errors="ignore")
+                + "\n"
+                + (err or b"").decode(errors="ignore")
+            )
+            report(0.75)
+            brightness_sink = str(Path(tmp) / "brightness.null")
+            brightness_samples: list[dict[str, float]] = []
+            try:
+                brightness_code, brightness_out, brightness_err = await _run(
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-nostats",
+                    "-threads",
+                    "1",
+                    "-i",
+                    source_path,
+                    "-an",
+                    "-vf",
+                    (
+                        "fps=1/2,scale=160:-2:flags=fast_bilinear,signalstats,"
+                        "metadata=mode=print:key=lavfi.signalstats.YAVG"
+                    ),
+                    "-filter_threads",
+                    "1",
+                    "-f",
+                    "null",
+                    brightness_sink,
+                    timeout=_AUDIO_EXTRACTION_TIMEOUT_SECONDS,
+                )
+                if brightness_code == 0:
+                    brightness_samples = parse_brightness_metadata(
+                        (brightness_out or b"").decode(errors="ignore")
+                        + "\n"
+                        + (brightness_err or b"").decode(errors="ignore")
+                    )
+            except (OSError, TimeoutError, SubprocessUnavailableError) as exc:
+                log.warning("visual_brightness_sampling_unavailable", error=str(exc))
+        report(1.0)
+        return StageOutcome.completed(
+            {
+                **build_scene_signal(
+                    boundaries,
+                    duration_seconds=duration,
+                    brightness_samples=brightness_samples,
+                ),
+                "provider": "ffmpeg_scene_filter",
+                "threshold": 0.32,
+                "raw_frames_stored": False,
+            }
+        )
 
 
-class ShotDetectionAnalyzer(_UnavailableModelStage):
+class ShotDetectionAnalyzer(Analyzer):
     name = "shot_detection"
-    version = "1"
-    depends_on = ("video_inspection",)
-    _reason = (
-        "Shot/cut detection requires frame decoding (FFmpeg), which is not "
-        "available in this environment."
-    )
+    version = "2"
+    depends_on = ("scene_detection",)
+
+    async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
+        scenes = ctx.data_of("scene_detection")
+        inspection = ctx.data_of("video_inspection") or {}
+        duration = float(inspection.get("duration_seconds") or ctx.project.duration_seconds or 0.0)
+        if not scenes or duration <= 0:
+            return StageOutcome.unavailable(
+                "Shot detection requires completed FFmpeg scene boundaries and source duration."
+            )
+        report(1.0)
+        return StageOutcome.completed(build_shot_signal(scenes, duration_seconds=duration))
 
 
+# --------------------------------------------------------------------------- #
+# 7-9. Optional model-backed signals. Honest unavailable until configured.
+# --------------------------------------------------------------------------- #
 class OcrAnalyzer(_UnavailableModelStage):
     name = "ocr"
-    version = "1"
+    version = "2"
     depends_on = ("video_inspection",)
-    _reason = (
-        "On-screen text extraction requires frame sampling (FFmpeg) and an OCR "
-        "engine, which are not available in this environment."
-    )
+
+    async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
+        capability = analysis_capabilities()["ocr"]
+        return StageOutcome.unavailable(
+            "OCR is unavailable: "
+            f"{capability['reason']}. No configured local OCR provider produced text."
+        )
 
 
 class FaceDetectionAnalyzer(_UnavailableModelStage):
     name = "face_detection"
-    version = "1"
+    version = "2"
     depends_on = ("video_inspection",)
-    _reason = (
-        "Face detection requires frame sampling (FFmpeg) and a face-detection "
-        "model, which are not available in this environment. Faces are tracked by "
-        "consistent IDs only - people are never identified."
-    )
+
+    async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
+        capability = analysis_capabilities()["face_detection"]
+        return StageOutcome.unavailable(
+            "Face detection is unavailable: "
+            f"{capability['reason']}. No configured provider produced anonymous detections; "
+            "people are never identified."
+        )
 
 
 class ObjectDetectionAnalyzer(_UnavailableModelStage):
     name = "object_detection"
-    version = "1"
+    version = "2"
     depends_on = ("video_inspection",)
-    _reason = (
-        "Object detection requires frame sampling (FFmpeg) and an object-detection "
-        "model, which are not available in this environment."
-    )
-
-
-# --------------------------------------------------------------------------- #
-# 10. Emotion Timeline - requires transcript + an emotion model. Honest.
-# --------------------------------------------------------------------------- #
-class EmotionTimelineAnalyzer(Analyzer):
-    name = "emotion_timeline"
-    version = "1"
-    depends_on = ("speech_transcription",)
 
     async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
-        transcript = ctx.data_of("speech_transcription")
-        if not transcript:
-            return StageOutcome.unavailable(
-                "Emotion estimation requires a transcript and an emotion model. "
-                "It is an estimation and is never reported with false certainty."
-            )
-        # A real emotion model is not configured; we do not guess.
+        capability = analysis_capabilities()["object_detection"]
         return StageOutcome.unavailable(
-            "A transcript is available, but no emotion-estimation model is "
-            "configured. Emotion is an estimation and is never fabricated."
+            "Semantic object detection is unavailable: "
+            f"{capability['reason']}. Basic full-frame visual activity remains separate and "
+            "no object classes are invented."
         )
 
 
 # --------------------------------------------------------------------------- #
-# 11. Knowledge Graph - real aggregation of whatever is genuinely known.
+# 10. Emotion Timeline - transparent local heuristic fallback.
+# --------------------------------------------------------------------------- #
+class EmotionTimelineAnalyzer(Analyzer):
+    name = "emotion_timeline"
+    version = "2"
+    depends_on = ("speech_transcription",)
+
+    async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
+        transcript = ctx.data_of("speech_transcription")
+        if not transcript or not isinstance(transcript.get("segments"), list):
+            return StageOutcome.unavailable(
+                "The local emotion heuristic requires transcript segments; none are available."
+            )
+        audio = ctx.data_of("audio_extraction") or {}
+        energy = audio.get("audio_energy")
+        timeline = energy.get("timeline") if isinstance(energy, dict) else None
+        energy_events = timeline.get("events") if isinstance(timeline, dict) else None
+        result = build_emotion_timeline(
+            transcript["segments"],
+            audio_energy_events=energy_events if isinstance(energy_events, list) else None,
+        )
+        if result is None:
+            return StageOutcome.unavailable(
+                "Transcript segments were empty, so no heuristic emotion timeline was produced."
+            )
+        report(1.0)
+        return StageOutcome.completed(result)
+
+
+class SignalHealthAnalyzer(Analyzer):
+    """Persist the compact, normalized cross-stage signal contract."""
+
+    name = "signal_health"
+    version = "1"
+    depends_on = (
+        "speech_transcription",
+        "audio_extraction",
+        "speaker_segmentation",
+        "scene_detection",
+        "shot_detection",
+        "ocr",
+        "face_detection",
+        "object_detection",
+        "emotion_timeline",
+    )
+
+    async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
+        artifact = build_analysis_signals_v2(
+            project_id=ctx.project.id,
+            source_id=ctx.project.storage_key,
+            stages=ctx.results,
+        )
+        report(1.0)
+        return StageOutcome.completed(
+            {
+                "analysis_signals_v2": artifact,
+                "signal_health": artifact["signal_health"],
+            }
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 12. Knowledge Graph - real aggregation of whatever is genuinely known.
 # --------------------------------------------------------------------------- #
 class KnowledgeGraphAnalyzer(Analyzer):
     name = "knowledge_graph"
-    version = "1"
+    version = "2"
     depends_on = (
         "video_inspection",
         "speech_transcription",
@@ -541,6 +728,7 @@ class KnowledgeGraphAnalyzer(Analyzer):
         "emotion_timeline",
         "object_detection",
         "ocr",
+        "signal_health",
     )
 
     async def analyze(self, ctx: StageContext, report: ProgressReporter) -> StageOutcome:
@@ -556,6 +744,7 @@ class KnowledgeGraphAnalyzer(Analyzer):
 
         metadata = ctx.data_of("video_inspection") or {}
         transcript = ctx.data_of("speech_transcription")
+        signal_health = ctx.data_of("signal_health") or {}
         graph: dict[str, Any] = {
             "metadata": metadata,
             "available_signals": completed,
@@ -565,6 +754,8 @@ class KnowledgeGraphAnalyzer(Analyzer):
             "scenes": (ctx.data_of("scene_detection") or {}).get("scenes", []),
             "speakers": (ctx.data_of("speaker_segmentation") or {}).get("speakers", []),
             "emotion": (ctx.data_of("emotion_timeline") or {}).get("timeline", []),
+            "signal_health": signal_health.get("signal_health"),
+            "analysis_signals_v2_ref": "analysis/stages/signal_health.json",
             "summary": _understanding_summary(metadata, completed, pending),
         }
         report(1.0)

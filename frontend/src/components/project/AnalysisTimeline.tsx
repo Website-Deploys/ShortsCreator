@@ -219,7 +219,7 @@ export function AnalysisTimeline({
       <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted">
           <span className="font-medium text-white">{analysis.completed_stages}</span> of{" "}
-          {analysis.total_stages} signals understood
+          {analysis.total_stages} analysis stages completed
           {isRunning && <span className="ml-2 text-accent">· analyzing…</span>}
         </p>
         <span className="text-[11px] uppercase tracking-wide text-muted">

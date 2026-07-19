@@ -560,7 +560,7 @@ class AudienceRelatabilityAnalyzer(ViralityAnalyzer):
 # --------------------------------------------------------------------------- #
 class MomentumAnalyzer(ViralityAnalyzer):
     name = "momentum"
-    version = "1"
+    version = "2"
 
     async def analyze(
         self, ctx: ViralityStageContext, report: ViralityProgressReporter
@@ -584,16 +584,45 @@ class MomentumAnalyzer(ViralityAnalyzer):
             }
             for w in slow[:5]
         ]
+        local_signal_scores: list[float] = []
+        visual_pacing = ctx.cognitive_signal("visual_pacing") or {}
+        visual_status = visual_pacing.get("status")
+        if isinstance(visual_status, dict) and visual_status.get("available"):
+            visual_score = S.as_float(visual_pacing.get("overall_score"))
+            local_signal_scores.append(visual_score)
+            evidence.append(
+                {
+                    "type": "visual_pacing",
+                    "detail": f"local cut-frequency score {S.round3(visual_score)}",
+                }
+            )
+        audio_energy = ctx.cognitive_signal("audio_energy") or {}
+        audio_timeline = audio_energy.get("timeline")
+        audio_events = (
+            S.as_list(audio_timeline.get("events")) if isinstance(audio_timeline, dict) else []
+        )
+        if audio_events:
+            audio_score = S.mean([S.as_float(item.get("score")) for item in audio_events])
+            local_signal_scores.append(audio_score)
+            evidence.append(
+                {
+                    "type": "audio_energy",
+                    "detail": f"local RMS energy score {S.round3(audio_score)}",
+                }
+            )
+        if local_signal_scores:
+            score = S.clamp01(0.8 * score + 0.2 * S.mean(local_signal_scores))
         report(1.0)
         return ViralityOutcome.completed(
             {
                 "score": S.round3(score),
-                "confidence": 0.45,
+                "confidence": 0.56 if local_signal_scores else 0.45,
                 "slow_moment_count": len(slow),
+                "local_analysis_guidance_used": bool(local_signal_scores),
                 "evidence": evidence,
                 "limitations": (
-                    "Pacing is proxied by transcript information density per window; "
-                    "visual cut rhythm and audio energy are not analyzed."
+                    "Pacing combines transcript information density with deterministic local "
+                    "cut rhythm/audio energy when available; it is not watch-time evidence."
                 ),
             }
         )

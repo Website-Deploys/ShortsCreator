@@ -52,6 +52,7 @@ STAGE_ORDER: tuple[str, ...] = (
     "face_detection",
     "object_detection",
     "emotion_timeline",
+    "signal_health",
     "knowledge_graph",
 )
 
@@ -67,6 +68,7 @@ STAGE_LABELS: dict[str, str] = {
     "face_detection": "Face Detection",
     "object_detection": "Object Detection",
     "emotion_timeline": "Emotion Timeline",
+    "signal_health": "Signal Health",
     "knowledge_graph": "Knowledge Graph",
 }
 
@@ -142,6 +144,24 @@ class Analysis:
 
     def stage(self, name: str) -> StageResult | None:
         return next((s for s in self.stages if s.stage == name), None)
+
+    def signals_v2(self) -> dict[str, Any] | None:
+        """Return the normalized signal artifact when produced by pipeline V2."""
+
+        result = self.stage("signal_health")
+        if result is None or result.status is not StageStatus.COMPLETED:
+            return None
+        artifact = result.data.get("analysis_signals_v2")
+        return artifact if isinstance(artifact, dict) else None
+
+    def signal(self, name: str) -> dict[str, Any] | None:
+        """Return one normalized signal entry without requiring it to be available."""
+
+        artifact = self.signals_v2()
+        if artifact is None:
+            return None
+        signal = artifact.get(name)
+        return signal if isinstance(signal, dict) else None
 
     def index(self) -> dict[str, Any]:
         """The lightweight index document (summaries only, no stage data)."""
