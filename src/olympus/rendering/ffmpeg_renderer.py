@@ -41,6 +41,15 @@ from olympus.rendering.assets import resolve_assets
 log = get_logger(__name__)
 
 _MAX_LOG_LINES = 40
+_MAX_STDERR_BYTES = 128 * 1024
+_RESOURCE_RETURN_CODES = {-12, 4294967284}
+_RESOURCE_ERROR_MARKERS = (
+    "cannot allocate memory",
+    "insufficient system resources",
+    "not enough memory",
+    "resource temporarily unavailable",
+    "winerror 1450",
+)
 
 # Bounded execution timeouts so a hung or runaway FFmpeg can never block a worker
 # forever (the worker's heartbeat keepalive would otherwise mask the stall, so the
@@ -48,6 +57,95 @@ _MAX_LOG_LINES = 40
 # child process, preventing a zombie FFmpeg.
 _RENDER_TIMEOUT_SECONDS = 1800.0
 _PROBE_TIMEOUT_SECONDS = 60.0
+
+
+def _option_value(args: list[str], option: str) -> str | None:
+    try:
+        index = args.index(option) + 1
+    except ValueError:
+        return None
+    return args[index] if index < len(args) else None
+
+
+def _command_summary(args: list[str]) -> dict[str, Any]:
+    graph = _option_value(args, "-filter_complex") or ""
+    return {
+        "binary": Path(args[0]).name if args else None,
+        "input_count": args.count("-i"),
+        "filtergraph_characters": len(graph),
+        "zoompan_filters": graph.count("zoompan="),
+        "fps_tokens": graph.count("fps="),
+        "captions_filter": "subtitles=" in graph,
+        "video_codec": _option_value(args, "-c:v"),
+        "audio_codec": _option_value(args, "-c:a"),
+        "encoder_preset": _option_value(args, "-preset"),
+        "encoder_threads": _option_value(args, "-threads"),
+        "filter_threads": _option_value(args, "-filter_threads"),
+        "filter_complex_threads": _option_value(args, "-filter_complex_threads"),
+        "output_fps": _option_value(args, "-r"),
+        "output_suffix": Path(args[-1]).suffix.lower() if args else None,
+    }
+
+
+def _stderr_tail(handle: Any) -> list[str]:
+    handle.flush()
+    handle.seek(0, 2)
+    size = handle.tell()
+    offset = max(0, size - _MAX_STDERR_BYTES)
+    handle.seek(offset)
+    data = handle.read()
+    if offset and b"\n" in data:
+        data = data.split(b"\n", 1)[1]
+    return data.decode("utf-8", "replace").splitlines()[-_MAX_LOG_LINES:]
+
+
+def _is_resource_exhaustion(
+    returncode: int | None,
+    stderr_lines: list[str],
+    error: BaseException | None = None,
+) -> bool:
+    error_numbers = {
+        getattr(error, "errno", None),
+        getattr(error, "winerror", None),
+    }
+    text = " ".join([*stderr_lines, str(error or "")]).lower()
+    return bool(
+        returncode in _RESOURCE_RETURN_CODES
+        or error_numbers.intersection({12, 1450})
+        or any(marker in text for marker in _RESOURCE_ERROR_MARKERS)
+    )
+
+
+def _resource_hint(*, exhausted: bool, timed_out: bool = False) -> str:
+    if exhausted:
+        return (
+            "FFmpeg exhausted memory or Windows process resources. Inspect zoom/FPS frame "
+            "amplification and lower configured encoder/filter thread limits before retrying."
+        )
+    if timed_out:
+        return (
+            "FFmpeg exceeded the bounded render timeout. Inspect frame progression and the "
+            "command summary for an unexpectedly expensive filter graph."
+        )
+    return (
+        "No resource-exhaustion signature was detected. Inspect the bounded stderr tail and "
+        "command summary before retrying."
+    )
+
+
+def _signed_returncode(returncode: int) -> int:
+    return returncode - (1 << 32) if returncode >= (1 << 31) else returncode
+
+
+class _CapturedSubprocessError(Exception):
+    def __init__(
+        self,
+        error: subprocess.TimeoutExpired | OSError,
+        stderr_tail: list[str],
+    ) -> None:
+        super().__init__(str(error))
+        self.error = error
+        self.stderr_tail = stderr_tail
 
 
 class FfmpegClipRenderer(ClipRenderer):
@@ -60,10 +158,24 @@ class FfmpegClipRenderer(ClipRenderer):
         ffmpeg_binary: str = "ffmpeg",
         ffprobe_binary: str = "ffprobe",
         asset_root: str | None = None,
+        encoder_preset: str = "medium",
+        encoder_threads: int | None = None,
+        filter_threads: int | None = None,
+        render_timeout_seconds: float = _RENDER_TIMEOUT_SECONDS,
     ) -> None:
+        if encoder_threads is not None and encoder_threads < 1:
+            raise ValueError("encoder_threads must be at least 1 when configured.")
+        if filter_threads is not None and filter_threads < 1:
+            raise ValueError("filter_threads must be at least 1 when configured.")
+        if render_timeout_seconds <= 0:
+            raise ValueError("render_timeout_seconds must be greater than zero.")
         self._ffmpeg = ffmpeg_binary
         self._ffprobe = ffprobe_binary
         self._asset_root = asset_root
+        self._encoder_preset = encoder_preset
+        self._encoder_threads = encoder_threads
+        self._filter_threads = filter_threads
+        self._render_timeout_seconds = render_timeout_seconds
         self._music_usage_counts: dict[str, dict[str, int]] = {}
 
     def availability(self) -> RendererAvailability:
@@ -102,18 +214,29 @@ class FfmpegClipRenderer(ClipRenderer):
                 video_bitrate_kbps=spec.video_bitrate_kbps,
                 audio_bitrate_kbps=spec.audio_bitrate_kbps,
                 srt_path=str(caption_path) if caption_path else None,
+                encoder_preset=self._encoder_preset,
+                encoder_threads=self._encoder_threads,
+                filter_threads=self._filter_threads,
             )
             filtergraph = ""
             if "-filter_complex" in args:
                 graph_index = args.index("-filter_complex") + 1
                 if graph_index < len(args):
                     filtergraph = args[graph_index]
-            logs = await self._run(args, label="ffmpeg")
+            stage_name = "render_preview" if spec.preview else "full_resolution_render"
+            command_summary = _command_summary(args)
+            logs = await self._run(args, label=stage_name)
             if not output_path.exists() or output_path.stat().st_size == 0:
                 raise ExternalServiceError(
                     "FFmpeg completed but produced no output file.",
                     code="render_failed",
-                    details={"clip_id": spec.clip_id},
+                    details={
+                        "clip_id": spec.clip_id,
+                        "stage_name": stage_name,
+                        "stderr_tail": logs[-_MAX_LOG_LINES:],
+                        "command_summary": command_summary,
+                        "resource_hint": _resource_hint(exhausted=False),
+                    },
                 )
 
             data = await asyncio.to_thread(output_path.read_bytes)
@@ -123,6 +246,10 @@ class FfmpegClipRenderer(ClipRenderer):
                 "ffmpeg_filtergraph": filtergraph,
                 "expected_motion_filters": C.motion_expected_filters(timeline),
                 "output_exists": True,
+                "renderer_execution": {
+                    "stage_name": stage_name,
+                    "command_summary": command_summary,
+                },
             }
             self._record_music_use(timeline, spec.output_key)
             await storage.put(spec.output_key, data, content_type="video/mp4")
@@ -221,32 +348,92 @@ class FfmpegClipRenderer(ClipRenderer):
 
     async def _run(self, args: list[str], *, label: str) -> list[str]:
         log.info("render_exec", renderer=self.name, label=label, arg0=args[0])
+        command_summary = _command_summary(args)
 
         # Run via a blocking subprocess on a worker thread rather than
         # asyncio.create_subprocess_exec: the latter raises NotImplementedError on
         # event loops without subprocess support (e.g. a Windows
         # SelectorEventLoop). The threaded path works on every platform/loop.
-        def _exec() -> subprocess.CompletedProcess[bytes]:
-            return subprocess.run(
-                list(args), capture_output=True, check=False, timeout=_RENDER_TIMEOUT_SECONDS
-            )
+        def _exec() -> tuple[int, list[str]]:
+            with tempfile.TemporaryFile(prefix="olympus-ffmpeg-stderr-") as stderr_buffer:
+                try:
+                    completed = subprocess.run(
+                        list(args),
+                        stdout=subprocess.DEVNULL,
+                        stderr=stderr_buffer,
+                        check=False,
+                        timeout=self._render_timeout_seconds,
+                    )
+                except (subprocess.TimeoutExpired, OSError) as exc:
+                    raise _CapturedSubprocessError(exc, _stderr_tail(stderr_buffer)) from exc
+                return completed.returncode, _stderr_tail(stderr_buffer)
 
         try:
             completed = await asyncio.to_thread(_exec)
-        except subprocess.TimeoutExpired as exc:
-            # subprocess.run has already killed the child here, so no FFmpeg
-            # process is left running.
+        except _CapturedSubprocessError as captured:
+            error = captured.error
+            tail = captured.stderr_tail or [str(error)]
+            exhausted = _is_resource_exhaustion(None, tail, error)
+            if isinstance(error, subprocess.TimeoutExpired):
+                raise ExternalServiceError(
+                    f"{label} timed out after {self._render_timeout_seconds:.0f}s and was "
+                    "terminated.",
+                    code="render_timeout",
+                    details={
+                        "stage_name": label,
+                        "timeout_seconds": self._render_timeout_seconds,
+                        "stderr_tail": tail,
+                        "command_summary": command_summary,
+                        "resource_exhaustion": exhausted,
+                        "resource_hint": _resource_hint(exhausted=exhausted, timed_out=True),
+                    },
+                ) from error
             raise ExternalServiceError(
-                f"{label} timed out after {_RENDER_TIMEOUT_SECONDS:.0f}s and was terminated.",
-                code="render_timeout",
-                details={"timeout_seconds": _RENDER_TIMEOUT_SECONDS, "arg0": args[0]},
-            ) from exc
-        tail = (completed.stderr or b"").decode("utf-8", "replace").splitlines()[-_MAX_LOG_LINES:]
-        if completed.returncode != 0:
+                f"{label} could not execute FFmpeg: {error}",
+                code="render_resource_exhausted" if exhausted else "render_failed",
+                details={
+                    "stage_name": label,
+                    "stderr_tail": tail,
+                    "command_summary": command_summary,
+                    "resource_exhaustion": exhausted,
+                    "resource_hint": _resource_hint(exhausted=exhausted),
+                },
+            ) from error
+        except OSError as error:
+            tail = [str(error)]
+            exhausted = _is_resource_exhaustion(None, tail, error)
             raise ExternalServiceError(
-                f"{label} exited with code {completed.returncode}.",
-                code="render_failed",
-                details={"stderr_tail": tail[-5:]},
+                f"{label} could not start FFmpeg: {error}",
+                code="render_resource_exhausted" if exhausted else "render_failed",
+                details={
+                    "stage_name": label,
+                    "stderr_tail": tail,
+                    "command_summary": command_summary,
+                    "resource_exhaustion": exhausted,
+                    "resource_hint": _resource_hint(exhausted=exhausted),
+                },
+            ) from error
+        returncode, tail = completed
+        if returncode != 0:
+            exhausted = _is_resource_exhaustion(returncode, tail)
+            signed_returncode = _signed_returncode(returncode)
+            reason = (
+                f"{label} FFmpeg exhausted system resources"
+                if exhausted
+                else f"{label} FFmpeg failed"
+            )
+            raise ExternalServiceError(
+                f"{reason} (exit {returncode}, signed {signed_returncode}).",
+                code="render_resource_exhausted" if exhausted else "render_failed",
+                details={
+                    "stage_name": label,
+                    "returncode": returncode,
+                    "signed_returncode": signed_returncode,
+                    "stderr_tail": tail,
+                    "command_summary": command_summary,
+                    "resource_exhaustion": exhausted,
+                    "resource_hint": _resource_hint(exhausted=exhausted),
+                },
             )
         return [f"[{label}] {line}" for line in tail]
 
@@ -737,6 +924,9 @@ def _render_metadata(
     metadata = {
         "timeline": timeline_truth,
         "editing_v2": editing,
+        "renderer_execution": copy.deepcopy(
+            _dict_value(render_context, "renderer_execution")
+        ),
         "render_effects_v2": {
             "captions": {
                 "included": caption_rendered,

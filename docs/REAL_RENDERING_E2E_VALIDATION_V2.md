@@ -50,6 +50,14 @@ The analysis stage uses a deterministic validator-only transcript adapter. The a
 
 The generated source is original, deterministic, private-data-free, and independent of network access. It contains a simple moving visual marker, timed color markers, and a modulated voice-like tone. The low-entropy visual design avoids making CPU-only H.264 validation artificially expensive. The fixture lasts 60 seconds, while its deterministic transcript fixture contains one complete short story in the opening 8 seconds. This exercises the normal production render settings while keeping local validation bounded and avoiding copyrighted or user-sensitive media.
 
+## FFmpeg Resource Safety
+
+The first real synthetic run (`proj_aa17947810324dabad7b69eb9e8f6b0b`) exposed a renderer bug rather than a fixture-size problem. A timed `zoompan` filter already emitted 30 FPS, but the graph appended a second `fps=30` filter. On the fixture's 1/15360 video time base, that second conversion expanded an expected 240-frame, 8-second clip to 122,880 frames (512 times too many). Caption rendering over that amplified stream eventually ended with FFmpeg exit `4294967284` (signed `-12`) and Windows `WinError 1450` resource exhaustion.
+
+The renderer now lets `zoompan` own the frame rate and adds a separate FPS filter only when zoom is absent. The validator also uses a bounded local profile by default: `veryfast` x264, two encoder threads, one filter/filter-complex thread, and the existing render timeout. Production renderer defaults remain `medium` with FFmpeg-managed thread counts unless explicitly configured.
+
+FFmpeg runs with status spam disabled and stderr redirected to a temporary file. Olympus retains only the last 40 lines from the last 128 KiB, so worker memory does not grow with subprocess output. Failures preserve the stage name, sanitized command summary, bounded stderr tail, normalized return code, and an explicit resource hint. Temporary clip files remain scoped to `TemporaryDirectory` and are removed on failed renders.
+
 ## Commands
 
 Run a fresh local synthetic pipeline:
@@ -57,6 +65,8 @@ Run a fresh local synthetic pipeline:
 ```powershell
 D:\Olympus\.venv\Scripts\python.exe tools\validate_real_rendering_e2e.py --local-synthetic
 ```
+
+The bounded defaults can be adjusted for diagnostics with `--render-preset`, `--render-threads`, and `--render-filter-threads`. Increasing them may raise local CPU and memory use; the default command is the recommended validation profile.
 
 Inspect an existing project without rerendering:
 
@@ -99,5 +109,6 @@ A passing synthetic report is evidence of pipeline mechanics only. It is not evi
 - FFprobe validates stream structure and timing, not perceived quality.
 - Downloadability is validated through the same storage key and route contract; no browser is opened.
 - Optional BOBA, upload, and safety metadata may be unavailable and are reported as warnings.
+- The durable workflow can complete while the older project lifecycle field remains `analyzed`; the validator reports that status and validates final API data from persisted workflow, render, and optimization artifacts.
 - Runtime depends on local FFmpeg performance and can be lengthy on CPU-only hosts.
-- FFmpeg nonzero exits or operating-system resource exhaustion remain hard failures; the validator never downgrades them to a pass.
+- FFmpeg nonzero exits or operating-system resource exhaustion remain hard failures. The validator reports bounded diagnostics and never downgrades them to a pass.

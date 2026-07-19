@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from tools import validate_real_rendering_e2e as validator
@@ -118,6 +119,62 @@ def test_synthetic_fixture_generator_creates_safe_local_media_plan(tmp_path: Pat
     assert not any("http://" in item or "https://" in item for item in command)
     assert 60.0 <= validator.SYNTHETIC_DURATION_SECONDS <= 120.0
     assert max(segment.end for segment in transcript.segments) <= 8.0
+
+
+def test_validator_defaults_to_bounded_renderer_profile() -> None:
+    args = validator._parser().parse_args(["--local-synthetic"])
+
+    assert args.render_preset == "veryfast"
+    assert args.render_threads == 2
+    assert args.render_filter_threads == 1
+
+
+def test_api_payload_accepts_completed_workflow_artifacts_when_project_is_analyzed(
+    monkeypatch: Any,
+) -> None:
+    class FakeResponse:
+        @classmethod
+        def from_entity(cls, _entity: Any) -> FakeResponse:
+            return cls()
+
+        def model_dump(self, *, mode: str) -> dict[str, str]:
+            return {"mode": mode}
+
+    monkeypatch.setattr(validator, "ProjectResponse", FakeResponse)
+    monkeypatch.setattr(validator, "RenderRunResponse", FakeResponse)
+    monkeypatch.setattr(validator, "RenderManifestResponse", FakeResponse)
+    monkeypatch.setattr(validator, "OptimizationResponse", FakeResponse)
+    monkeypatch.setattr(
+        validator,
+        "validate_frontend_payload",
+        lambda **_kwargs: {"passed": True, "warnings": []},
+    )
+    completed = SimpleNamespace(status=SimpleNamespace(value="completed"))
+    project = SimpleNamespace(id="project", status=SimpleNamespace(value="analyzed"))
+    manifest = SimpleNamespace(renders=[{"clip_id": "clip"}])
+    clips = [
+        {
+            "clip_id": "clip",
+            "download_url": "/download/{project_id}/clip",
+            "downloadable": True,
+            "timeline_metadata_present": True,
+            "boundary_quality_present": True,
+        }
+    ]
+
+    result = validator._api_payload_validation(
+        project=project,
+        render_run=completed,
+        manifest=manifest,
+        optimization=completed,
+        plans=[],
+        clips=clips,
+    )
+
+    assert result["valid"] is True
+    assert result["frontend_valid"] is True
+    assert result["project_status"] == "analyzed"
+    assert any("durable workflow" in warning for warning in result["warnings"])
 
 
 def test_report_schema_serializes() -> None:

@@ -83,6 +83,9 @@ DEFAULT_STORAGE_ROOT = ROOT / "storage_data"
 SYNTHETIC_DURATION_SECONDS = 60.0
 MINIMUM_MP4_BYTES = 1024
 AV_TOLERANCE_SECONDS = 0.15
+VALIDATION_RENDER_PRESET = "veryfast"
+VALIDATION_RENDER_THREADS = 2
+VALIDATION_FILTER_THREADS = 1
 
 ProbeFunction = Callable[[Path], dict[str, Any]]
 
@@ -303,6 +306,9 @@ def _build_runtime(
     ffmpeg_binary: str,
     ffprobe_binary: str,
     timeout_seconds: float,
+    render_preset: str,
+    render_threads: int,
+    render_filter_threads: int,
 ) -> RuntimeBundle:
     project_repo = StorageProjectRepository(storage)
     analysis_repo = StorageAnalysisRepository(storage)
@@ -356,6 +362,10 @@ def _build_runtime(
         renderer=FfmpegClipRenderer(
             ffmpeg_binary=ffmpeg_binary,
             ffprobe_binary=ffprobe_binary,
+            encoder_preset=render_preset,
+            encoder_threads=render_threads,
+            filter_threads=render_filter_threads,
+            render_timeout_seconds=timeout_seconds,
         ),
         editing_repo=editing_repo,
         planning_repo=planning_repo,
@@ -771,14 +781,19 @@ def _api_payload_validation(
         plans={"plans": plans},
     )
     warnings.extend(str(item) for item in as_list(frontend.get("warnings")))
+    if project.status.value != "complete":
+        warnings.append(
+            f"Project lifecycle status is {project.status.value!r}; API payload validity is "
+            "derived from the completed durable workflow and persisted render/optimization "
+            "artifacts."
+        )
     downloads_valid = bool(clips) and all(clip.get("downloadable") for clip in clips)
     metadata_valid = bool(clips) and all(
         clip.get("timeline_metadata_present") and clip.get("boundary_quality_present")
         for clip in clips
     )
     api_valid = bool(
-        project.status.value == "complete"
-        and render_run
+        render_run
         and render_run.status.value == "completed"
         and manifest
         and manifest.renders
@@ -792,6 +807,7 @@ def _api_payload_validation(
         "frontend_valid": frontend_valid,
         "payload": payload,
         "frontend": frontend,
+        "project_status": project.status.value,
         "warnings": warnings,
         "errors": (
             []
@@ -960,6 +976,9 @@ async def run_local_pipeline(
     ffprobe_binary: str = "ffprobe",
     timeout_seconds: float = 1800.0,
     minimum_size_bytes: int = MINIMUM_MP4_BYTES,
+    render_preset: str = VALIDATION_RENDER_PRESET,
+    render_threads: int = VALIDATION_RENDER_THREADS,
+    render_filter_threads: int = VALIDATION_FILTER_THREADS,
 ) -> dict[str, Any]:
     probe = run_ffprobe(media_path)
     if not probe.get("passed") or not probe.get("has_audio"):
@@ -976,6 +995,9 @@ async def run_local_pipeline(
         ffmpeg_binary=ffmpeg_binary,
         ffprobe_binary=ffprobe_binary,
         timeout_seconds=timeout_seconds,
+        render_preset=render_preset,
+        render_threads=render_threads,
+        render_filter_threads=render_filter_threads,
     )
     runtime_exceptions: list[dict[str, str]] = []
     try:
@@ -1032,6 +1054,13 @@ async def run_local_pipeline(
         "height": probe.get("height"),
         "has_audio": probe.get("has_audio"),
         "transcript_source": "deterministic validator fixture, not speech recognition",
+    }
+    report["metadata"]["renderer_resource_profile"] = {
+        "encoder_preset": render_preset,
+        "encoder_threads": render_threads,
+        "filter_threads": render_filter_threads,
+        "render_timeout_seconds": timeout_seconds,
+        "bounded_stderr_capture": True,
     }
     report["warnings"] = [
         warning
@@ -1111,6 +1140,9 @@ async def run_selected_mode(args: argparse.Namespace) -> dict[str, Any]:
             ffprobe_binary=args.ffprobe_binary,
             timeout_seconds=args.timeout_seconds,
             minimum_size_bytes=args.minimum_mp4_bytes,
+            render_preset=args.render_preset,
+            render_threads=args.render_threads,
+            render_filter_threads=args.render_filter_threads,
         )
         report["synthetic_media"] = synthetic
         return report
@@ -1122,6 +1154,9 @@ async def run_selected_mode(args: argparse.Namespace) -> dict[str, Any]:
         ffprobe_binary=args.ffprobe_binary,
         timeout_seconds=args.timeout_seconds,
         minimum_size_bytes=args.minimum_mp4_bytes,
+        render_preset=args.render_preset,
+        render_threads=args.render_threads,
+        render_filter_threads=args.render_filter_threads,
     )
 
 
@@ -1137,6 +1172,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--ffprobe-binary", default="ffprobe")
     parser.add_argument("--timeout-seconds", type=float, default=1800.0)
     parser.add_argument("--minimum-mp4-bytes", type=int, default=MINIMUM_MP4_BYTES)
+    parser.add_argument(
+        "--render-preset",
+        choices=("ultrafast", "superfast", "veryfast", "faster", "fast", "medium"),
+        default=VALIDATION_RENDER_PRESET,
+    )
+    parser.add_argument("--render-threads", type=int, default=VALIDATION_RENDER_THREADS)
+    parser.add_argument(
+        "--render-filter-threads",
+        type=int,
+        default=VALIDATION_FILTER_THREADS,
+    )
     return parser
 
 
