@@ -8,14 +8,20 @@ import { mediaUrls } from "@/lib/apiClient";
 import {
   useActivateCreatorProfile,
   useBobaBrain,
+  useBobaCandidates,
   useBobaCreatorMemory,
+  useBobaCreativeBriefs,
   useBobaProjectMemory,
   useCreateCreatorProfile,
   useCreatorProfiles,
   useExportCreatorProfile,
+  useDecideBobaCandidate,
+  useDecideBobaCreativeBrief,
+  useGenerateBobaCreativeBriefs,
   usePlans,
   useRenderManifest,
   useResetCreatorProfile,
+  useScoreBobaCandidate,
   useSubmitClipFeedback,
   useUpdateCreatorProfile,
 } from "@/lib/queries";
@@ -1118,6 +1124,116 @@ function BobaBrainPanel({ brain }: { brain: BobaBrainStateV1 | null | undefined 
   );
 }
 
+function BobaScoutCreativePanel({ projectId }: { projectId: string }) {
+  const candidatesQuery = useBobaCandidates();
+  const briefsQuery = useBobaCreativeBriefs(projectId);
+  const scoreCandidate = useScoreBobaCandidate();
+  const decideCandidate = useDecideBobaCandidate();
+  const generateBriefs = useGenerateBobaCreativeBriefs(projectId);
+  const decideBrief = useDecideBobaCreativeBrief(projectId);
+  const candidates = candidatesQuery.data?.candidates ?? [];
+  const scores = candidatesQuery.data?.scores ?? {};
+  const briefs = briefsQuery.data?.briefs ?? [];
+  const candidateBusy = scoreCandidate.isPending || decideCandidate.isPending;
+
+  return (
+    <section className="rounded-xl border border-fuchsia-300/20 bg-fuchsia-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Scout + Creative Director</p>
+          <p className="text-xs text-muted">
+            Metadata-only ideas, explicit approvals, and advisory clip briefs. No download or processing is triggered here.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={generateBriefs.isPending}
+          onClick={() => generateBriefs.mutate()}
+          className="rounded border border-fuchsia-200/30 px-2 py-1 text-[11px] text-fuchsia-100 hover:border-fuchsia-100 disabled:opacity-50"
+        >
+          {generateBriefs.isPending ? "Generating…" : "Generate clip briefs"}
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-fuchsia-100">Scout candidates</p>
+          {candidates.length === 0 ? (
+            <p className="mt-2 text-xs text-muted">No manually supplied candidate ideas are available.</p>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {candidates.slice(0, 6).map((candidate) => {
+                const score = scores[candidate.candidate_id];
+                return (
+                  <article key={candidate.candidate_id} className="rounded border border-white/10 p-3 text-xs text-muted">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-white">{candidate.title}</p>
+                        <p>
+                          {candidate.status.replace(/_/g, " ")} · rights {candidate.rights_status.replace(/_/g, " ")}
+                        </p>
+                      </div>
+                      <span className="rounded bg-white/5 px-2 py-1 text-[11px] text-white">
+                        {score ? `${Math.round(score.overall_score * 100)}/100` : "Not scored"}
+                      </span>
+                    </div>
+                    {score && (
+                      <div className="mt-2 space-y-1">
+                        <p>Recommendation: {score.recommended_action.replace(/_/g, " ")}</p>
+                        <p>{score.reasons.slice(0, 2).join(" ")}</p>
+                        {score.warnings.length > 0 && (
+                          <p className="text-amber-100">Warning: {score.warnings.slice(0, 2).join("; ")}</p>
+                        )}
+                      </div>
+                    )}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button type="button" disabled={candidateBusy} onClick={() => scoreCandidate.mutate(candidate.candidate_id)} className="rounded border border-white/10 px-2 py-1 text-[11px] text-white hover:border-white/30 disabled:opacity-50">Score</button>
+                      <button type="button" disabled={candidateBusy} onClick={() => decideCandidate.mutate({ candidateId: candidate.candidate_id, decision: "approve" })} className="rounded border border-emerald-300/30 px-2 py-1 text-[11px] text-emerald-100 hover:border-emerald-200 disabled:opacity-50">Approve review</button>
+                      <button type="button" disabled={candidateBusy} onClick={() => decideCandidate.mutate({ candidateId: candidate.candidate_id, decision: "reject" })} className="rounded border border-rose-300/30 px-2 py-1 text-[11px] text-rose-100 hover:border-rose-200 disabled:opacity-50">Reject</button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-fuchsia-100">Clip creative briefs</p>
+          {briefs.length === 0 ? (
+            <p className="mt-2 text-xs text-muted">No advisory clip briefs have been generated.</p>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {briefs.slice(0, 6).map((brief) => (
+                <article key={brief.clip_id} className="rounded border border-white/10 p-3 text-xs text-muted">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <p className="font-semibold text-white">{brief.clip_id}</p>
+                    <span className="rounded bg-white/5 px-2 py-1 text-[11px] text-white">
+                      {brief.pacing_level} · {brief.recommended_duration_seconds.toFixed(1)}s
+                    </span>
+                  </div>
+                  <p className="mt-1">Hook: {brief.hook_type.replace(/_/g, " ")} · {brief.curiosity_trigger}</p>
+                  <p>Angle: {brief.story_angle}</p>
+                  <p>Captions: {brief.caption_style.replace(/_/g, " ")} · Motion: {brief.motion_style.replace(/_/g, " ")}</p>
+                  <p>Music mood: {brief.music_mood.replace(/_/g, " ")} (metadata only)</p>
+                  <p className="mt-1">Why it may work: {brief.why_it_may_work}</p>
+                  {brief.risk_warnings.length > 0 && (
+                    <p className="mt-1 text-amber-100">Warning: {brief.risk_warnings.slice(0, 2).join("; ")}</p>
+                  )}
+                  <div className="mt-2 flex gap-2">
+                    <button type="button" disabled={decideBrief.isPending} onClick={() => decideBrief.mutate({ clipId: brief.clip_id, decision: "approve" })} className="rounded border border-emerald-300/30 px-2 py-1 text-[11px] text-emerald-100 hover:border-emerald-200 disabled:opacity-50">Approve idea</button>
+                    <button type="button" disabled={decideBrief.isPending} onClick={() => decideBrief.mutate({ clipId: brief.clip_id, decision: "reject" })} className="rounded border border-rose-300/30 px-2 py-1 text-[11px] text-rose-100 hover:border-rose-200 disabled:opacity-50">Reject idea</button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -1809,6 +1925,7 @@ export function ResultsSection({
       creatorMemory={creatorMemoryQuery.data}
     />
   );
+  const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
     return (
@@ -1816,6 +1933,7 @@ export function ResultsSection({
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
         {memoryPanel}
+        {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
             key={rendered.clip_id}
@@ -1835,6 +1953,7 @@ export function ResultsSection({
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
         {memoryPanel}
+        {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
           title="Generating clips from the full video"
@@ -1850,6 +1969,7 @@ export function ResultsSection({
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
         {memoryPanel}
+        {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
           title="Rendering selected clips"
@@ -1865,6 +1985,7 @@ export function ResultsSection({
       <PersonalizationPanel />
       <BobaBrainPanel brain={bobaQuery.data} />
       {memoryPanel}
+      {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}
         title="No rendered clips yet"

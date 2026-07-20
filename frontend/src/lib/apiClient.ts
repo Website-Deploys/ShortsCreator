@@ -69,9 +69,13 @@ import type {
   AlertsResponse,
   AuditResponse,
   BobaBrainStateV1,
+  BobaCandidateV1,
+  BobaCandidatesResponse,
+  BobaCreativeBriefsResponse,
   BobaCreatorMemoryV1,
   BobaGlobalMemoryV1,
   BobaProjectMemoryV1,
+  BobaScoutScoreV1,
   CostEstimate,
   EnginesResponse,
   FailuresResponse,
@@ -155,6 +159,42 @@ export const api = {
   getBobaCreatorMemory: (profileId: string) =>
     request<BobaCreatorMemoryV1>(`/boba/memory/creators/${profileId}`),
   getBobaGlobalMemory: () => request<BobaGlobalMemoryV1>("/boba/memory/global"),
+  getBobaCandidates: () => request<BobaCandidatesResponse>("/boba/candidates"),
+  createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>
+    request<BobaCandidateV1>("/boba/candidates", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  scoreBobaCandidate: (candidateId: string) =>
+    request<BobaScoutScoreV1>(`/boba/candidates/${candidateId}/score`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  decideBobaCandidate: (
+    candidateId: string,
+    decision: "approve" | "reject",
+    reason = "",
+  ) =>
+    request<Record<string, unknown>>(`/boba/candidates/${candidateId}/${decision}`, {
+      method: "POST",
+      body: JSON.stringify({ reason, approve_for_processing: false }),
+    }),
+  getBobaCreativeBriefs: (projectId: string) =>
+    request<BobaCreativeBriefsResponse>(`/boba/projects/${projectId}/creative-briefs`),
+  createBobaCreativeBriefs: (projectId: string) =>
+    request<BobaCreativeBriefsResponse>(`/boba/projects/${projectId}/creative-briefs`, {
+      method: "POST",
+    }),
+  decideBobaCreativeBrief: (
+    projectId: string,
+    clipId: string,
+    decision: "approve" | "reject",
+    reason = "",
+  ) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/creative-briefs/${clipId}/${decision}`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
   createProject: (input: CreateProjectInput) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify(input) }),
   createProjectFromLink: (input: CreateProjectFromLinkInput) =>
