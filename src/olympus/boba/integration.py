@@ -26,6 +26,10 @@ from olympus.boba.contracts import (
 )
 from olympus.boba.creative_director import BobaCreativeBriefV1, BobaCreativeDirector
 from olympus.boba.decision_bus import BobaDecisionBus
+from olympus.boba.editorial_decision import (
+    BobaEditorialDecisionEngine,
+    BobaEditorialDecisionSetV1,
+)
 from olympus.boba.editorial_policy import create_editorial_policy
 from olympus.boba.global_memory import build_and_save_global_memory
 from olympus.boba.memory_application import create_memory_application
@@ -86,6 +90,7 @@ class BobaIntegration:
         self.whole_video = BobaWholeVideoUnderstandingEngine()
         self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
         self.clip_ranking = BobaClipRankingEngine()
+        self.editorial_decision = BobaEditorialDecisionEngine()
         self.approvals = BobaApprovalService(store)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
@@ -275,6 +280,11 @@ class BobaIntegration:
             saved_clip_ranking = self.store.load_clip_ranking(project_id)
         except ValidationError as exc:
             warnings.append(f"BOBA clip-ranking artifact is unreadable: {exc}")
+        saved_editorial_decisions = None
+        try:
+            saved_editorial_decisions = self.store.load_editorial_decisions(project_id)
+        except ValidationError as exc:
+            warnings.append(f"BOBA editorial-decision artifact is unreadable: {exc}")
         discovery_by_id = {
             item.candidate_id: item
             for item in (saved_discovery.candidates if saved_discovery is not None else [])
@@ -287,6 +297,26 @@ class BobaIntegration:
                 else []
             )
             if item.tier != "reject" and item.candidate_id in discovery_by_id
+        ]
+        editorial_candidate_clips = [
+            {
+                **discovery_by_id[item.candidate_id].model_dump(mode="json"),
+                "story_angle": item.final_story_angle,
+                "hook_category": item.final_hook_strategy,
+                "pacing_level": item.pacing_intensity,
+                "caption_style": item.caption_style,
+                "motion_style": item.motion_style,
+                "music_mood": item.music_mood,
+                "editorial_decision": item.model_dump(mode="json"),
+            }
+            for item in (
+                saved_editorial_decisions.decisions
+                if saved_editorial_decisions is not None
+                else []
+            )
+            if item.selected
+            and item.render_readiness != "blocked"
+            and item.candidate_id in discovery_by_id
         ]
         summary_data = _data(story_summary)
         main_topics = [
@@ -399,6 +429,13 @@ class BobaIntegration:
             ),
             "clip_ranking_available": saved_clip_ranking is not None,
             "ranked_candidate_clips": ranked_candidate_clips,
+            "editorial_decisions": (
+                saved_editorial_decisions.model_dump(mode="json")
+                if saved_editorial_decisions is not None
+                else {}
+            ),
+            "editorial_decisions_available": saved_editorial_decisions is not None,
+            "editorial_candidate_clips": editorial_candidate_clips,
         }
 
     async def collect_clip_signals(self, project_id: str, clip_id: str) -> dict[str, Any]:
@@ -561,6 +598,37 @@ class BobaIntegration:
         signals = await self.collect_project_signals(project_id)
         discovery = self.store.load_candidate_clip_discovery(project_id)
         return self._build_and_save_clip_ranking(project_id, signals, discovery)
+
+    def _build_and_save_editorial_decisions(
+        self,
+        project_id: str,
+        signals: dict[str, Any],
+        ranking: BobaDiscoveryClipRankingV1 | None,
+        discovery: BobaCandidateClipDiscoveryV1 | None,
+    ) -> BobaEditorialDecisionSetV1:
+        memory = self.store.load_project_memory(project_id) if self.memory_enabled else None
+        decisions = self.editorial_decision.decide_from_signals(
+            project_id,
+            signals,
+            clip_ranking=ranking,
+            candidate_discovery=discovery,
+            creative_briefs=self.creative_director.list_briefs(project_id),
+            memory=memory,
+        )
+        return self.store.save_editorial_decisions(decisions)
+
+    async def generate_editorial_decisions(
+        self, project_id: str
+    ) -> BobaEditorialDecisionSetV1:
+        signals = await self.collect_project_signals(project_id)
+        ranking = self.store.load_clip_ranking(project_id)
+        discovery = self.store.load_candidate_clip_discovery(project_id)
+        return self._build_and_save_editorial_decisions(
+            project_id,
+            signals,
+            ranking,
+            discovery,
+        )
 
     async def generate_creative_briefs(
         self, project_id: str

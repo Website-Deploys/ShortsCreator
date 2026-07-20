@@ -1432,6 +1432,154 @@ export interface BobaClipRankingV1 {
   limitations: string[];
 }
 
+export type BobaRenderReadiness =
+  | "ready_for_render"
+  | "needs_revision"
+  | "blocked";
+
+export type BobaPacingIntensity = "calm" | "moderate" | "fast" | "aggressive";
+
+export type BobaCaptionStyle =
+  | "clean_subtitles"
+  | "bold_hook_captions"
+  | "emotional_emphasis"
+  | "keyword_highlight"
+  | "minimal"
+  | "none";
+
+export type BobaMotionStyle =
+  | "stable"
+  | "subtle_zoom"
+  | "dynamic_zoom"
+  | "punch_in"
+  | "high_motion"
+  | "layout_safe";
+
+export type BobaMusicMood =
+  | "none"
+  | "motivational"
+  | "emotional"
+  | "suspense"
+  | "energetic"
+  | "calm"
+  | "funny"
+  | "cinematic"
+  | "educational";
+
+export type BobaSfxIntensity = "none" | "light" | "moderate" | "heavy";
+
+export type BobaHookStrategy =
+  | "curiosity_gap"
+  | "emotional_reveal"
+  | "problem_solution"
+  | "contradiction"
+  | "shocking_truth"
+  | "motivational_payoff"
+  | "story_turn"
+  | "educational_open_loop"
+  | "direct_value";
+
+export interface BobaEditingInstructionPacketV1 {
+  hook_instruction: string;
+  cut_instruction: string;
+  caption_instruction: string;
+  motion_instruction: string;
+  audio_instruction: string;
+  pacing_instruction: string;
+  retention_instruction: string;
+  risk_instruction: string;
+}
+
+export interface BobaEditorialRiskReviewV1 {
+  weak_hook: boolean;
+  missing_context: boolean;
+  weak_payoff: boolean;
+  filler_risk: boolean;
+  duplicate_risk: boolean;
+  rights_risk: boolean;
+  audio_risk: boolean;
+  visual_layout_risk: boolean;
+  unavailable_signal_risk: boolean;
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface BobaEditorialRiskSummaryV1 {
+  selected_count: number;
+  ready_for_render_count: number;
+  needs_revision_count: number;
+  blocked_count: number;
+  top_risks: string[];
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface BobaEditorialSignalUsageV1 {
+  clip_ranking_used: boolean;
+  candidate_discovery_used: boolean;
+  whole_video_understanding_used: boolean;
+  creative_briefs_used: boolean;
+  analysis_signals_used: boolean;
+  story_used: boolean;
+  virality_used: boolean;
+  planning_used: boolean;
+  memory_used: boolean;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaEditorialDecisionV1 {
+  candidate_id: string;
+  ranked_clip_id: string;
+  project_id: string;
+  rank: number;
+  ranking_score: number;
+  ranking_tier: BobaRankingTier;
+  suggested_title: string;
+  candidate_type: string;
+  source_window: {
+    start_seconds: number;
+    end_seconds: number;
+    duration_seconds: number;
+  };
+  selected: boolean;
+  render_readiness: BobaRenderReadiness;
+  render_readiness_reason: string;
+  production_priority: BobaProductionPriority;
+  final_story_angle: string;
+  final_hook_strategy: BobaHookStrategy;
+  opening_line_direction: string;
+  pacing_intensity: BobaPacingIntensity;
+  caption_style: BobaCaptionStyle;
+  motion_style: BobaMotionStyle;
+  music_mood: BobaMusicMood;
+  sfx_intensity: BobaSfxIntensity;
+  visual_emphasis: string[];
+  retention_tactics: string[];
+  editing_instruction_packet: BobaEditingInstructionPacketV1;
+  risk_review: BobaEditorialRiskReviewV1;
+  decision_reasons: string[];
+  improvement_notes: string[];
+  confidence: number;
+}
+
+export interface BobaEditorialDecisionSetV1 {
+  schema_version: "boba_editorial_decision_engine_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  summary: string;
+  selected_clip_ids: string[];
+  rejected_clip_ids: string[];
+  production_order: string[];
+  decisions: BobaEditorialDecisionV1[];
+  risk_summary: BobaEditorialRiskSummaryV1;
+  signal_usage: BobaEditorialSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

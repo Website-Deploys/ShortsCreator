@@ -75,6 +75,7 @@ import type {
   BobaClipRankingV1,
   BobaCreativeBriefsResponse,
   BobaCreatorMemoryV1,
+  BobaEditorialDecisionSetV1,
   BobaGlobalMemoryV1,
   BobaProjectMemoryV1,
   BobaScoutScoreV1,
@@ -212,6 +213,15 @@ export const api = {
     request<BobaClipRankingV1>(`/boba/projects/${projectId}/clip-ranking/rank`, {
       method: "POST",
     }),
+  getBobaEditorialDecisions: (projectId: string) =>
+    request<BobaEditorialDecisionSetV1>(
+      `/boba/projects/${projectId}/editorial-decisions`,
+    ),
+  createBobaEditorialDecisions: (projectId: string) =>
+    request<BobaEditorialDecisionSetV1>(
+      `/boba/projects/${projectId}/editorial-decisions`,
+      { method: "POST" },
+    ),
   decideBobaCreativeBrief: (
     projectId: string,
     clipId: string,

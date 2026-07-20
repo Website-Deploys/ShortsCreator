@@ -43,6 +43,15 @@ from olympus.boba.creative_director import (
     BobaCreativeDirector,
 )
 from olympus.boba.decision_bus import BobaDecisionBus
+from olympus.boba.editorial_decision import (
+    BobaEditingInstructionPacketV1,
+    BobaEditorialDecisionEngine,
+    BobaEditorialDecisionSetV1,
+    BobaEditorialDecisionV1,
+    BobaEditorialRiskReviewV1,
+    BobaEditorialRiskSummaryV1,
+    BobaEditorialSignalUsageV1,
+)
 from olympus.boba.editorial_policy import create_editorial_policy
 from olympus.boba.integration import BobaIntegration
 from olympus.boba.memory_contracts import (
@@ -97,7 +106,14 @@ __all__ = [
     "BobaDecisionBus",
     "BobaDecisionV1",
     "BobaDiscoveryClipRankingV1",
+    "BobaEditingInstructionPacketV1",
+    "BobaEditorialDecisionEngine",
+    "BobaEditorialDecisionSetV1",
+    "BobaEditorialDecisionV1",
     "BobaEditorialPolicyV1",
+    "BobaEditorialRiskReviewV1",
+    "BobaEditorialRiskSummaryV1",
+    "BobaEditorialSignalUsageV1",
     "BobaEmotionalBeatV1",
     "BobaGlobalMemoryV1",
     "BobaIntegration",
