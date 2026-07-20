@@ -31,6 +31,7 @@ from olympus.boba.editorial_decision import (
     BobaEditorialDecisionSetV1,
 )
 from olympus.boba.editorial_policy import create_editorial_policy
+from olympus.boba.explanation import BobaExplanationEngine, BobaExplanationSetV1
 from olympus.boba.global_memory import build_and_save_global_memory
 from olympus.boba.memory_application import create_memory_application
 from olympus.boba.memory_contracts import BobaProjectMemoryV1
@@ -91,6 +92,7 @@ class BobaIntegration:
         self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
         self.clip_ranking = BobaClipRankingEngine()
         self.editorial_decision = BobaEditorialDecisionEngine()
+        self.explanation = BobaExplanationEngine()
         self.approvals = BobaApprovalService(store)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
@@ -285,6 +287,11 @@ class BobaIntegration:
             saved_editorial_decisions = self.store.load_editorial_decisions(project_id)
         except ValidationError as exc:
             warnings.append(f"BOBA editorial-decision artifact is unreadable: {exc}")
+        saved_explanations = None
+        try:
+            saved_explanations = self.store.load_explanations(project_id)
+        except ValidationError as exc:
+            warnings.append(f"BOBA explanation artifact is unreadable: {exc}")
         discovery_by_id = {
             item.candidate_id: item
             for item in (saved_discovery.candidates if saved_discovery is not None else [])
@@ -436,6 +443,12 @@ class BobaIntegration:
             ),
             "editorial_decisions_available": saved_editorial_decisions is not None,
             "editorial_candidate_clips": editorial_candidate_clips,
+            "explanations": (
+                saved_explanations.model_dump(mode="json")
+                if saved_explanations is not None
+                else {}
+            ),
+            "explanations_available": saved_explanations is not None,
         }
 
     async def collect_clip_signals(self, project_id: str, clip_id: str) -> dict[str, Any]:
@@ -629,6 +642,25 @@ class BobaIntegration:
             ranking,
             discovery,
         )
+
+    async def generate_explanations(self, project_id: str) -> BobaExplanationSetV1:
+        signals = await self.collect_project_signals(project_id)
+        understanding = self.store.load_whole_video_understanding(project_id)
+        discovery = self.store.load_candidate_clip_discovery(project_id)
+        ranking = self.store.load_clip_ranking(project_id)
+        decisions = self.store.load_editorial_decisions(project_id)
+        memory = self.store.load_project_memory(project_id) if self.memory_enabled else None
+        explanations = self.explanation.explain_from_signals(
+            project_id,
+            signals,
+            whole_video_understanding=understanding,
+            candidate_discovery=discovery,
+            clip_ranking=ranking,
+            editorial_decisions=decisions,
+            creative_briefs=self.creative_director.list_briefs(project_id),
+            memory=memory,
+        )
+        return self.store.save_explanations(explanations)
 
     async def generate_creative_briefs(
         self, project_id: str

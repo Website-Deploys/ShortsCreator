@@ -14,10 +14,12 @@ import {
   useBobaCreatorMemory,
   useBobaCreativeBriefs,
   useBobaEditorialDecisions,
+  useBobaExplanations,
   useBobaProjectMemory,
   useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
   useCreateBobaEditorialDecisions,
+  useCreateBobaExplanations,
   useCreatorProfiles,
   useExportCreatorProfile,
   useDecideBobaCandidate,
@@ -41,6 +43,7 @@ import type {
   BobaClipRankingV1,
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
+  BobaExplanationSetV1,
   BobaProjectMemoryV1,
   BobaWholeVideoUnderstandingV1,
   ClipPlan,
@@ -1479,6 +1482,165 @@ function BobaEditorialDecisionPanel({
   );
 }
 
+function BobaExplanationPanel({
+  explanations,
+  explaining,
+  canExplain,
+  onExplain,
+}: {
+  explanations: BobaExplanationSetV1 | null | undefined;
+  explaining: boolean;
+  canExplain: boolean;
+  onExplain: () => void;
+}) {
+  const groups = explanations
+    ? [
+        ["Discovery explanations", explanations.candidate_explanations],
+        ["Ranking explanations", explanations.ranking_explanations],
+        ["Editorial and readiness explanations", explanations.editorial_explanations],
+      ] as const
+    : [];
+  const uncertaintyClass =
+    explanations?.uncertainty_summary.uncertainty_level === "low"
+      ? "bg-emerald-300/10 text-emerald-100"
+      : explanations?.uncertainty_summary.uncertainty_level === "high"
+        ? "bg-rose-300/10 text-rose-100"
+        : "bg-amber-300/10 text-amber-100";
+
+  return (
+    <section className="rounded-xl border border-sky-300/20 bg-sky-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Explanation Engine</p>
+          <p className="text-xs text-muted">
+            Evidence-bound explanations from saved metadata only; no rendered proof or audience-performance prediction.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={explaining || !canExplain}
+          onClick={onExplain}
+          className="rounded border border-sky-200/30 px-2 py-1 text-[11px] text-sky-100 hover:border-sky-100 disabled:opacity-50"
+        >
+          {explaining
+            ? "Explaining..."
+            : explanations
+              ? "Refresh explanations"
+              : "Create explanations"}
+        </button>
+      </div>
+      {explanations ? (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <p className="max-w-4xl">{explanations.project_summary.overall_summary}</p>
+            <span className={`rounded px-2 py-1 ${uncertaintyClass}`}>
+              Uncertainty {explanations.uncertainty_summary.uncertainty_level}
+            </span>
+          </div>
+          <p>
+            <span className="font-semibold text-white">Top recommendation:</span>{" "}
+            {explanations.project_summary.top_recommendation_reason}
+          </p>
+          <div className="grid gap-2 md:grid-cols-2">
+            <p>
+              Strongest clip types: {explanations.project_summary.strongest_clip_types.join(", ") || "Not available"}
+            </p>
+            <p>
+              Weakest clip types: {explanations.project_summary.weakest_clip_types.join(", ") || "Not available"}
+            </p>
+            <p>
+              Signals used: {explanations.signal_explanation.signals_used.join(", ") || "None reported"}
+            </p>
+            <p>
+              Signals missing: {explanations.signal_explanation.signals_missing.join(", ") || "None reported"}
+            </p>
+          </div>
+          {groups.map(([label, items]) =>
+            items.length > 0 ? (
+              <details key={label} className="rounded border border-white/10 p-3">
+                <summary className="cursor-pointer font-semibold text-white">
+                  {label} ({items.length})
+                </summary>
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                  {items.slice(0, 12).map((item) => (
+                    <article
+                      key={`${item.explanation_type}-${item.candidate_id}`}
+                      className="rounded border border-white/10 p-3"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <p className="font-semibold text-white">{item.short_summary}</p>
+                        <span className="rounded bg-white/5 px-2 py-1 text-white">
+                          {item.explanation_type.replace(/_/g, " ")} · {formatPercent(item.confidence)}
+                        </span>
+                      </div>
+                      <p className="mt-2">{item.detailed_explanation}</p>
+                      <p className="mt-1">
+                        Key reasons: {item.key_reasons.join("; ") || "No reasons available"}
+                      </p>
+                      {item.evidence.length > 0 && (
+                        <details className="mt-2 rounded border border-white/10 p-2">
+                          <summary className="cursor-pointer text-white">Evidence and source fields</summary>
+                          <ul className="mt-2 space-y-1">
+                            {item.evidence.slice(0, 12).map((evidence, index) => (
+                              <li key={`${evidence.source_artifact}-${evidence.source_field}-${index}`}>
+                                <span className="text-sky-100">
+                                  {evidence.source_artifact}.{evidence.source_field}:
+                                </span>{" "}
+                                {evidence.snippet}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                      {(item.warnings.length > 0 || item.limitations.length > 0) && (
+                        <p className="mt-2 text-amber-100">
+                          Limits: {[...item.warnings, ...item.limitations].slice(0, 4).join("; ")}
+                        </p>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </details>
+            ) : null,
+          )}
+          <details className="rounded border border-white/10 p-3">
+            <summary className="cursor-pointer font-semibold text-white">
+              Uncertainty, fallbacks, and human review
+            </summary>
+            <div className="mt-2 space-y-1">
+              <p>
+                Main uncertainties: {explanations.project_summary.main_uncertainties.join("; ") || "None reported"}
+              </p>
+              <p>
+                Fallback signals: {explanations.signal_explanation.fallback_signals.join(", ") || "None reported"}
+              </p>
+              <p>
+                Human checks: {explanations.uncertainty_summary.recommended_human_checks.join("; ") || "None reported"}
+              </p>
+              <p>
+                Human review notes: {explanations.project_summary.human_review_notes.join("; ") || "None reported"}
+              </p>
+              {(explanations.warnings.length > 0 || explanations.limitations.length > 0) && (
+                <p className="text-amber-100">
+                  Warnings and limitations: {[...explanations.warnings, ...explanations.limitations]
+                    .slice(0, 6)
+                    .join("; ")}
+                </p>
+              )}
+            </div>
+          </details>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          {canExplain
+            ? "No saved explanation artifact. Create explanations from the available BOBA evidence."
+            : "Create at least one BOBA understanding, discovery, ranking, or editorial artifact first."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function BobaMemoryPanel({
   projectMemory,
   creatorMemory,
@@ -2376,6 +2538,8 @@ export function ResultsSection({
   const rankCandidates = useRankBobaCandidateClips(projectId);
   const editorialDecisionsQuery = useBobaEditorialDecisions(projectId);
   const createEditorialDecisions = useCreateBobaEditorialDecisions(projectId);
+  const explanationsQuery = useBobaExplanations(projectId);
+  const createExplanations = useCreateBobaExplanations(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -2419,6 +2583,19 @@ export function ResultsSection({
       onDecide={() => createEditorialDecisions.mutate()}
     />
   );
+  const explanationPanel = (
+    <BobaExplanationPanel
+      explanations={explanationsQuery.data}
+      explaining={createExplanations.isPending}
+      canExplain={Boolean(
+        wholeVideoQuery.data ||
+          candidateDiscoveryQuery.data ||
+          clipRankingQuery.data ||
+          editorialDecisionsQuery.data,
+      )}
+      onExplain={() => createExplanations.mutate()}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -2430,6 +2607,7 @@ export function ResultsSection({
         {candidateDiscoveryPanel}
         {clipRankingPanel}
         {editorialDecisionPanel}
+        {explanationPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -2454,6 +2632,7 @@ export function ResultsSection({
         {candidateDiscoveryPanel}
         {clipRankingPanel}
         {editorialDecisionPanel}
+        {explanationPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2474,6 +2653,7 @@ export function ResultsSection({
         {candidateDiscoveryPanel}
         {clipRankingPanel}
         {editorialDecisionPanel}
+        {explanationPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2494,6 +2674,7 @@ export function ResultsSection({
       {candidateDiscoveryPanel}
       {clipRankingPanel}
       {editorialDecisionPanel}
+      {explanationPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState

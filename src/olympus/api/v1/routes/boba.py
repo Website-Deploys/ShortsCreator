@@ -333,6 +333,35 @@ async def get_editorial_decisions(
     return decisions.model_dump(mode="json")
 
 
+@router.post("/projects/{project_id}/explanations")
+async def create_explanations(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    explanations = await boba.generate_explanations(project_id)
+    return explanations.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/explanations")
+async def get_explanations(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    explanations = boba.store.load_explanations(project_id)
+    if explanations is None:
+        raise NotFoundError(
+            "BOBA explanations are not available.",
+            details={"project_id": project_id},
+        )
+    return explanations.model_dump(mode="json")
+
+
 def _brief_decision(
     project_id: str,
     clip_id: str,

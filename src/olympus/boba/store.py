@@ -29,6 +29,7 @@ from olympus.boba.contracts import (
 )
 from olympus.boba.creative_director import BobaCreativeBriefV1
 from olympus.boba.editorial_decision import BobaEditorialDecisionSetV1
+from olympus.boba.explanation import BobaExplanationSetV1
 from olympus.boba.memory import sanitize_memory_payload
 from olympus.boba.memory_contracts import (
     BobaCreatorMemoryV1,
@@ -413,6 +414,24 @@ class BobaMemoryStore:
             if isinstance(raw, dict)
             else None
         )
+
+    def explanation_path(self, project_id: str) -> Path:
+        return self._path(project_id, "explanation/index.json")
+
+    def save_explanations(
+        self, explanations: BobaExplanationSetV1
+    ) -> BobaExplanationSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                explanations.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            )
+            self._atomic_write(self.explanation_path(explanations.project_id), safe)
+        return explanations
+
+    def load_explanations(self, project_id: str) -> BobaExplanationSetV1 | None:
+        raw = self._read(self.explanation_path(project_id), None)
+        return BobaExplanationSetV1.model_validate(raw) if isinstance(raw, dict) else None
 
     @staticmethod
     def _validate_memory_id(value: str, *, field: str) -> str:

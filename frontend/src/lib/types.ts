@@ -1580,6 +1580,90 @@ export interface BobaEditorialDecisionSetV1 {
   limitations: string[];
 }
 
+export type BobaExplanationType =
+  | "discovery"
+  | "ranking"
+  | "editorial"
+  | "render_readiness"
+  | "rejection"
+  | "project_summary";
+
+export type BobaEvidenceType =
+  | "transcript_snippet"
+  | "score"
+  | "signal"
+  | "warning"
+  | "memory_lesson"
+  | "context_payoff"
+  | "emotional_beat"
+  | "ranking_factor"
+  | "editorial_risk";
+
+export type BobaUncertaintyLevel = "low" | "medium" | "high";
+
+export interface BobaExplanationEvidenceV1 {
+  evidence_type: BobaEvidenceType;
+  source_artifact: string;
+  source_field: string;
+  snippet: string;
+  score: number | null;
+  timestamp_seconds: number | null;
+  confidence: number;
+}
+
+export interface BobaClipExplanationV1 {
+  clip_id: string;
+  candidate_id: string;
+  explanation_type: BobaExplanationType;
+  short_summary: string;
+  detailed_explanation: string;
+  key_reasons: string[];
+  evidence: BobaExplanationEvidenceV1[];
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaProjectExplanationV1 {
+  overall_summary: string;
+  top_recommendation_reason: string;
+  strongest_clip_types: string[];
+  weakest_clip_types: string[];
+  unavailable_signals: string[];
+  main_uncertainties: string[];
+  human_review_notes: string[];
+}
+
+export interface BobaSignalExplanationV1 {
+  signals_used: string[];
+  signals_missing: string[];
+  fallback_signals: string[];
+  how_signals_affected_decisions: string[];
+  warnings: string[];
+}
+
+export interface BobaUncertaintySummaryV1 {
+  uncertainty_level: BobaUncertaintyLevel;
+  reasons: string[];
+  missing_evidence: string[];
+  recommended_human_checks: string[];
+}
+
+export interface BobaExplanationSetV1 {
+  schema_version: "boba_explanation_engine_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  project_summary: BobaProjectExplanationV1;
+  candidate_explanations: BobaClipExplanationV1[];
+  ranking_explanations: BobaClipExplanationV1[];
+  editorial_explanations: BobaClipExplanationV1[];
+  signal_explanation: BobaSignalExplanationV1;
+  uncertainty_summary: BobaUncertaintySummaryV1;
+  warnings: string[];
+  limitations: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

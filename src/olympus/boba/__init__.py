@@ -53,6 +53,15 @@ from olympus.boba.editorial_decision import (
     BobaEditorialSignalUsageV1,
 )
 from olympus.boba.editorial_policy import create_editorial_policy
+from olympus.boba.explanation import (
+    BobaClipExplanationV1,
+    BobaExplanationEngine,
+    BobaExplanationEvidenceV1,
+    BobaExplanationSetV1,
+    BobaProjectExplanationV1,
+    BobaSignalExplanationV1,
+    BobaUncertaintySummaryV1,
+)
 from olympus.boba.integration import BobaIntegration
 from olympus.boba.memory_contracts import (
     BobaCreatorMemoryV1,
@@ -96,6 +105,7 @@ __all__ = [
     "BobaCandidateEvidenceV1",
     "BobaCandidateInsightV1",
     "BobaCandidateV1",
+    "BobaClipExplanationV1",
     "BobaClipRankingEngine",
     "BobaClipRankingV1",
     "BobaClipScoreBreakdownV1",
@@ -115,6 +125,9 @@ __all__ = [
     "BobaEditorialRiskSummaryV1",
     "BobaEditorialSignalUsageV1",
     "BobaEmotionalBeatV1",
+    "BobaExplanationEngine",
+    "BobaExplanationEvidenceV1",
+    "BobaExplanationSetV1",
     "BobaGlobalMemoryV1",
     "BobaIntegration",
     "BobaLearningNoteV1",
@@ -124,6 +137,7 @@ __all__ = [
     "BobaMemoryRetrievalResultV1",
     "BobaMemoryStore",
     "BobaObservationV1",
+    "BobaProjectExplanationV1",
     "BobaProjectMemoryV1",
     "BobaRankedClipV1",
     "BobaRankingDiversitySummaryV1",
@@ -134,10 +148,12 @@ __all__ = [
     "BobaScoutScoreV1",
     "BobaSectionScoreV1",
     "BobaShortabilityHintV1",
+    "BobaSignalExplanationV1",
     "BobaSignalUsageV1",
     "BobaStoryArcV1",
     "BobaStoryBeatV1",
     "BobaTopicSegmentV1",
+    "BobaUncertaintySummaryV1",
     "BobaValidationResultV1",
     "BobaWholeVideoMemorySummaryV1",
     "BobaWholeVideoUnderstandingEngine",

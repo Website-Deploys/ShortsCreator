@@ -76,6 +76,7 @@ import type {
   BobaCreativeBriefsResponse,
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
+  BobaExplanationSetV1,
   BobaGlobalMemoryV1,
   BobaProjectMemoryV1,
   BobaScoutScoreV1,
@@ -222,6 +223,12 @@ export const api = {
       `/boba/projects/${projectId}/editorial-decisions`,
       { method: "POST" },
     ),
+  getBobaExplanations: (projectId: string) =>
+    request<BobaExplanationSetV1>(`/boba/projects/${projectId}/explanations`),
+  createBobaExplanations: (projectId: string) =>
+    request<BobaExplanationSetV1>(`/boba/projects/${projectId}/explanations`, {
+      method: "POST",
+    }),
   decideBobaCreativeBrief: (
     projectId: string,
     clipId: string,
