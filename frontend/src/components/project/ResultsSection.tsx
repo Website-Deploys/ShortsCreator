@@ -10,6 +10,7 @@ import {
   useBobaBrain,
   useBobaCandidateClipDiscovery,
   useBobaCandidates,
+  useBobaClipBriefs,
   useBobaClipRanking,
   useBobaCreativeDirectionV2,
   useBobaCreatorMemory,
@@ -20,6 +21,7 @@ import {
   useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
   useCreateBobaEditorialDecisions,
+  useCreateBobaClipBriefs,
   useCreateBobaCreativeDirectionV2,
   useCreateBobaExplanations,
   useCreatorProfiles,
@@ -42,6 +44,7 @@ import type {
   ClipFeedbackInput,
   BobaBrainStateV1,
   BobaCandidateClipDiscoveryV1,
+  BobaClipBriefSetV1,
   BobaClipRankingV1,
   BobaCreativeDirectionSetV2,
   BobaCreatorMemoryV1,
@@ -1819,6 +1822,187 @@ function BobaCreativeDirectionV2Panel({
   );
 }
 
+function BobaClipBriefPanel({
+  briefs,
+  generating,
+  canGenerate,
+  onGenerate,
+}: {
+  briefs: BobaClipBriefSetV1 | null | undefined;
+  generating: boolean;
+  canGenerate: boolean;
+  onGenerate: () => void;
+}) {
+  const groups = briefs
+    ? [
+        { label: "Selected clip briefs", items: briefs.selected_briefs, open: true },
+        { label: "Backup clip briefs", items: briefs.backup_briefs, open: false },
+        { label: "Blocked clip briefs", items: briefs.blocked_briefs, open: false },
+      ]
+    : [];
+
+  return (
+    <section className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Clip Brief Generator V1</p>
+          <p className="text-xs text-muted">
+            Compact editor packets from saved BOBA artifacts. Advisory only; generation does not edit or render media.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={!canGenerate || generating}
+          onClick={onGenerate}
+          className="rounded border border-cyan-200/30 px-2 py-1 text-[11px] text-cyan-100 hover:border-cyan-100 disabled:opacity-50"
+        >
+          {generating ? "Creating…" : briefs ? "Refresh clip briefs" : "Create clip briefs"}
+        </button>
+      </div>
+
+      {briefs ? (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <div className="rounded border border-white/10 p-3">
+            <p className="font-semibold text-white">One-page editor packet</p>
+            <p className="mt-1">{briefs.project_summary}</p>
+            <p className="mt-2">
+              Production order: {briefs.production_order.join(" → ") || "No selected clips ready"}
+            </p>
+            <p>
+              Selected {briefs.selected_briefs.length} · Backup {briefs.backup_briefs.length} · Blocked {briefs.blocked_briefs.length}
+            </p>
+          </div>
+
+          {groups.map((group) => (
+            <details
+              key={group.label}
+              open={group.open}
+              className="rounded border border-white/10 p-3"
+            >
+              <summary className="cursor-pointer font-semibold text-white">
+                {group.label} ({group.items.length})
+              </summary>
+              {group.items.length > 0 ? (
+                <div className="mt-3 space-y-3">
+                  {group.items.map((brief) => {
+                    const instructions = [
+                      ["Hook", brief.hook_instruction],
+                      ["Opening three seconds", brief.opening_three_second_instruction],
+                      ["Story", brief.story_instruction],
+                      ["Cut", brief.cut_instruction],
+                      ["Captions", brief.caption_instruction],
+                      ["Motion", brief.motion_instruction],
+                      ["Audio / music mood", brief.audio_instruction],
+                      ["SFX", brief.sfx_instruction],
+                      ["Retention", brief.retention_instruction],
+                    ] as const;
+                    return (
+                      <article key={brief.brief_id} className="rounded border border-white/10 p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="font-semibold text-white">{brief.brief_title}</p>
+                            <p>
+                              {brief.candidate_id} · {brief.production_priority.replace(/_/g, " ")} · {brief.render_readiness.replace(/_/g, " ")}
+                            </p>
+                          </div>
+                          <span className="rounded bg-white/5 px-2 py-1 text-[11px] text-white">
+                            {formatPercent(brief.confidence)} evidence confidence
+                          </span>
+                        </div>
+                        <p className="mt-2">
+                          Source: {brief.source_window.start_seconds.toFixed(2)}s–{brief.source_window.end_seconds.toFixed(2)}s ({brief.source_window.duration_seconds.toFixed(2)}s)
+                        </p>
+                        <p className="mt-1">Angle: {brief.final_clip_angle}</p>
+                        <p className="mt-1">Target feeling: {brief.target_viewer_feeling}</p>
+
+                        <div className="mt-2 rounded border border-cyan-200/10 bg-cyan-200/[0.03] p-2">
+                          <p className="font-semibold text-cyan-100">Opening handoff</p>
+                          <p className="mt-1">{brief.opening_three_second_instruction.summary}</p>
+                          <p>Hook: {brief.hook_instruction.summary}</p>
+                          <p>Do: {brief.opening_three_second_instruction.do_this}</p>
+                          <p>Avoid: {brief.opening_three_second_instruction.avoid_this}</p>
+                        </div>
+
+                        <details className="mt-2 rounded border border-white/10 p-2">
+                          <summary className="cursor-pointer font-semibold text-white">
+                            Full instruction packet
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {instructions.map(([label, instruction]) => (
+                              <div key={instruction.instruction_type}>
+                                <p className="font-semibold text-white">
+                                  {label} · {instruction.priority.replace(/_/g, " ")}
+                                </p>
+                                <p>{instruction.summary}</p>
+                                <p>Do: {instruction.do_this}</p>
+                                <p>Avoid: {instruction.avoid_this}</p>
+                                <p>Why: {instruction.reason}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+
+                        <details className="mt-2 rounded border border-white/10 p-2">
+                          <summary className="cursor-pointer font-semibold text-white">
+                            Risks and editor checklist
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            <p>Risk fixes: {brief.risk_fixes.join("; ")}</p>
+                            {brief.editor_checklist.map((item) => (
+                              <div key={item.item_id} className="rounded border border-white/5 p-2">
+                                <p className="font-semibold text-white">
+                                  {item.label} · {item.status}
+                                </p>
+                                <p>{item.reason}</p>
+                              </div>
+                            ))}
+                            <p>
+                              Human review: {brief.human_review_notes.join("; ") || "Required before production"}
+                            </p>
+                          </div>
+                        </details>
+
+                        {(brief.warnings.length > 0 || brief.limitations.length > 0) && (
+                          <p className="mt-2 text-amber-100">
+                            Review: {[...brief.warnings, ...brief.limitations].slice(0, 8).join("; ")}
+                          </p>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-2">No briefs in this category.</p>
+              )}
+            </details>
+          ))}
+
+          <details className="rounded border border-white/10 p-3">
+            <summary className="cursor-pointer font-semibold text-white">
+              Signal usage and limitations
+            </summary>
+            <div className="mt-2 space-y-1">
+              <p>
+                Fallback used: {briefs.signal_usage.fallback_used ? "Yes" : "No"} · Missing: {briefs.signal_usage.unavailable_signals.join(", ") || "None reported"}
+              </p>
+              <p>
+                Warnings: {[...briefs.warnings, ...briefs.signal_usage.warnings].join("; ") || "None reported"}
+              </p>
+              <p>Limitations: {briefs.limitations.join("; ")}</p>
+            </div>
+          </details>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          {canGenerate
+            ? "No saved clip brief packet. Generate it from Creative Director V2 and Editorial Decision artifacts."
+            : "Create Creative Director V2 direction and editorial decisions before generating clip briefs."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function BobaMemoryPanel({
   projectMemory,
   creatorMemory,
@@ -2720,6 +2904,8 @@ export function ResultsSection({
   const createExplanations = useCreateBobaExplanations(projectId);
   const creativeDirectionV2Query = useBobaCreativeDirectionV2(projectId);
   const createCreativeDirectionV2 = useCreateBobaCreativeDirectionV2(projectId);
+  const clipBriefsQuery = useBobaClipBriefs(projectId);
+  const createClipBriefs = useCreateBobaClipBriefs(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -2784,6 +2970,16 @@ export function ResultsSection({
       onDirect={() => createCreativeDirectionV2.mutate()}
     />
   );
+  const clipBriefPanel = (
+    <BobaClipBriefPanel
+      briefs={clipBriefsQuery.data}
+      generating={createClipBriefs.isPending}
+      canGenerate={Boolean(
+        creativeDirectionV2Query.data && editorialDecisionsQuery.data,
+      )}
+      onGenerate={() => createClipBriefs.mutate()}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -2797,6 +2993,7 @@ export function ResultsSection({
         {editorialDecisionPanel}
         {explanationPanel}
         {creativeDirectionV2Panel}
+        {clipBriefPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -2823,6 +3020,7 @@ export function ResultsSection({
         {editorialDecisionPanel}
         {explanationPanel}
         {creativeDirectionV2Panel}
+        {clipBriefPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2845,6 +3043,7 @@ export function ResultsSection({
         {editorialDecisionPanel}
         {explanationPanel}
         {creativeDirectionV2Panel}
+        {clipBriefPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2867,6 +3066,7 @@ export function ResultsSection({
       {editorialDecisionPanel}
       {explanationPanel}
       {creativeDirectionV2Panel}
+      {clipBriefPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState

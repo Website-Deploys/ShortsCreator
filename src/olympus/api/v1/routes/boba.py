@@ -391,6 +391,35 @@ async def get_creative_direction_v2(
     return direction.model_dump(mode="json")
 
 
+@router.post("/projects/{project_id}/clip-briefs")
+async def create_clip_briefs(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    briefs = await boba.generate_clip_briefs(project_id)
+    return briefs.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/clip-briefs")
+async def get_clip_briefs(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    briefs = boba.store.load_clip_briefs(project_id)
+    if briefs is None:
+        raise NotFoundError(
+            "BOBA clip briefs are not available.",
+            details={"project_id": project_id},
+        )
+    return briefs.model_dump(mode="json")
+
+
 def _brief_decision(
     project_id: str,
     clip_id: str,
