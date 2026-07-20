@@ -1808,6 +1808,121 @@ export interface BobaCreativeDirectionSetV2 {
   limitations: string[];
 }
 
+export type BobaBriefInstructionType =
+  | "hook"
+  | "opening"
+  | "story"
+  | "cut"
+  | "caption"
+  | "motion"
+  | "audio"
+  | "sfx"
+  | "retention"
+  | "risk";
+
+export type BobaBriefInstructionPriority =
+  | "must_follow"
+  | "should_follow"
+  | "optional";
+
+export type BobaEditorChecklistCategory =
+  | "hook"
+  | "context"
+  | "payoff"
+  | "pacing"
+  | "captions"
+  | "motion"
+  | "audio"
+  | "rights"
+  | "render_safety"
+  | "human_review";
+
+export type BobaEditorChecklistStatus =
+  | "pending"
+  | "passed"
+  | "warning"
+  | "blocked";
+
+export interface BobaSourceWindowV1 {
+  start_seconds: number;
+  end_seconds: number;
+  duration_seconds: number;
+}
+
+export interface BobaBriefInstructionV1 {
+  instruction_type: BobaBriefInstructionType;
+  summary: string;
+  do_this: string;
+  avoid_this: string;
+  reason: string;
+  priority: BobaBriefInstructionPriority;
+}
+
+export interface BobaEditorChecklistItemV1 {
+  item_id: string;
+  label: string;
+  category: BobaEditorChecklistCategory;
+  required: boolean;
+  status: BobaEditorChecklistStatus;
+  reason: string;
+}
+
+export interface BobaClipBriefSignalUsageV1 {
+  creative_direction_v2_used: boolean;
+  editorial_decision_used: boolean;
+  explanation_used: boolean;
+  clip_ranking_used: boolean;
+  candidate_discovery_used: boolean;
+  whole_video_understanding_used: boolean;
+  memory_used: boolean;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaClipBriefV1 {
+  brief_id: string;
+  project_id: string;
+  candidate_id: string;
+  ranked_clip_id: string;
+  source_window: BobaSourceWindowV1;
+  production_priority: "immediate" | "high" | "medium" | "low" | "do_not_produce";
+  render_readiness: "ready_for_render" | "needs_revision" | "blocked";
+  brief_title: string;
+  final_clip_angle: string;
+  target_viewer_feeling: string;
+  hook_instruction: BobaBriefInstructionV1;
+  opening_three_second_instruction: BobaBriefInstructionV1;
+  story_instruction: BobaBriefInstructionV1;
+  cut_instruction: BobaBriefInstructionV1;
+  caption_instruction: BobaBriefInstructionV1;
+  motion_instruction: BobaBriefInstructionV1;
+  audio_instruction: BobaBriefInstructionV1;
+  sfx_instruction: BobaBriefInstructionV1;
+  retention_instruction: BobaBriefInstructionV1;
+  risk_fixes: string[];
+  editor_checklist: BobaEditorChecklistItemV1[];
+  human_review_notes: string[];
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaClipBriefSetV1 {
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  brief_version: "boba_clip_brief_generator_v1";
+  selected_briefs: BobaClipBriefV1[];
+  backup_briefs: BobaClipBriefV1[];
+  blocked_briefs: BobaClipBriefV1[];
+  production_order: string[];
+  project_summary: string;
+  signal_usage: BobaClipBriefSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

@@ -7,6 +7,7 @@ from typing import Any
 
 from olympus.boba.approvals import BobaApprovalService
 from olympus.boba.brain import BobaBrain
+from olympus.boba.clip_brief import BobaClipBriefGeneratorV1, BobaClipBriefSetV1
 from olympus.boba.clip_discovery import (
     BobaCandidateClipDiscoveryEngine,
     BobaCandidateClipDiscoveryV1,
@@ -94,6 +95,7 @@ class BobaIntegration:
         self.scout = BobaScout(store)
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
+        self.clip_brief_generator = BobaClipBriefGeneratorV1()
         self.whole_video = BobaWholeVideoUnderstandingEngine()
         self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
         self.clip_ranking = BobaClipRankingEngine()
@@ -305,6 +307,11 @@ class BobaIntegration:
             )
         except ValidationError as exc:
             warnings.append(f"BOBA Creative Director V2 artifact is unreadable: {exc}")
+        saved_clip_briefs = None
+        try:
+            saved_clip_briefs = self.store.load_clip_briefs(project_id)
+        except ValidationError as exc:
+            warnings.append(f"BOBA clip-brief artifact is unreadable: {exc}")
         discovery_by_id = {
             item.candidate_id: item
             for item in (saved_discovery.candidates if saved_discovery is not None else [])
@@ -468,6 +475,12 @@ class BobaIntegration:
                 else {}
             ),
             "creative_direction_v2_available": saved_creative_direction_v2 is not None,
+            "clip_briefs": (
+                saved_clip_briefs.model_dump(mode="json")
+                if saved_clip_briefs is not None
+                else {}
+            ),
+            "clip_briefs_available": saved_clip_briefs is not None,
         }
 
     async def collect_clip_signals(self, project_id: str, clip_id: str) -> dict[str, Any]:
@@ -702,6 +715,28 @@ class BobaIntegration:
             memory=memory,
         )
         return self.store.save_creative_direction_v2(direction)
+
+    async def generate_clip_briefs(self, project_id: str) -> BobaClipBriefSetV1:
+        signals = await self.collect_project_signals(project_id)
+        direction = self.store.load_creative_direction_v2(project_id)
+        decisions = self.store.load_editorial_decisions(project_id)
+        ranking = self.store.load_clip_ranking(project_id)
+        discovery = self.store.load_candidate_clip_discovery(project_id)
+        explanations = self.store.load_explanations(project_id)
+        understanding = self.store.load_whole_video_understanding(project_id)
+        memory = self.store.load_project_memory(project_id) if self.memory_enabled else None
+        briefs = self.clip_brief_generator.generate_from_signals(
+            project_id,
+            signals,
+            creative_direction_v2=direction,
+            editorial_decisions=decisions,
+            clip_ranking=ranking,
+            candidate_discovery=discovery,
+            explanations=explanations,
+            whole_video_understanding=understanding,
+            memory=memory,
+        )
+        return self.store.save_clip_briefs(briefs)
 
     async def generate_creative_briefs(
         self, project_id: str

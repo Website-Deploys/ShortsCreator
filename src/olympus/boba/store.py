@@ -15,6 +15,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from olympus.boba.approvals import BobaApprovalEventV1, BobaApprovalTargetType
+from olympus.boba.clip_brief import BobaClipBriefSetV1
 from olympus.boba.clip_discovery import BobaCandidateClipDiscoveryV1
 from olympus.boba.clip_ranking import (
     BobaClipRankingV1 as BobaDiscoveryClipRankingV1,
@@ -459,6 +460,22 @@ class BobaMemoryStore:
             if isinstance(raw, dict)
             else None
         )
+
+    def clip_briefs_path(self, project_id: str) -> Path:
+        return self._path(project_id, "clip_briefs/index.json")
+
+    def save_clip_briefs(self, briefs: BobaClipBriefSetV1) -> BobaClipBriefSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                briefs.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            )
+            self._atomic_write(self.clip_briefs_path(briefs.project_id), safe)
+        return briefs
+
+    def load_clip_briefs(self, project_id: str) -> BobaClipBriefSetV1 | None:
+        raw = self._read(self.clip_briefs_path(project_id), None)
+        return BobaClipBriefSetV1.model_validate(raw) if isinstance(raw, dict) else None
 
     @staticmethod
     def _validate_memory_id(value: str, *, field: str) -> str:

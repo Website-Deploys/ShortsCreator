@@ -5,6 +5,15 @@ from olympus.boba.approvals import (
     BobaApprovalService,
 )
 from olympus.boba.brain import BobaBrain
+from olympus.boba.clip_brief import (
+    BobaBriefInstructionV1,
+    BobaClipBriefGeneratorV1,
+    BobaClipBriefSetV1,
+    BobaClipBriefSignalUsageV1,
+    BobaClipBriefV1,
+    BobaEditorChecklistItemV1,
+    BobaSourceWindowV1,
+)
 from olympus.boba.clip_discovery import (
     BobaBoundarySuggestionV1,
     BobaCandidateClipDiscoveryEngine,
@@ -112,6 +121,7 @@ __all__ = [
     "BobaBoundarySuggestionV1",
     "BobaBrain",
     "BobaBrainStateV1",
+    "BobaBriefInstructionV1",
     "BobaCandidateClipDiscoveryEngine",
     "BobaCandidateClipDiscoveryV1",
     "BobaCandidateClipV1",
@@ -121,6 +131,10 @@ __all__ = [
     "BobaCandidateInsightV1",
     "BobaCandidateV1",
     "BobaCaptionDirectionV2",
+    "BobaClipBriefGeneratorV1",
+    "BobaClipBriefSetV1",
+    "BobaClipBriefSignalUsageV1",
+    "BobaClipBriefV1",
     "BobaClipCreativeDirectionV2",
     "BobaClipExplanationV1",
     "BobaClipRankingEngine",
@@ -138,6 +152,7 @@ __all__ = [
     "BobaDecisionV1",
     "BobaDiscoveryClipRankingV1",
     "BobaEditingInstructionPacketV1",
+    "BobaEditorChecklistItemV1",
     "BobaEditorialDecisionEngine",
     "BobaEditorialDecisionSetV1",
     "BobaEditorialDecisionV1",
@@ -178,6 +193,7 @@ __all__ = [
     "BobaShortabilityHintV1",
     "BobaSignalExplanationV1",
     "BobaSignalUsageV1",
+    "BobaSourceWindowV1",
     "BobaStoryArcV1",
     "BobaStoryBeatV1",
     "BobaTopicSegmentV1",
