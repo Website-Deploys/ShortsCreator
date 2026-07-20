@@ -59,6 +59,8 @@ class BobaCreativeBriefV1(BobaContract):
     editing_notes: list[str] = Field(default_factory=list, max_length=16)
     risk_warnings: list[str] = Field(default_factory=list, max_length=16)
     why_it_may_work: str = Field(min_length=1, max_length=600)
+    whole_video_understanding_used: bool = False
+    understanding_guidance: list[str] = Field(default_factory=list, max_length=8)
 
 
 class BobaCreativeDirector:
@@ -142,6 +144,7 @@ class BobaCreativeDirector:
                 30.0,
             )
         recommended_duration = max(12.0, min(60.0, duration or 30.0))
+        understanding = self._whole_video_guidance(signals, start, end)
 
         transcript_hook = self._transcript_hook(signals, start, end)
         hook_line = _text(
@@ -160,12 +163,17 @@ class BobaCreativeDirector:
             maximum=80,
         ).casefold().replace(" ", "_")
         target_emotion = self._target_emotion(plan, story, analysis)
+        if target_emotion == "informative" and understanding.get("target_emotion"):
+            target_emotion = _text(
+                understanding.get("target_emotion"), maximum=80
+            ).casefold().replace(" ", "_")
         story_angle = _text(
             plan.get("story_shape")
             or story.get("story_shape")
             or story.get("story_summary")
             or plan.get("selected_reason")
             or planning.get("selected_reason")
+            or understanding.get("story_angle")
             or "Deliver one self-contained idea with a clear payoff.",
             maximum=400,
         )
@@ -207,11 +215,20 @@ class BobaCreativeDirector:
         )
         if upstream_note:
             editing_notes.append(f"Preserve upstream editing guidance: {upstream_note}")
+        guidance_notes = [
+            _text(item, maximum=260)
+            for item in _list(understanding.get("notes"))
+            if _text(item, maximum=260)
+        ]
+        editing_notes.extend(guidance_notes[:3])
+        if understanding.get("setup_needed"):
+            risks.append("Whole-video context map says this range needs earlier setup.")
         why = _text(
             virality.get("why_this_can_work")
             or virality.get("why_this_clip_works")
             or plan.get("selected_reason")
             or planning.get("selected_reason")
+            or understanding.get("reason")
             or f"The {hook_type.replace('_', ' ')} opening supports a focused {story_angle} angle.",
             maximum=600,
         )
@@ -230,6 +247,8 @@ class BobaCreativeDirector:
             editing_notes=editing_notes,
             risk_warnings=risks,
             why_it_may_work=why,
+            whole_video_understanding_used=bool(understanding.get("used")),
+            understanding_guidance=guidance_notes[:8],
         )
 
     @staticmethod
@@ -260,6 +279,50 @@ class BobaCreativeDirector:
             if text:
                 return text
         return ""
+
+    @staticmethod
+    def _whole_video_guidance(
+        signals: dict[str, Any], start: float, end: float
+    ) -> dict[str, Any]:
+        understanding = _dict(signals.get("whole_video_understanding"))
+        if not understanding:
+            return {}
+
+        def overlap(item: dict[str, Any]) -> float:
+            item_start = _number(item.get("start_seconds") or item.get("start"))
+            item_end = _number(
+                item.get("end_seconds") or item.get("end"), item_start
+            )
+            clip_end = end if end > start else start + 60.0
+            return max(0.0, min(clip_end, item_end) - max(start, item_start))
+
+        topics = [_dict(item) for item in _list(understanding.get("topic_timeline"))]
+        topic = max(topics, key=overlap, default={})
+        hints = [
+            _dict(item) for item in _list(understanding.get("shortability_hints"))
+        ]
+        hint = max(hints, key=overlap, default={})
+        beats = [_dict(item) for item in _list(understanding.get("emotional_beats"))]
+        beat = max(beats, key=overlap, default={})
+        notes: list[str] = []
+        topic_name = _text(topic.get("topic"), maximum=160)
+        if topic_name:
+            notes.append(f"Use whole-video topic context: {topic_name}.")
+        hint_reason = _text(hint.get("reason"), maximum=220)
+        if hint_reason:
+            notes.append(f"Whole-video shortability guidance: {hint_reason}")
+        return {
+            "used": True,
+            "story_angle": (
+                topic.get("summary")
+                or understanding.get("overall_summary")
+                or understanding.get("primary_topic")
+            ),
+            "target_emotion": beat.get("emotion_label"),
+            "setup_needed": bool(hint.get("setup_needed")),
+            "reason": hint_reason or understanding.get("overall_summary"),
+            "notes": notes,
+        }
 
     @staticmethod
     def _target_emotion(

@@ -31,10 +31,16 @@ from olympus.boba.reasoning import explain_clip_selection, summarize_project_und
 from olympus.boba.scout import BobaScout
 from olympus.boba.store import BobaMemoryStore
 from olympus.boba.validation import compact_boba_summary
+from olympus.boba.whole_video import (
+    BobaWholeVideoUnderstandingEngine,
+    BobaWholeVideoUnderstandingV1,
+    build_whole_video_memory_summary,
+    whole_video_memory_record,
+)
 from olympus.data.repositories.project_repository import StorageProjectRepository
 from olympus.domain.contracts.storage import StoragePort
 from olympus.personalization import apply as personalization
-from olympus.platform.errors import NotFoundError
+from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.utils import new_id
 
 
@@ -67,6 +73,7 @@ class BobaIntegration:
         self.bus = BobaDecisionBus(store)
         self.scout = BobaScout(store)
         self.creative_director = BobaCreativeDirector(store)
+        self.whole_video = BobaWholeVideoUnderstandingEngine()
         self.approvals = BobaApprovalService(store)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
@@ -241,6 +248,11 @@ class BobaIntegration:
             reason = _dict(render_stage).get("reason")
             if reason:
                 known_limitations.append(str(reason))
+        saved_understanding = None
+        try:
+            saved_understanding = self.store.load_whole_video_understanding(project_id)
+        except ValidationError as exc:
+            warnings.append(f"BOBA whole-video artifact is unreadable: {exc}")
         summary_data = _data(story_summary)
         main_topics = [
             str(item.get("title") or item.get("topic") or item.get("summary") or "")
@@ -309,6 +321,7 @@ class BobaIntegration:
             "known_limitations": list(dict.fromkeys(known_limitations)),
             "planning_candidates": candidates or plans,
             "selected_plans": plans,
+            "planning_summary": _data(planning_summary),
             "analysis_signals_v2": analysis_signals,
             "transcript_segments": transcript_segments,
             "story_analysis_v2": story_data,
@@ -327,6 +340,12 @@ class BobaIntegration:
                 "render_count": len(_list(render_manifest.get("renders"))),
                 "status": render_manifest.get("status"),
             },
+            "whole_video_understanding": (
+                saved_understanding.model_dump(mode="json")
+                if saved_understanding is not None
+                else {}
+            ),
+            "whole_video_understanding_available": saved_understanding is not None,
         }
 
     async def collect_clip_signals(self, project_id: str, clip_id: str) -> dict[str, Any]:
@@ -354,6 +373,18 @@ class BobaIntegration:
 
     async def generate_boba_for_project(self, project_id: str) -> BobaBrainStateV1:
         signals = await self.collect_project_signals(project_id)
+        if signals.get("transcript_segments") and not signals.get(
+            "whole_video_understanding_available"
+        ):
+            try:
+                understanding = self._build_and_save_whole_video(project_id, signals)
+                signals["whole_video_understanding"] = understanding.model_dump(mode="json")
+                signals["whole_video_understanding_available"] = True
+            except ValidationError as exc:
+                signals["warnings"] = [
+                    *_list(signals.get("warnings")),
+                    f"Whole-video understanding is unavailable: {exc}",
+                ]
         state = self.brain.create_brain_state(project_id, signals)
         memory_application = None
         if self.memory_enabled:
@@ -418,10 +449,37 @@ class BobaIntegration:
             decisions=self.store.list_decisions(project_id),
         )
 
+    def _build_and_save_whole_video(
+        self, project_id: str, signals: dict[str, Any]
+    ) -> BobaWholeVideoUnderstandingV1:
+        memory = self.store.load_project_memory(project_id) if self.memory_enabled else None
+        understanding = self.whole_video.build_from_signals(
+            project_id,
+            signals,
+            memory=memory,
+        )
+        self.store.save_whole_video_understanding(understanding)
+        if self.memory_enabled:
+            summary = build_whole_video_memory_summary(understanding)
+            self.store.save_record(whole_video_memory_record(summary))
+        return understanding
+
+    async def generate_whole_video_understanding(
+        self, project_id: str
+    ) -> BobaWholeVideoUnderstandingV1:
+        signals = await self.collect_project_signals(project_id)
+        return self._build_and_save_whole_video(project_id, signals)
+
     async def generate_creative_briefs(
         self, project_id: str
     ) -> list[BobaCreativeBriefV1]:
         signals = await self.collect_project_signals(project_id)
+        if not signals.get("whole_video_understanding") and signals.get(
+            "transcript_segments"
+        ):
+            understanding = self._build_and_save_whole_video(project_id, signals)
+            signals["whole_video_understanding"] = understanding.model_dump(mode="json")
+            signals["whole_video_understanding_available"] = True
         creator_profile_id = (
             str(_dict(signals.get("creator_profile")).get("profile_id") or "")
             or None

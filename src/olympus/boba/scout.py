@@ -322,6 +322,40 @@ class BobaScout:
             else:
                 clipping = 0.32
 
+        understanding_reason = ""
+        project_id_value = candidate.metadata.get("project_id")
+        if isinstance(project_id_value, str):
+            try:
+                understanding = self.store.load_whole_video_understanding(project_id_value)
+            except ValidationError:
+                understanding = None
+            if understanding is not None:
+                best_hint = max(
+                    (
+                        hint.hook_potential * 0.35
+                        + hint.payoff_strength * 0.25
+                        + next(
+                            (
+                                section.shortability_score * 0.4
+                                for section in understanding.section_scores
+                                if section.start_seconds == hint.start_seconds
+                            ),
+                            0.0,
+                        )
+                        for hint in understanding.shortability_hints
+                    ),
+                    default=0.0,
+                )
+                strongest_clarity = max(
+                    (item.clarity_score for item in understanding.section_scores),
+                    default=0.0,
+                )
+                clipping = 0.85 * clipping + 0.15 * best_hint
+                clarity = 0.9 * clarity + 0.1 * strongest_clarity
+                understanding_reason = (
+                    "Used saved whole-video shortability hints for the linked Olympus project."
+                )
+
         if candidate.rights_status == "not_allowed":
             risk = 1.0
         elif candidate.processing_permitted:
@@ -352,7 +386,8 @@ class BobaScout:
         reasons = [
             f"Hook potential {hook:.2f} from title structure and curiosity cues.",
             f"Clipping potential {clipping:.2f} from metadata and duration suitability.",
-            f"Topic clarity {clarity:.2f}; no video content was inspected.",
+            f"Topic clarity {clarity:.2f} from supplied metadata and available local artifacts.",
+            *([understanding_reason] if understanding_reason else []),
             *memory_reasons,
         ]
         warnings: list[str] = []
@@ -362,7 +397,12 @@ class BobaScout:
             warnings.append("User permission confirmation is still required before processing.")
         if candidate.rights_status == "not_allowed":
             warnings.append("Candidate is marked not allowed and must not be processed.")
-        warnings.append("Scout used metadata only and did not download or inspect media.")
+        warnings.append(
+            "Scout made no download or external call; linked project guidance came only from "
+            "saved local Olympus artifacts."
+            if understanding_reason
+            else "Scout used metadata only and did not download or inspect media."
+        )
 
         if candidate.rights_status == "not_allowed":
             action: BobaScoutRecommendedAction = "do_not_process"

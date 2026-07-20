@@ -36,6 +36,20 @@ from olympus.boba.memory_contracts import (
 from olympus.boba.ranking import rank_candidates
 from olympus.boba.scout import BobaCandidateV1, BobaScout, BobaScoutScoreV1
 from olympus.boba.store import BobaMemoryStore
+from olympus.boba.whole_video import (
+    BobaContextPayoffLinkV1,
+    BobaEmotionalBeatV1,
+    BobaSectionScoreV1,
+    BobaShortabilityHintV1,
+    BobaSignalUsageV1,
+    BobaStoryArcV1,
+    BobaStoryBeatV1,
+    BobaTopicSegmentV1,
+    BobaWholeVideoMemorySummaryV1,
+    BobaWholeVideoUnderstandingEngine,
+    BobaWholeVideoUnderstandingV1,
+    build_whole_video_memory_summary,
+)
 
 __all__ = [
     "BOBA_VERSION",
@@ -46,12 +60,14 @@ __all__ = [
     "BobaCandidateInsightV1",
     "BobaCandidateV1",
     "BobaClipRankingV1",
+    "BobaContextPayoffLinkV1",
     "BobaCreativeBriefV1",
     "BobaCreativeDirector",
     "BobaCreatorMemoryV1",
     "BobaDecisionBus",
     "BobaDecisionV1",
     "BobaEditorialPolicyV1",
+    "BobaEmotionalBeatV1",
     "BobaGlobalMemoryV1",
     "BobaIntegration",
     "BobaLearningNoteV1",
@@ -64,7 +80,17 @@ __all__ = [
     "BobaProjectMemoryV1",
     "BobaScout",
     "BobaScoutScoreV1",
+    "BobaSectionScoreV1",
+    "BobaShortabilityHintV1",
+    "BobaSignalUsageV1",
+    "BobaStoryArcV1",
+    "BobaStoryBeatV1",
+    "BobaTopicSegmentV1",
     "BobaValidationResultV1",
+    "BobaWholeVideoMemorySummaryV1",
+    "BobaWholeVideoUnderstandingEngine",
+    "BobaWholeVideoUnderstandingV1",
+    "build_whole_video_memory_summary",
     "create_editorial_policy",
     "get_boba_constitution",
     "rank_candidates",
