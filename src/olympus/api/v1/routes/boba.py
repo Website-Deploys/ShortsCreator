@@ -271,6 +271,37 @@ async def get_candidate_clips(
     return discovery.model_dump(mode="json")
 
 
+@router.post("/projects/{project_id}/clip-ranking/rank")
+async def rank_discovered_candidate_clips(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    if not settings.boba.enable_candidate_ranking:
+        raise ValidationError("BOBA candidate ranking is disabled by configuration.")
+    await _require_project(project_id, boba)
+    ranking = await boba.rank_discovered_candidate_clips(project_id)
+    return ranking.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/clip-ranking")
+async def get_clip_ranking(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    ranking = boba.store.load_clip_ranking(project_id)
+    if ranking is None:
+        raise NotFoundError(
+            "BOBA clip ranking is not available.",
+            details={"project_id": project_id},
+        )
+    return ranking.model_dump(mode="json")
+
+
 def _brief_decision(
     project_id: str,
     clip_id: str,

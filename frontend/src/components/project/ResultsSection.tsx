@@ -10,6 +10,7 @@ import {
   useBobaBrain,
   useBobaCandidateClipDiscovery,
   useBobaCandidates,
+  useBobaClipRanking,
   useBobaCreatorMemory,
   useBobaCreativeBriefs,
   useBobaProjectMemory,
@@ -25,6 +26,7 @@ import {
   usePlans,
   useRenderManifest,
   useResetCreatorProfile,
+  useRankBobaCandidateClips,
   useScoreBobaCandidate,
   useSubmitClipFeedback,
   useUpdateCreatorProfile,
@@ -34,6 +36,7 @@ import type {
   ClipFeedbackInput,
   BobaBrainStateV1,
   BobaCandidateClipDiscoveryV1,
+  BobaClipRankingV1,
   BobaCreatorMemoryV1,
   BobaProjectMemoryV1,
   BobaWholeVideoUnderstandingV1,
@@ -1226,6 +1229,100 @@ function BobaCandidateDiscoveryPanel({
   );
 }
 
+function BobaClipRankingPanel({
+  ranking,
+  rankingCandidates,
+  canRank,
+  onRank,
+}: {
+  ranking: BobaClipRankingV1 | null | undefined;
+  rankingCandidates: boolean;
+  canRank: boolean;
+  onRank: () => void;
+}) {
+  return (
+    <section className="rounded-xl border border-fuchsia-300/20 bg-fuchsia-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Clip Ranking Brain</p>
+          <p className="text-xs text-muted">
+            Advisory ranking only; BOBA does not plan, edit, render, or predict audience results.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={rankingCandidates || !canRank}
+          onClick={onRank}
+          className="rounded border border-fuchsia-200/30 px-2 py-1 text-[11px] text-fuchsia-100 hover:border-fuchsia-100 disabled:opacity-50"
+        >
+          {rankingCandidates ? "Ranking..." : ranking ? "Refresh ranking" : "Rank candidates"}
+        </button>
+      </div>
+      {ranking ? (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <p>{ranking.summary}</p>
+          <p>
+            Recommended {ranking.recommended_clip_ids.length} · Backups {ranking.backup_clip_ids.length} · Rejected {ranking.rejected_clip_ids.length}
+          </p>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {ranking.ranked_candidates.slice(0, 10).map((candidate) => (
+              <article key={candidate.candidate_id} className="rounded border border-white/10 p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-white">
+                      #{candidate.rank} {candidate.suggested_title}
+                    </p>
+                    <p>
+                      {formatDuration(candidate.source_window.start_seconds)}-{formatDuration(candidate.source_window.end_seconds)} · {candidate.candidate_type.replace(/_/g, " ")}
+                    </p>
+                  </div>
+                  <span className="rounded bg-fuchsia-300/10 px-2 py-1 text-fuchsia-100">
+                    {candidate.total_score.toFixed(1)}/100 · {candidate.tier.replace(/_/g, " ")}
+                  </span>
+                </div>
+                <p className="mt-2">
+                  Priority {candidate.production_priority.replace(/_/g, " ")} · Confidence {formatPercent(candidate.confidence)}
+                </p>
+                <p>Hook: {candidate.hook_idea}</p>
+                <p>Why: {candidate.ranking_reasons.join("; ") || "No ranking reason available"}</p>
+                <details className="mt-2 rounded border border-white/10 p-2">
+                  <summary className="cursor-pointer text-white">Score breakdown and risks</summary>
+                  <div className="mt-2 grid grid-cols-2 gap-1">
+                    {Object.entries(candidate.score_breakdown).map(([label, score]) => (
+                      <p key={label}>{label.replace(/_/g, " ")}: {score.toFixed(1)}</p>
+                    ))}
+                  </div>
+                  {candidate.risk_warnings.length > 0 && (
+                    <p className="mt-2 text-amber-100">Warnings: {candidate.risk_warnings.join("; ")}</p>
+                  )}
+                  {candidate.improvement_suggestions.length > 0 && (
+                    <p className="mt-1">Improve: {candidate.improvement_suggestions.join("; ")}</p>
+                  )}
+                </details>
+              </article>
+            ))}
+          </div>
+          <p>
+            Diversity: {ranking.diversity_summary.topic_count} topic(s), {ranking.diversity_summary.emotion_count} emotion(s), {ranking.diversity_summary.candidate_type_count} type(s); {ranking.diversity_summary.overlap_penalties_applied} overlap penalty(s).
+          </p>
+          <p>Signals unavailable: {ranking.signal_usage.unavailable_signals.join(", ") || "None reported"}</p>
+          {(ranking.warnings.length > 0 || ranking.diversity_summary.diversity_warnings.length > 0) && (
+            <p className="text-amber-100">
+              Warning: {[...ranking.warnings, ...ranking.diversity_summary.diversity_warnings].slice(0, 3).join("; ")}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          {canRank
+            ? "No saved ranking artifact. Rank the saved candidate discovery locally."
+            : "Run Candidate Clip Discovery before ranking."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function BobaMemoryPanel({
   projectMemory,
   creatorMemory,
@@ -2119,6 +2216,8 @@ export function ResultsSection({
   const generateWholeVideo = useGenerateBobaWholeVideoUnderstanding(projectId);
   const candidateDiscoveryQuery = useBobaCandidateClipDiscovery(projectId);
   const discoverCandidates = useDiscoverBobaCandidateClips(projectId);
+  const clipRankingQuery = useBobaClipRanking(projectId);
+  const rankCandidates = useRankBobaCandidateClips(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -2146,6 +2245,14 @@ export function ResultsSection({
       onDiscover={() => discoverCandidates.mutate()}
     />
   );
+  const clipRankingPanel = (
+    <BobaClipRankingPanel
+      ranking={clipRankingQuery.data}
+      rankingCandidates={rankCandidates.isPending}
+      canRank={Boolean(candidateDiscoveryQuery.data?.candidates.length)}
+      onRank={() => rankCandidates.mutate()}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -2155,6 +2262,7 @@ export function ResultsSection({
         <BobaBrainPanel brain={bobaQuery.data} />
         {wholeVideoPanel}
         {candidateDiscoveryPanel}
+        {clipRankingPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -2177,6 +2285,7 @@ export function ResultsSection({
         <BobaBrainPanel brain={bobaQuery.data} />
         {wholeVideoPanel}
         {candidateDiscoveryPanel}
+        {clipRankingPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2195,6 +2304,7 @@ export function ResultsSection({
         <BobaBrainPanel brain={bobaQuery.data} />
         {wholeVideoPanel}
         {candidateDiscoveryPanel}
+        {clipRankingPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2213,6 +2323,7 @@ export function ResultsSection({
       <BobaBrainPanel brain={bobaQuery.data} />
       {wholeVideoPanel}
       {candidateDiscoveryPanel}
+      {clipRankingPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState

@@ -1334,6 +1334,104 @@ export interface BobaCandidateClipDiscoveryV1 {
   limitations: string[];
 }
 
+export type BobaRankingTier =
+  | "must_make"
+  | "strong_candidate"
+  | "backup_candidate"
+  | "needs_revision"
+  | "reject";
+
+export type BobaProductionPriority =
+  | "immediate"
+  | "high"
+  | "medium"
+  | "low"
+  | "do_not_produce";
+
+export interface BobaClipScoreBreakdownV1 {
+  hook_score: number;
+  payoff_score: number;
+  standalone_score: number;
+  emotional_score: number;
+  clarity_score: number;
+  novelty_score: number;
+  pacing_score: number;
+  retention_score: number;
+  context_risk_score: number;
+  repetition_penalty: number;
+  overlap_penalty: number;
+  rights_safety_penalty: number;
+  memory_alignment_score: number;
+  final_score: number;
+}
+
+export interface BobaRankedClipV1 {
+  candidate_id: string;
+  project_id: string;
+  rank: number;
+  tier: BobaRankingTier;
+  total_score: number;
+  confidence: number;
+  production_priority: BobaProductionPriority;
+  score_breakdown: BobaClipScoreBreakdownV1;
+  ranking_reasons: string[];
+  risk_warnings: string[];
+  improvement_suggestions: string[];
+  source_window: {
+    start_seconds: number;
+    end_seconds: number;
+    duration_seconds: number;
+  };
+  candidate_type: string;
+  suggested_title: string;
+  hook_idea: string;
+  story_angle: string;
+  source_topic: string;
+  emotion_label: string;
+}
+
+export interface BobaClipRankingV1 {
+  schema_version: "boba_clip_ranking_brain_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  summary: string;
+  ranked_candidates: BobaRankedClipV1[];
+  recommended_clip_ids: string[];
+  backup_clip_ids: string[];
+  rejected_clip_ids: string[];
+  rejected_candidates: Array<{
+    candidate_id: string;
+    reason: string;
+    score: number;
+    overlap_with_candidate_id: string | null;
+    warning: string;
+  }>;
+  diversity_summary: {
+    ranked_count: number;
+    recommended_count: number;
+    topic_count: number;
+    emotion_count: number;
+    candidate_type_count: number;
+    overlap_penalties_applied: number;
+    duplicate_candidates_removed: number;
+    diversity_warnings: string[];
+  };
+  signal_usage: {
+    candidate_discovery_used: boolean;
+    whole_video_understanding_used: boolean;
+    virality_used: boolean;
+    story_used: boolean;
+    planning_used: boolean;
+    memory_used: boolean;
+    fallback_used: boolean;
+    unavailable_signals: string[];
+    warnings: string[];
+  };
+  warnings: string[];
+  limitations: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

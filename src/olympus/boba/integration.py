@@ -11,6 +11,12 @@ from olympus.boba.clip_discovery import (
     BobaCandidateClipDiscoveryEngine,
     BobaCandidateClipDiscoveryV1,
 )
+from olympus.boba.clip_ranking import (
+    BobaClipRankingEngine,
+)
+from olympus.boba.clip_ranking import (
+    BobaClipRankingV1 as BobaDiscoveryClipRankingV1,
+)
 from olympus.boba.contracts import (
     BobaBrainStateV1,
     BobaClipRankingV1,
@@ -79,6 +85,7 @@ class BobaIntegration:
         self.creative_director = BobaCreativeDirector(store)
         self.whole_video = BobaWholeVideoUnderstandingEngine()
         self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
+        self.clip_ranking = BobaClipRankingEngine()
         self.approvals = BobaApprovalService(store)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
@@ -263,6 +270,24 @@ class BobaIntegration:
             saved_discovery = self.store.load_candidate_clip_discovery(project_id)
         except ValidationError as exc:
             warnings.append(f"BOBA candidate-discovery artifact is unreadable: {exc}")
+        saved_clip_ranking = None
+        try:
+            saved_clip_ranking = self.store.load_clip_ranking(project_id)
+        except ValidationError as exc:
+            warnings.append(f"BOBA clip-ranking artifact is unreadable: {exc}")
+        discovery_by_id = {
+            item.candidate_id: item
+            for item in (saved_discovery.candidates if saved_discovery is not None else [])
+        }
+        ranked_candidate_clips = [
+            discovery_by_id[item.candidate_id].model_dump(mode="json")
+            for item in (
+                saved_clip_ranking.ranked_candidates
+                if saved_clip_ranking is not None
+                else []
+            )
+            if item.tier != "reject" and item.candidate_id in discovery_by_id
+        ]
         summary_data = _data(story_summary)
         main_topics = [
             str(item.get("title") or item.get("topic") or item.get("summary") or "")
@@ -367,6 +392,13 @@ class BobaIntegration:
                 if saved_discovery is not None
                 else []
             ),
+            "clip_ranking": (
+                saved_clip_ranking.model_dump(mode="json")
+                if saved_clip_ranking is not None
+                else {}
+            ),
+            "clip_ranking_available": saved_clip_ranking is not None,
+            "ranked_candidate_clips": ranked_candidate_clips,
         }
 
     async def collect_clip_signals(self, project_id: str, clip_id: str) -> dict[str, Any]:
@@ -507,6 +539,28 @@ class BobaIntegration:
     ) -> BobaCandidateClipDiscoveryV1:
         signals = await self.collect_project_signals(project_id)
         return self._build_and_save_candidate_discovery(project_id, signals)
+
+    def _build_and_save_clip_ranking(
+        self,
+        project_id: str,
+        signals: dict[str, Any],
+        discovery: BobaCandidateClipDiscoveryV1 | None,
+    ) -> BobaDiscoveryClipRankingV1:
+        memory = self.store.load_project_memory(project_id) if self.memory_enabled else None
+        ranking = self.clip_ranking.rank_from_signals(
+            project_id,
+            signals,
+            candidate_discovery=discovery,
+            memory=memory,
+        )
+        return self.store.save_clip_ranking(ranking)
+
+    async def rank_discovered_candidate_clips(
+        self, project_id: str
+    ) -> BobaDiscoveryClipRankingV1:
+        signals = await self.collect_project_signals(project_id)
+        discovery = self.store.load_candidate_clip_discovery(project_id)
+        return self._build_and_save_clip_ranking(project_id, signals, discovery)
 
     async def generate_creative_briefs(
         self, project_id: str
