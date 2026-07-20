@@ -50,6 +50,7 @@ import type {
   BobaBrainStateV1,
   BobaCandidateClipDiscoveryV1,
   BobaCandidatesResponse,
+  BobaClipRankingV1,
   BobaCreativeBriefsResponse,
   BobaCreatorMemoryV1,
   BobaProjectMemoryV1,
@@ -78,6 +79,7 @@ export const queryKeys = {
     ["boba", "projects", id, "whole-video-understanding"] as const,
   bobaCandidateClipDiscovery: (id: string) =>
     ["boba", "projects", id, "candidate-clips"] as const,
+  bobaClipRanking: (id: string) => ["boba", "projects", id, "clip-ranking"] as const,
   creatorProfiles: ["personalization", "profiles"] as const,
   creatorPersonalizationSummary: ["personalization", "summary"] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
@@ -258,6 +260,31 @@ export function useDiscoverBobaCandidateClips(projectId: string) {
     mutationFn: () => api.discoverBobaCandidateClips(projectId),
     onSuccess: (result) => {
       qc.setQueryData(queryKeys.bobaCandidateClipDiscovery(projectId), result);
+    },
+  });
+}
+
+export function useBobaClipRanking(projectId: string) {
+  return useQuery<BobaClipRankingV1 | null>({
+    queryKey: queryKeys.bobaClipRanking(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaClipRanking(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useRankBobaCandidateClips(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.rankBobaCandidateClips(projectId),
+    onSuccess: (result) => {
+      qc.setQueryData(queryKeys.bobaClipRanking(projectId), result);
     },
   });
 }

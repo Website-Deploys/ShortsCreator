@@ -15,6 +15,17 @@ from olympus.boba.clip_discovery import (
     BobaCandidateEvidenceV1,
     BobaRejectedWindowV1,
 )
+from olympus.boba.clip_ranking import (
+    BobaClipRankingEngine,
+    BobaClipScoreBreakdownV1,
+    BobaRankedClipV1,
+    BobaRankingDiversitySummaryV1,
+    BobaRankingSignalUsageV1,
+    BobaRejectedRankCandidateV1,
+)
+from olympus.boba.clip_ranking import (
+    BobaClipRankingV1 as BobaDiscoveryClipRankingV1,
+)
 from olympus.boba.constitution import get_boba_constitution
 from olympus.boba.contracts import (
     BOBA_VERSION,
@@ -76,13 +87,16 @@ __all__ = [
     "BobaCandidateEvidenceV1",
     "BobaCandidateInsightV1",
     "BobaCandidateV1",
+    "BobaClipRankingEngine",
     "BobaClipRankingV1",
+    "BobaClipScoreBreakdownV1",
     "BobaContextPayoffLinkV1",
     "BobaCreativeBriefV1",
     "BobaCreativeDirector",
     "BobaCreatorMemoryV1",
     "BobaDecisionBus",
     "BobaDecisionV1",
+    "BobaDiscoveryClipRankingV1",
     "BobaEditorialPolicyV1",
     "BobaEmotionalBeatV1",
     "BobaGlobalMemoryV1",
@@ -95,6 +109,10 @@ __all__ = [
     "BobaMemoryStore",
     "BobaObservationV1",
     "BobaProjectMemoryV1",
+    "BobaRankedClipV1",
+    "BobaRankingDiversitySummaryV1",
+    "BobaRankingSignalUsageV1",
+    "BobaRejectedRankCandidateV1",
     "BobaRejectedWindowV1",
     "BobaScout",
     "BobaScoutScoreV1",

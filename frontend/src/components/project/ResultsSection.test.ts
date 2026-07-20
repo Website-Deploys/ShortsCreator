@@ -174,4 +174,18 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).toContain("Payoff");
     expect(resultsSection).toContain("does not rank, plan, edit, or render clips");
   });
+
+  it("shows advisory BOBA clip ranking with reasons and score truth", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Clip Ranking Brain");
+    expect(resultsSection).toContain("Rank candidates");
+    expect(resultsSection).toContain("Score breakdown and risks");
+    expect(resultsSection).toContain("Priority");
+    expect(resultsSection).toContain("Signals unavailable:");
+    expect(resultsSection).toContain(
+      "does not plan, edit, render, or predict audience results",
+    );
+    expect(resultsSection.toLowerCase()).not.toContain("boba predicts virality");
+  });
 });

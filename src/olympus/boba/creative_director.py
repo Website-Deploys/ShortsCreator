@@ -100,6 +100,7 @@ class BobaCreativeDirector:
         for key in (
             "selected_plans",
             "planning_candidates",
+            "ranked_candidate_clips",
             "discovered_candidate_clips",
         ):
             values = [_dict(item) for item in _list(signals.get(key)) if _dict(item)]
