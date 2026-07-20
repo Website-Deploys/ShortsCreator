@@ -28,6 +28,7 @@ from olympus.boba.contracts import (
     BobaObservationV1,
 )
 from olympus.boba.creative_director import BobaCreativeBriefV1
+from olympus.boba.editorial_decision import BobaEditorialDecisionSetV1
 from olympus.boba.memory import sanitize_memory_payload
 from olympus.boba.memory_contracts import (
     BobaCreatorMemoryV1,
@@ -385,6 +386,30 @@ class BobaMemoryStore:
         raw = self._read(self.clip_ranking_path(project_id), None)
         return (
             BobaDiscoveryClipRankingV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def editorial_decision_path(self, project_id: str) -> Path:
+        return self._path(project_id, "editorial_decision/index.json")
+
+    def save_editorial_decisions(
+        self, decisions: BobaEditorialDecisionSetV1
+    ) -> BobaEditorialDecisionSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                decisions.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_000),
+            )
+            self._atomic_write(self.editorial_decision_path(decisions.project_id), safe)
+        return decisions
+
+    def load_editorial_decisions(
+        self, project_id: str
+    ) -> BobaEditorialDecisionSetV1 | None:
+        raw = self._read(self.editorial_decision_path(project_id), None)
+        return (
+            BobaEditorialDecisionSetV1.model_validate(raw)
             if isinstance(raw, dict)
             else None
         )

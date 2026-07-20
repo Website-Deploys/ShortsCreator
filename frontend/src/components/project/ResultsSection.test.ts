@@ -188,4 +188,18 @@ describe("V2 output flow UI contracts", () => {
     );
     expect(resultsSection.toLowerCase()).not.toContain("boba predicts virality");
   });
+
+  it("shows advisory BOBA editorial decisions without render claims", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Editorial Decision Engine");
+    expect(resultsSection).toContain("Create editorial decisions");
+    expect(resultsSection).toContain("Hook strategy:");
+    expect(resultsSection).toContain("Readiness reason:");
+    expect(resultsSection).toContain("Editing instructions, risks, and improvements");
+    expect(resultsSection).toContain("Production order:");
+    expect(resultsSection).toContain(
+      "not proof that any edit or render effect was applied",
+    );
+  });
 });

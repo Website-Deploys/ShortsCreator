@@ -100,6 +100,7 @@ class BobaCreativeDirector:
         for key in (
             "selected_plans",
             "planning_candidates",
+            "editorial_candidate_clips",
             "ranked_candidate_clips",
             "discovered_candidate_clips",
         ):

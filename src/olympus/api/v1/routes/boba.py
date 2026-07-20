@@ -302,6 +302,37 @@ async def get_clip_ranking(
     return ranking.model_dump(mode="json")
 
 
+@router.post("/projects/{project_id}/editorial-decisions")
+async def create_editorial_decisions(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    if not settings.boba.enable_editorial_policy:
+        raise ValidationError("BOBA editorial decisions are disabled by configuration.")
+    await _require_project(project_id, boba)
+    decisions = await boba.generate_editorial_decisions(project_id)
+    return decisions.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/editorial-decisions")
+async def get_editorial_decisions(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    decisions = boba.store.load_editorial_decisions(project_id)
+    if decisions is None:
+        raise NotFoundError(
+            "BOBA editorial decisions are not available.",
+            details={"project_id": project_id},
+        )
+    return decisions.model_dump(mode="json")
+
+
 def _brief_decision(
     project_id: str,
     clip_id: str,

@@ -13,9 +13,11 @@ import {
   useBobaClipRanking,
   useBobaCreatorMemory,
   useBobaCreativeBriefs,
+  useBobaEditorialDecisions,
   useBobaProjectMemory,
   useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
+  useCreateBobaEditorialDecisions,
   useCreatorProfiles,
   useExportCreatorProfile,
   useDecideBobaCandidate,
@@ -38,6 +40,7 @@ import type {
   BobaCandidateClipDiscoveryV1,
   BobaClipRankingV1,
   BobaCreatorMemoryV1,
+  BobaEditorialDecisionSetV1,
   BobaProjectMemoryV1,
   BobaWholeVideoUnderstandingV1,
   ClipPlan,
@@ -1323,6 +1326,159 @@ function BobaClipRankingPanel({
   );
 }
 
+function BobaEditorialDecisionPanel({
+  decisions,
+  deciding,
+  canDecide,
+  onDecide,
+}: {
+  decisions: BobaEditorialDecisionSetV1 | null | undefined;
+  deciding: boolean;
+  canDecide: boolean;
+  onDecide: () => void;
+}) {
+  const orderedDecisions = decisions
+    ? [...decisions.decisions].sort(
+        (left, right) => Number(right.selected) - Number(left.selected) || left.rank - right.rank,
+      )
+    : [];
+
+  return (
+    <section className="rounded-xl border border-violet-300/20 bg-violet-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Editorial Decision Engine</p>
+          <p className="text-xs text-muted">
+            Local advisory instructions only; Olympus planning, editing, and rendering remain authoritative.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={deciding || !canDecide}
+          onClick={onDecide}
+          className="rounded border border-violet-200/30 px-2 py-1 text-[11px] text-violet-100 hover:border-violet-100 disabled:opacity-50"
+        >
+          {deciding
+            ? "Deciding..."
+            : decisions
+              ? "Refresh editorial decisions"
+              : "Create editorial decisions"}
+        </button>
+      </div>
+      {decisions ? (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <p>{decisions.summary}</p>
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded bg-emerald-300/10 px-2 py-1 text-emerald-100">
+              Ready {decisions.risk_summary.ready_for_render_count}
+            </span>
+            <span className="rounded bg-amber-300/10 px-2 py-1 text-amber-100">
+              Needs revision {decisions.risk_summary.needs_revision_count}
+            </span>
+            <span className="rounded bg-rose-300/10 px-2 py-1 text-rose-100">
+              Blocked {decisions.risk_summary.blocked_count}
+            </span>
+            <span className="rounded bg-white/5 px-2 py-1 text-white">
+              Selected {decisions.selected_clip_ids.length}
+            </span>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {orderedDecisions.slice(0, 10).map((decision) => (
+              <article
+                key={decision.candidate_id}
+                className={`rounded border p-3 ${
+                  decision.selected ? "border-violet-200/30" : "border-white/10"
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-white">
+                      #{decision.rank} {decision.suggested_title}
+                    </p>
+                    <p>
+                      {formatDuration(decision.source_window.start_seconds)}-
+                      {formatDuration(decision.source_window.end_seconds)} · {decision.candidate_type.replace(/_/g, " ")}
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded px-2 py-1 ${
+                      decision.render_readiness === "ready_for_render"
+                        ? "bg-emerald-300/10 text-emerald-100"
+                        : decision.render_readiness === "blocked"
+                          ? "bg-rose-300/10 text-rose-100"
+                          : "bg-amber-300/10 text-amber-100"
+                    }`}
+                  >
+                    {decision.selected ? "Selected" : "Not selected"} · {decision.render_readiness.replace(/_/g, " ")}
+                  </span>
+                </div>
+                <p className="mt-2">
+                  Ranking {decision.ranking_score.toFixed(1)}/100 · Confidence {formatPercent(decision.confidence)}
+                </p>
+                <p>Story angle: {decision.final_story_angle}</p>
+                <p>Hook strategy: {decision.final_hook_strategy.replace(/_/g, " ")}</p>
+                <p>Opening direction: {decision.opening_line_direction}</p>
+                <p>
+                  Pacing {decision.pacing_intensity} · Captions {decision.caption_style.replace(/_/g, " ")} · Motion {decision.motion_style.replace(/_/g, " ")}
+                </p>
+                <p>
+                  Music mood {decision.music_mood} · SFX intensity {decision.sfx_intensity} (instructions only)
+                </p>
+                <p>Readiness reason: {decision.render_readiness_reason}</p>
+                <p>Why selected: {decision.decision_reasons.join("; ") || "No decision reason available"}</p>
+                <details className="mt-2 rounded border border-white/10 p-2">
+                  <summary className="cursor-pointer text-white">
+                    Editing instructions, risks, and improvements
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    <p>Hook: {decision.editing_instruction_packet.hook_instruction}</p>
+                    <p>Cut: {decision.editing_instruction_packet.cut_instruction}</p>
+                    <p>Captions: {decision.editing_instruction_packet.caption_instruction}</p>
+                    <p>Motion: {decision.editing_instruction_packet.motion_instruction}</p>
+                    <p>Audio: {decision.editing_instruction_packet.audio_instruction}</p>
+                    <p>Retention: {decision.editing_instruction_packet.retention_instruction}</p>
+                    {(decision.risk_review.blockers.length > 0 ||
+                      decision.risk_review.warnings.length > 0) && (
+                      <p className="text-amber-100">
+                        Risks: {[...decision.risk_review.blockers, ...decision.risk_review.warnings].join("; ")}
+                      </p>
+                    )}
+                    <p>
+                      Improve: {decision.improvement_notes.join("; ") || "No additional improvement note"}
+                    </p>
+                  </div>
+                </details>
+              </article>
+            ))}
+          </div>
+          <p>
+            Production order: {decisions.production_order.join(" → ") || "No clips are ready for production"}
+          </p>
+          <p>
+            Signals unavailable: {decisions.signal_usage.unavailable_signals.join(", ") || "None reported"}
+          </p>
+          {(decisions.risk_summary.top_risks.length > 0 || decisions.warnings.length > 0) && (
+            <p className="text-amber-100">
+              Editorial risks: {[...decisions.risk_summary.top_risks, ...decisions.warnings]
+                .slice(0, 4)
+                .join("; ")}
+            </p>
+          )}
+          <p>
+            These are advisory instructions, not proof that any edit or render effect was applied.
+          </p>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          {canDecide
+            ? "No saved editorial decision artifact. Create decisions from the saved ranking."
+            : "Rank candidate clips before creating editorial decisions."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function BobaMemoryPanel({
   projectMemory,
   creatorMemory,
@@ -2218,6 +2374,8 @@ export function ResultsSection({
   const discoverCandidates = useDiscoverBobaCandidateClips(projectId);
   const clipRankingQuery = useBobaClipRanking(projectId);
   const rankCandidates = useRankBobaCandidateClips(projectId);
+  const editorialDecisionsQuery = useBobaEditorialDecisions(projectId);
+  const createEditorialDecisions = useCreateBobaEditorialDecisions(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -2253,6 +2411,14 @@ export function ResultsSection({
       onRank={() => rankCandidates.mutate()}
     />
   );
+  const editorialDecisionPanel = (
+    <BobaEditorialDecisionPanel
+      decisions={editorialDecisionsQuery.data}
+      deciding={createEditorialDecisions.isPending}
+      canDecide={Boolean(clipRankingQuery.data?.ranked_candidates.length)}
+      onDecide={() => createEditorialDecisions.mutate()}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -2263,6 +2429,7 @@ export function ResultsSection({
         {wholeVideoPanel}
         {candidateDiscoveryPanel}
         {clipRankingPanel}
+        {editorialDecisionPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -2286,6 +2453,7 @@ export function ResultsSection({
         {wholeVideoPanel}
         {candidateDiscoveryPanel}
         {clipRankingPanel}
+        {editorialDecisionPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2305,6 +2473,7 @@ export function ResultsSection({
         {wholeVideoPanel}
         {candidateDiscoveryPanel}
         {clipRankingPanel}
+        {editorialDecisionPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2324,6 +2493,7 @@ export function ResultsSection({
       {wholeVideoPanel}
       {candidateDiscoveryPanel}
       {clipRankingPanel}
+      {editorialDecisionPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState
