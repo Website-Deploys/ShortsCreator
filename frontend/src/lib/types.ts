@@ -1048,6 +1048,91 @@ export interface BobaGlobalMemoryV1 {
   warnings: string[];
 }
 
+export type BobaRightsStatus =
+  | "unknown"
+  | "user_owned"
+  | "permission_confirmed"
+  | "licensed"
+  | "not_allowed";
+
+export type BobaCandidateStatus =
+  | "idea_only"
+  | "approved_for_review"
+  | "approved_for_processing"
+  | "rejected"
+  | "archived";
+
+export interface BobaCandidateV1 {
+  candidate_id: string;
+  source_type:
+    | "manual_link"
+    | "manual_metadata"
+    | "json_import"
+    | "csv_import"
+    | "official_api_metadata";
+  title: string;
+  url?: string | null;
+  creator: string;
+  duration_seconds?: number | null;
+  published_at?: string | null;
+  metadata: Record<string, unknown>;
+  rights_status: BobaRightsStatus;
+  permission_confirmed: boolean;
+  status: BobaCandidateStatus;
+  created_at: string;
+}
+
+export interface BobaScoutScoreV1 {
+  candidate_id: string;
+  overall_score: number;
+  hook_potential: number;
+  emotional_potential: number;
+  novelty_score: number;
+  clarity_score: number;
+  clipping_potential: number;
+  risk_score: number;
+  reasons: string[];
+  warnings: string[];
+  recommended_action:
+    | "idea_only"
+    | "review_rights_first"
+    | "approve_for_review"
+    | "process_now"
+    | "do_not_process";
+}
+
+export interface BobaCandidatesResponse {
+  count: number;
+  candidates: BobaCandidateV1[];
+  scores: Record<string, BobaScoutScoreV1>;
+  metadata_only: true;
+  external_calls_made: false;
+}
+
+export interface BobaCreativeBriefV1 {
+  clip_id: string;
+  project_id: string;
+  target_emotion: string;
+  hook_type: string;
+  curiosity_trigger: string;
+  story_angle: string;
+  recommended_duration_seconds: number;
+  pacing_level: "calm" | "balanced" | "fast" | "aggressive";
+  caption_style: string;
+  motion_style: string;
+  music_mood: string;
+  editing_notes: string[];
+  risk_warnings: string[];
+  why_it_may_work: string;
+}
+
+export interface BobaCreativeBriefsResponse {
+  project_id: string;
+  count: number;
+  briefs: BobaCreativeBriefV1[];
+  rendering_triggered?: false;
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

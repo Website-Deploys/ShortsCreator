@@ -44,9 +44,12 @@ from olympus.data.repositories import (
 from olympus.data.storage import build_storage
 from olympus.domain.contracts import Renderer, StoragePort, TranscriptionProvider
 from olympus.domain.contracts.rendering import ClipRenderer
+from olympus.domain.entities.editing import EditingAnalysis
+from olympus.domain.entities.project import Project
 from olympus.jobs import CheckpointValidator, LocalDurableJobStore
 from olympus.personalization import CreatorPersonalizationService, ProfileStore
 from olympus.platform.config import Settings, get_settings
+from olympus.platform.logging import get_logger
 from olympus.rendering import build_clip_renderer, build_renderer
 from olympus.services.analysis import AnalysisService
 from olympus.services.editing import EditingService
@@ -61,6 +64,8 @@ from olympus.services.story import StoryService
 from olympus.services.virality import ViralityService
 from olympus.services.workflow import WorkflowService
 from olympus.workflow import UploadRunner, build_service_runner
+
+log = get_logger(__name__)
 
 
 def settings_provider() -> Settings:
@@ -198,6 +203,28 @@ def boba_integration_provider() -> BobaIntegration:
     )
 
 
+async def _start_rendering_after_boba(
+    project: Project, _editing: EditingAnalysis
+) -> None:
+    """Generate advisory briefs before preserving the existing render handoff."""
+
+    if get_settings().boba.enabled:
+        try:
+            briefs = await boba_integration_provider().generate_creative_briefs(project.id)
+            log.info(
+                "boba_creative_briefs_ready",
+                project_id=project.id,
+                brief_count=len(briefs),
+            )
+        except Exception as exc:
+            log.warning(
+                "boba_creative_briefs_unavailable",
+                project_id=project.id,
+                error=str(exc),
+            )
+    await rendering_service_provider().start(project)
+
+
 def editing_service_provider() -> EditingService:
     """Provide the editing service (the Editing Engine's application boundary).
 
@@ -210,9 +237,6 @@ def editing_service_provider() -> EditingService:
 
     storage = build_storage()
 
-    async def _start_rendering(project: object, _editing: object) -> None:
-        await rendering_service_provider().start(project)  # type: ignore[arg-type]
-
     return EditingService(
         editing_repo=StorageEditingRepository(storage),
         planning_repo=StoragePlanningRepository(storage),
@@ -221,7 +245,7 @@ def editing_service_provider() -> EditingService:
         analysis_repo=StorageAnalysisRepository(storage),
         project_repo=StorageProjectRepository(storage),
         storage=storage,
-        on_complete=_start_rendering,
+        on_complete=_start_rendering_after_boba,
     )
 
 

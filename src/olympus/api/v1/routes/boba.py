@@ -12,10 +12,12 @@ from olympus.api.dependencies import (
     PersonalizationServiceDep,
     SettingsDep,
 )
+from olympus.boba.approvals import BobaApprovalDecision
 from olympus.boba.creator_memory import build_and_save_creator_memory
 from olympus.boba.global_memory import build_and_save_global_memory
 from olympus.boba.memory_contracts import BobaMemoryQueryV1
 from olympus.boba.memory_learning import BobaMemoryLearner
+from olympus.boba.scout import BobaCandidateV1
 from olympus.platform.errors import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/boba", tags=["boba"])
@@ -54,6 +56,27 @@ class MemoryResetRequest(BaseModel):
     identifier: str | None = Field(default=None, max_length=128)
 
 
+class ScoutScoreRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    creator_profile_id: str | None = Field(default=None, max_length=80)
+
+
+class CandidateDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="", max_length=500)
+    creator_profile_id: str | None = Field(default=None, max_length=80)
+    approve_for_processing: bool = False
+
+
+class CreativeBriefDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="", max_length=500)
+    creator_profile_id: str | None = Field(default=None, max_length=80)
+
+
 def _require_enabled(settings: SettingsDep) -> None:
     if not settings.boba.enabled:
         raise ValidationError("BOBA Core Brain is disabled by configuration.")
@@ -68,6 +91,173 @@ def _require_memory_enabled(settings: SettingsDep) -> None:
 async def _require_project(project_id: str, boba: BobaIntegrationDep) -> None:
     if await boba.projects.get(project_id) is None:
         raise NotFoundError("Project was not found.", details={"id": project_id})
+
+
+@router.post("/candidates")
+def create_candidate(
+    body: BobaCandidateV1,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    return boba.scout.create_candidate(body).model_dump(mode="json")
+
+
+@router.get("/candidates")
+def list_candidates(
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    candidates = boba.scout.list_candidates()
+    return {
+        "count": len(candidates),
+        "candidates": [item.model_dump(mode="json") for item in candidates],
+        "scores": {
+            item.candidate_id: score.model_dump(mode="json")
+            for item in candidates
+            if (score := boba.store.load_scout_score(item.candidate_id)) is not None
+        },
+        "metadata_only": True,
+        "external_calls_made": False,
+    }
+
+
+@router.post("/candidates/{candidate_id}/score")
+def score_candidate(
+    candidate_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    body: ScoutScoreRequest | None = None,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    return boba.scout.score_candidate(
+        candidate_id,
+        creator_profile_id=body.creator_profile_id if body else None,
+    ).model_dump(mode="json")
+
+
+def _candidate_decision(
+    candidate_id: str,
+    decision: BobaApprovalDecision,
+    body: CandidateDecisionRequest,
+    boba: BobaIntegrationDep,
+) -> dict[str, Any]:
+    event, candidate, lesson = boba.approvals.decide_candidate(
+        candidate_id,
+        decision=decision,
+        reason=body.reason,
+        approve_for_processing=body.approve_for_processing,
+        creator_profile_id=body.creator_profile_id,
+    )
+    return {
+        "candidate": candidate.model_dump(mode="json"),
+        "approval": event.model_dump(mode="json"),
+        "memory_lesson_id": lesson.memory_id,
+        "processing_triggered": False,
+    }
+
+
+@router.post("/candidates/{candidate_id}/approve")
+def approve_candidate(
+    candidate_id: str,
+    body: CandidateDecisionRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    return _candidate_decision(candidate_id, "approved", body, boba)
+
+
+@router.post("/candidates/{candidate_id}/reject")
+def reject_candidate(
+    candidate_id: str,
+    body: CandidateDecisionRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    return _candidate_decision(candidate_id, "rejected", body, boba)
+
+
+@router.post("/projects/{project_id}/creative-briefs")
+async def create_creative_briefs(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    briefs = await boba.generate_creative_briefs(project_id)
+    return {
+        "project_id": project_id,
+        "count": len(briefs),
+        "briefs": [item.model_dump(mode="json") for item in briefs],
+        "rendering_triggered": False,
+    }
+
+
+@router.get("/projects/{project_id}/creative-briefs")
+async def get_creative_briefs(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    briefs = boba.creative_director.list_briefs(project_id)
+    return {
+        "project_id": project_id,
+        "count": len(briefs),
+        "briefs": [item.model_dump(mode="json") for item in briefs],
+    }
+
+
+def _brief_decision(
+    project_id: str,
+    clip_id: str,
+    decision: BobaApprovalDecision,
+    body: CreativeBriefDecisionRequest,
+    boba: BobaIntegrationDep,
+) -> dict[str, Any]:
+    event, lesson = boba.approvals.decide_clip_idea(
+        project_id,
+        clip_id,
+        decision=decision,
+        reason=body.reason,
+        creator_profile_id=body.creator_profile_id,
+    )
+    return {
+        "approval": event.model_dump(mode="json"),
+        "memory_lesson_id": lesson.memory_id,
+        "rendering_triggered": False,
+    }
+
+
+@router.post("/projects/{project_id}/creative-briefs/{clip_id}/approve")
+async def approve_creative_brief(
+    project_id: str,
+    clip_id: str,
+    body: CreativeBriefDecisionRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    return _brief_decision(project_id, clip_id, "approved", body, boba)
+
+
+@router.post("/projects/{project_id}/creative-briefs/{clip_id}/reject")
+async def reject_creative_brief(
+    project_id: str,
+    clip_id: str,
+    body: CreativeBriefDecisionRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    return _brief_decision(project_id, clip_id, "rejected", body, boba)
 
 
 @router.get("/projects/{project_id}/brain")

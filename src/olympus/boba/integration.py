@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from olympus.boba.approvals import BobaApprovalService
 from olympus.boba.brain import BobaBrain
 from olympus.boba.contracts import (
     BobaBrainStateV1,
@@ -13,6 +14,7 @@ from olympus.boba.contracts import (
     BobaEditorialPolicyV1,
     BobaReasoningV1,
 )
+from olympus.boba.creative_director import BobaCreativeBriefV1, BobaCreativeDirector
 from olympus.boba.decision_bus import BobaDecisionBus
 from olympus.boba.editorial_policy import create_editorial_policy
 from olympus.boba.global_memory import build_and_save_global_memory
@@ -26,6 +28,7 @@ from olympus.boba.memory_retrieval import (
 from olympus.boba.project_memory import build_and_save_project_memory
 from olympus.boba.ranking import rank_candidates
 from olympus.boba.reasoning import explain_clip_selection, summarize_project_understanding
+from olympus.boba.scout import BobaScout
 from olympus.boba.store import BobaMemoryStore
 from olympus.boba.validation import compact_boba_summary
 from olympus.data.repositories.project_repository import StorageProjectRepository
@@ -62,6 +65,9 @@ class BobaIntegration:
         self.store = store
         self.brain = BobaBrain(store, mode=mode)  # type: ignore[arg-type]
         self.bus = BobaDecisionBus(store)
+        self.scout = BobaScout(store)
+        self.creative_director = BobaCreativeDirector(store)
+        self.approvals = BobaApprovalService(store)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
 
@@ -95,6 +101,7 @@ class BobaIntegration:
         face = await self._stage("analysis", project_id, "face_detection")
         speakers = await self._stage("analysis", project_id, "speaker_segmentation")
         scenes = await self._stage("analysis", project_id, "scene_detection")
+        signal_health = await self._stage("analysis", project_id, "signal_health")
         story = await self._stage("story", project_id, "story_analysis_v2")
         story_summary = await self._stage("story", project_id, "story_summary")
         emotions = await self._stage("story", project_id, "emotional_turning_points")
@@ -116,6 +123,18 @@ class BobaIntegration:
 
         speech_data = _data(speech)
         segments = _list(speech_data.get("segments"))
+        transcript_segments = [
+            {
+                "start": float(_dict(item).get("start") or 0.0),
+                "end": float(_dict(item).get("end") or 0.0),
+                "text": " ".join(str(_dict(item).get("text") or "").split())[:240],
+            }
+            for item in segments[:2000]
+            if isinstance(item, dict)
+        ]
+        analysis_signals = _dict(
+            _data(signal_health).get("analysis_signals_v2")
+        )
         transcript_available = bool(
             segments
             or speech_data.get("transcript")
@@ -197,6 +216,7 @@ class BobaIntegration:
                 speech,
                 face,
                 speakers,
+                signal_health,
                 story,
                 virality,
                 ranking,
@@ -289,6 +309,8 @@ class BobaIntegration:
             "known_limitations": list(dict.fromkeys(known_limitations)),
             "planning_candidates": candidates or plans,
             "selected_plans": plans,
+            "analysis_signals_v2": analysis_signals,
+            "transcript_segments": transcript_segments,
             "story_analysis_v2": story_data,
             "virality_summary": _data(virality),
             "trend_research": trend_data,
@@ -299,6 +321,7 @@ class BobaIntegration:
                 "timeline_count": len(timelines),
                 "status": editing.get("status"),
             },
+            "editing_timelines": [_dict(item) for item in timelines if _dict(item)],
             "render_summary": {
                 "manifest_available": manifest_available,
                 "render_count": len(_list(render_manifest.get("renders"))),
@@ -393,6 +416,20 @@ class BobaIntegration:
             project_id,
             signals,
             decisions=self.store.list_decisions(project_id),
+        )
+
+    async def generate_creative_briefs(
+        self, project_id: str
+    ) -> list[BobaCreativeBriefV1]:
+        signals = await self.collect_project_signals(project_id)
+        creator_profile_id = (
+            str(_dict(signals.get("creator_profile")).get("profile_id") or "")
+            or None
+        )
+        return self.creative_director.create_briefs(
+            project_id,
+            signals,
+            creator_profile_id=creator_profile_id,
         )
 
     async def rank_project_candidates(self, project_id: str) -> BobaClipRankingV1:

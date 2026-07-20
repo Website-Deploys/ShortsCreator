@@ -48,6 +48,8 @@ import type {
   AlertsResponse,
   AuditResponse,
   BobaBrainStateV1,
+  BobaCandidatesResponse,
+  BobaCreativeBriefsResponse,
   BobaCreatorMemoryV1,
   BobaProjectMemoryV1,
   CostEstimate,
@@ -68,6 +70,8 @@ export const queryKeys = {
   bobaBrain: (id: string) => ["boba", "projects", id, "brain"] as const,
   bobaProjectMemory: (id: string) => ["boba", "memory", "projects", id] as const,
   bobaCreatorMemory: (id: string) => ["boba", "memory", "creators", id] as const,
+  bobaCandidates: ["boba", "candidates"] as const,
+  bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   creatorProfiles: ["personalization", "profiles"] as const,
   creatorPersonalizationSummary: ["personalization", "summary"] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
@@ -183,6 +187,69 @@ export function useBobaCreatorMemory(profileId?: string) {
       }
     },
     enabled: Boolean(profileId),
+  });
+}
+
+export function useBobaCandidates() {
+  return useQuery<BobaCandidatesResponse>({
+    queryKey: queryKeys.bobaCandidates,
+    queryFn: api.getBobaCandidates,
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaCreativeBriefs(projectId: string) {
+  return useQuery<BobaCreativeBriefsResponse>({
+    queryKey: queryKeys.bobaCreativeBriefs(projectId),
+    queryFn: () => api.getBobaCreativeBriefs(projectId),
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useScoreBobaCandidate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (candidateId: string) => api.scoreBobaCandidate(candidateId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.bobaCandidates }),
+  });
+}
+
+export function useDecideBobaCandidate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      candidateId,
+      decision,
+    }: {
+      candidateId: string;
+      decision: "approve" | "reject";
+    }) => api.decideBobaCandidate(candidateId, decision),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.bobaCandidates }),
+  });
+}
+
+export function useGenerateBobaCreativeBriefs(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.createBobaCreativeBriefs(projectId),
+    onSuccess: (result) => {
+      qc.setQueryData(queryKeys.bobaCreativeBriefs(projectId), result);
+    },
+  });
+}
+
+export function useDecideBobaCreativeBrief(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      clipId,
+      decision,
+    }: {
+      clipId: string;
+      decision: "approve" | "reject";
+    }) => api.decideBobaCreativeBrief(projectId, clipId, decision),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: queryKeys.bobaCreativeBriefs(projectId) }),
   });
 }
 

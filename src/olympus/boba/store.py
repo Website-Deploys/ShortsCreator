@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from olympus.boba.approvals import BobaApprovalEventV1, BobaApprovalTargetType
 from olympus.boba.contracts import (
     BobaBrainStateV1,
     BobaClipRankingV1,
@@ -22,6 +23,7 @@ from olympus.boba.contracts import (
     BobaLearningNoteV1,
     BobaObservationV1,
 )
+from olympus.boba.creative_director import BobaCreativeBriefV1
 from olympus.boba.memory import sanitize_memory_payload
 from olympus.boba.memory_contracts import (
     BobaCreatorMemoryV1,
@@ -34,6 +36,7 @@ from olympus.boba.memory_contracts import (
     memory_now_iso,
 )
 from olympus.boba.memory_validation import validate_memory_export, validate_memory_record
+from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
 from olympus.platform.errors import ValidationError
 
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -211,6 +214,106 @@ class BobaMemoryStore:
         values = self._read(self._path(project_id, "editorial_policies.json"), {})
         raw = values.get(clip_id) if isinstance(values, dict) else None
         return BobaEditorialPolicyV1.model_validate(raw) if isinstance(raw, dict) else None
+
+    def _scout_path(self, filename: str) -> Path:
+        path = (self.root / "scout" / filename).resolve()
+        if self.root not in path.parents:
+            raise ValidationError("Invalid BOBA Scout storage path.")
+        return path
+
+    def save_scout_candidate(self, candidate: BobaCandidateV1) -> None:
+        self._validate_memory_id(candidate.candidate_id, field="candidate_id")
+        with self._lock:
+            path = self._scout_path("candidates.json")
+            values = self._read(path, {})
+            if not isinstance(values, dict):
+                raise ValidationError("BOBA Scout candidate storage is corrupt.")
+            values[candidate.candidate_id] = candidate.model_dump(mode="json")
+            self._write(path, values)
+
+    def load_scout_candidate(self, candidate_id: str) -> BobaCandidateV1 | None:
+        self._validate_memory_id(candidate_id, field="candidate_id")
+        values = self._read(self._scout_path("candidates.json"), {})
+        raw = values.get(candidate_id) if isinstance(values, dict) else None
+        return BobaCandidateV1.model_validate(raw) if isinstance(raw, dict) else None
+
+    def list_scout_candidates(self) -> list[BobaCandidateV1]:
+        values = self._read(self._scout_path("candidates.json"), {})
+        if not isinstance(values, dict):
+            return []
+        candidates = [
+            BobaCandidateV1.model_validate(value)
+            for value in values.values()
+            if isinstance(value, dict)
+        ]
+        return sorted(candidates, key=lambda item: item.created_at, reverse=True)
+
+    def save_scout_score(self, score: BobaScoutScoreV1) -> None:
+        self._validate_memory_id(score.candidate_id, field="candidate_id")
+        with self._lock:
+            path = self._scout_path("scores.json")
+            values = self._read(path, {})
+            if not isinstance(values, dict):
+                raise ValidationError("BOBA Scout score storage is corrupt.")
+            values[score.candidate_id] = score.model_dump(mode="json")
+            self._write(path, values)
+
+    def load_scout_score(self, candidate_id: str) -> BobaScoutScoreV1 | None:
+        self._validate_memory_id(candidate_id, field="candidate_id")
+        values = self._read(self._scout_path("scores.json"), {})
+        raw = values.get(candidate_id) if isinstance(values, dict) else None
+        return BobaScoutScoreV1.model_validate(raw) if isinstance(raw, dict) else None
+
+    def append_approval_event(self, event: BobaApprovalEventV1) -> None:
+        self._validate_memory_id(event.event_id, field="event_id")
+        self._validate_memory_id(event.target_id, field="target_id")
+        with self._lock:
+            path = self._scout_path("approval_events.json")
+            values = self._read(path, [])
+            if not isinstance(values, list):
+                raise ValidationError("BOBA approval event storage is corrupt.")
+            values.append(event.model_dump(mode="json"))
+            self._write(path, values[-5000:])
+
+    def list_approval_events(
+        self,
+        *,
+        target_type: BobaApprovalTargetType | None = None,
+        target_id: str | None = None,
+    ) -> list[BobaApprovalEventV1]:
+        values = self._read(self._scout_path("approval_events.json"), [])
+        if not isinstance(values, list):
+            return []
+        events = [
+            BobaApprovalEventV1.model_validate(value)
+            for value in values
+            if isinstance(value, dict)
+        ]
+        if target_type:
+            events = [item for item in events if item.target_type == target_type]
+        if target_id:
+            events = [item for item in events if item.target_id == target_id]
+        return sorted(events, key=lambda item: item.created_at, reverse=True)
+
+    def save_creative_brief(self, brief: BobaCreativeBriefV1) -> None:
+        self._validate_memory_id(brief.clip_id, field="clip_id")
+        with self._lock:
+            path = self._path(brief.project_id, "creative_briefs.json")
+            values = self._read(path, {})
+            if not isinstance(values, dict):
+                raise ValidationError("BOBA creative brief storage is corrupt.")
+            values[brief.clip_id] = brief.model_dump(mode="json")
+            self._write(path, values)
+
+    def list_creative_briefs(self, project_id: str) -> list[BobaCreativeBriefV1]:
+        values = self._read(self._path(project_id, "creative_briefs.json"), {})
+        if not isinstance(values, dict):
+            return []
+        return [
+            BobaCreativeBriefV1.model_validate(value)
+            for value in values.values()
+            if isinstance(value, dict)
+        ]
 
     @staticmethod
     def _validate_memory_id(value: str, *, field: str) -> str:
