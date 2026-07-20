@@ -202,4 +202,16 @@ describe("V2 output flow UI contracts", () => {
       "not proof that any edit or render effect was applied",
     );
   });
+
+  it("shows evidence-bound BOBA explanations and uncertainty", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Explanation Engine");
+    expect(resultsSection).toContain("Create explanations");
+    expect(resultsSection).toContain("Top recommendation:");
+    expect(resultsSection).toContain("Evidence and source fields");
+    expect(resultsSection).toContain("Uncertainty, fallbacks, and human review");
+    expect(resultsSection).toContain("saved metadata only");
+    expect(resultsSection).toContain("no rendered proof or audience-performance prediction");
+  });
 });
