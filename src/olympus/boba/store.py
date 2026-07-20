@@ -15,6 +15,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from olympus.boba.approvals import BobaApprovalEventV1, BobaApprovalTargetType
+from olympus.boba.clip_discovery import BobaCandidateClipDiscoveryV1
 from olympus.boba.contracts import (
     BobaBrainStateV1,
     BobaClipRankingV1,
@@ -335,6 +336,29 @@ class BobaMemoryStore:
         raw = self._read(self.whole_video_understanding_path(project_id), None)
         return (
             BobaWholeVideoUnderstandingV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def candidate_clip_discovery_path(self, project_id: str) -> Path:
+        return self._path(project_id, "candidate_clip_discovery/index.json")
+
+    def save_candidate_clip_discovery(
+        self, discovery: BobaCandidateClipDiscoveryV1
+    ) -> BobaCandidateClipDiscoveryV1:
+        with self._lock:
+            self._write(
+                self.candidate_clip_discovery_path(discovery.project_id),
+                discovery.model_dump(mode="json"),
+            )
+        return discovery
+
+    def load_candidate_clip_discovery(
+        self, project_id: str
+    ) -> BobaCandidateClipDiscoveryV1 | None:
+        raw = self._read(self.candidate_clip_discovery_path(project_id), None)
+        return (
+            BobaCandidateClipDiscoveryV1.model_validate(raw)
             if isinstance(raw, dict)
             else None
         )

@@ -8,6 +8,7 @@ import { mediaUrls } from "@/lib/apiClient";
 import {
   useActivateCreatorProfile,
   useBobaBrain,
+  useBobaCandidateClipDiscovery,
   useBobaCandidates,
   useBobaCreatorMemory,
   useBobaCreativeBriefs,
@@ -18,6 +19,7 @@ import {
   useExportCreatorProfile,
   useDecideBobaCandidate,
   useDecideBobaCreativeBrief,
+  useDiscoverBobaCandidateClips,
   useGenerateBobaCreativeBriefs,
   useGenerateBobaWholeVideoUnderstanding,
   usePlans,
@@ -31,6 +33,7 @@ import { formatBytes, formatDuration, isTerminal } from "@/lib/rendering";
 import type {
   ClipFeedbackInput,
   BobaBrainStateV1,
+  BobaCandidateClipDiscoveryV1,
   BobaCreatorMemoryV1,
   BobaProjectMemoryV1,
   BobaWholeVideoUnderstandingV1,
@@ -1147,6 +1150,82 @@ function BobaWholeVideoPanel({
   );
 }
 
+function BobaCandidateDiscoveryPanel({
+  discovery,
+  discovering,
+  onDiscover,
+}: {
+  discovery: BobaCandidateClipDiscoveryV1 | null | undefined;
+  discovering: boolean;
+  onDiscover: () => void;
+}) {
+  return (
+    <section className="rounded-xl border border-violet-300/20 bg-violet-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Candidate Clip Discovery</p>
+          <p className="text-xs text-muted">
+            Advisory local windows only; discovery does not rank, plan, edit, or render clips.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={discovering}
+          onClick={onDiscover}
+          className="rounded border border-violet-200/30 px-2 py-1 text-[11px] text-violet-100 hover:border-violet-100 disabled:opacity-50"
+        >
+          {discovering ? "Discovering..." : discovery ? "Refresh candidates" : "Discover candidates"}
+        </button>
+      </div>
+      {discovery ? (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <p>
+            {discovery.candidates.length} candidate(s) - {discovery.diversity_summary.topic_count} topic(s) - {discovery.rejected_windows.length} rejected window(s)
+          </p>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {discovery.candidates.slice(0, 10).map((candidate) => (
+              <article key={candidate.candidate_id} className="rounded border border-white/10 p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-white">{candidate.suggested_title}</p>
+                    <p>
+                      {formatDuration(candidate.start_seconds)}-{formatDuration(candidate.end_seconds)} ({formatDuration(candidate.duration_seconds)})
+                    </p>
+                  </div>
+                  <span className="rounded bg-violet-300/10 px-2 py-1 text-violet-100">
+                    {formatPercent(candidate.confidence)} confidence
+                  </span>
+                </div>
+                <p className="mt-2">Hook: {candidate.hook_idea}</p>
+                <p>Story angle: {candidate.story_angle}</p>
+                <p>
+                  Standalone {formatPercent(candidate.standalone_score)} - Setup {candidate.setup_required ? "needed" : "not flagged"} - Payoff {candidate.payoff_present ? "present" : "not confirmed"}
+                </p>
+                <p>Why discovered: {candidate.discovery_reason}</p>
+                {candidate.warnings.length > 0 && (
+                  <p className="mt-1 text-amber-100">Warning: {candidate.warnings.slice(0, 2).join("; ")}</p>
+                )}
+              </article>
+            ))}
+          </div>
+          <p>
+            Signals unavailable: {discovery.signal_usage.unavailable_signals.join(", ") || "None reported"}
+          </p>
+          {(discovery.warnings.length > 0 || discovery.diversity_summary.warnings.length > 0) && (
+            <p className="text-amber-100">
+              Warning: {[...discovery.warnings, ...discovery.diversity_summary.warnings].slice(0, 3).join("; ")}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          No saved discovery artifact. Run discovery after timed transcript or analysis signals exist.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function BobaMemoryPanel({
   projectMemory,
   creatorMemory,
@@ -2038,6 +2117,8 @@ export function ResultsSection({
   const bobaQuery = useBobaBrain(projectId);
   const wholeVideoQuery = useBobaWholeVideoUnderstanding(projectId);
   const generateWholeVideo = useGenerateBobaWholeVideoUnderstanding(projectId);
+  const candidateDiscoveryQuery = useBobaCandidateClipDiscovery(projectId);
+  const discoverCandidates = useDiscoverBobaCandidateClips(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -2058,6 +2139,13 @@ export function ResultsSection({
       onBuild={() => generateWholeVideo.mutate()}
     />
   );
+  const candidateDiscoveryPanel = (
+    <BobaCandidateDiscoveryPanel
+      discovery={candidateDiscoveryQuery.data}
+      discovering={discoverCandidates.isPending}
+      onDiscover={() => discoverCandidates.mutate()}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -2066,6 +2154,7 @@ export function ResultsSection({
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
         {wholeVideoPanel}
+        {candidateDiscoveryPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -2087,6 +2176,7 @@ export function ResultsSection({
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
         {wholeVideoPanel}
+        {candidateDiscoveryPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2104,6 +2194,7 @@ export function ResultsSection({
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
         {wholeVideoPanel}
+        {candidateDiscoveryPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2121,6 +2212,7 @@ export function ResultsSection({
       <PersonalizationPanel />
       <BobaBrainPanel brain={bobaQuery.data} />
       {wholeVideoPanel}
+      {candidateDiscoveryPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState

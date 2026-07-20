@@ -69,6 +69,7 @@ import type {
   AlertsResponse,
   AuditResponse,
   BobaBrainStateV1,
+  BobaCandidateClipDiscoveryV1,
   BobaCandidateV1,
   BobaCandidatesResponse,
   BobaCreativeBriefsResponse,
@@ -193,6 +194,15 @@ export const api = {
   createBobaWholeVideoUnderstanding: (projectId: string) =>
     request<BobaWholeVideoUnderstandingV1>(
       `/boba/projects/${projectId}/whole-video-understanding`,
+      { method: "POST" },
+    ),
+  getBobaCandidateClipDiscovery: (projectId: string) =>
+    request<BobaCandidateClipDiscoveryV1>(
+      `/boba/projects/${projectId}/candidate-clips`,
+    ),
+  discoverBobaCandidateClips: (projectId: string) =>
+    request<BobaCandidateClipDiscoveryV1>(
+      `/boba/projects/${projectId}/candidate-clips/discover`,
       { method: "POST" },
     ),
   decideBobaCreativeBrief: (

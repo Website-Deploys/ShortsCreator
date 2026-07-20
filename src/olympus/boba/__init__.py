@@ -5,6 +5,16 @@ from olympus.boba.approvals import (
     BobaApprovalService,
 )
 from olympus.boba.brain import BobaBrain
+from olympus.boba.clip_discovery import (
+    BobaBoundarySuggestionV1,
+    BobaCandidateClipDiscoveryEngine,
+    BobaCandidateClipDiscoveryV1,
+    BobaCandidateClipV1,
+    BobaCandidateDiscoverySignalUsageV1,
+    BobaCandidateDiversitySummaryV1,
+    BobaCandidateEvidenceV1,
+    BobaRejectedWindowV1,
+)
 from olympus.boba.constitution import get_boba_constitution
 from olympus.boba.contracts import (
     BOBA_VERSION,
@@ -55,8 +65,15 @@ __all__ = [
     "BOBA_VERSION",
     "BobaApprovalEventV1",
     "BobaApprovalService",
+    "BobaBoundarySuggestionV1",
     "BobaBrain",
     "BobaBrainStateV1",
+    "BobaCandidateClipDiscoveryEngine",
+    "BobaCandidateClipDiscoveryV1",
+    "BobaCandidateClipV1",
+    "BobaCandidateDiscoverySignalUsageV1",
+    "BobaCandidateDiversitySummaryV1",
+    "BobaCandidateEvidenceV1",
     "BobaCandidateInsightV1",
     "BobaCandidateV1",
     "BobaClipRankingV1",
@@ -78,6 +95,7 @@ __all__ = [
     "BobaMemoryStore",
     "BobaObservationV1",
     "BobaProjectMemoryV1",
+    "BobaRejectedWindowV1",
     "BobaScout",
     "BobaScoutScoreV1",
     "BobaSectionScoreV1",

@@ -242,6 +242,35 @@ async def get_whole_video_understanding(
     return understanding.model_dump(mode="json")
 
 
+@router.post("/projects/{project_id}/candidate-clips/discover")
+async def discover_candidate_clips(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    discovery = await boba.discover_candidate_clips(project_id)
+    return discovery.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/candidate-clips")
+async def get_candidate_clips(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    discovery = boba.store.load_candidate_clip_discovery(project_id)
+    if discovery is None:
+        raise NotFoundError(
+            "BOBA candidate clip discovery is not available.",
+            details={"project_id": project_id},
+        )
+    return discovery.model_dump(mode="json")
+
+
 def _brief_decision(
     project_id: str,
     clip_id: str,

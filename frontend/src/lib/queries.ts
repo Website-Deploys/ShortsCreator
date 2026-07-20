@@ -48,6 +48,7 @@ import type {
   AlertsResponse,
   AuditResponse,
   BobaBrainStateV1,
+  BobaCandidateClipDiscoveryV1,
   BobaCandidatesResponse,
   BobaCreativeBriefsResponse,
   BobaCreatorMemoryV1,
@@ -75,6 +76,8 @@ export const queryKeys = {
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
     ["boba", "projects", id, "whole-video-understanding"] as const,
+  bobaCandidateClipDiscovery: (id: string) =>
+    ["boba", "projects", id, "candidate-clips"] as const,
   creatorProfiles: ["personalization", "profiles"] as const,
   creatorPersonalizationSummary: ["personalization", "summary"] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
@@ -230,6 +233,31 @@ export function useGenerateBobaWholeVideoUnderstanding(projectId: string) {
     mutationFn: () => api.createBobaWholeVideoUnderstanding(projectId),
     onSuccess: (result) => {
       qc.setQueryData(queryKeys.bobaWholeVideoUnderstanding(projectId), result);
+    },
+  });
+}
+
+export function useBobaCandidateClipDiscovery(projectId: string) {
+  return useQuery<BobaCandidateClipDiscoveryV1 | null>({
+    queryKey: queryKeys.bobaCandidateClipDiscovery(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaCandidateClipDiscovery(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useDiscoverBobaCandidateClips(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.discoverBobaCandidateClips(projectId),
+    onSuccess: (result) => {
+      qc.setQueryData(queryKeys.bobaCandidateClipDiscovery(projectId), result);
     },
   });
 }

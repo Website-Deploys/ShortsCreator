@@ -163,4 +163,15 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).toContain("Signal limitations");
     expect(resultsSection).toContain("no cloud AI or audience-performance proof");
   });
+
+  it("shows advisory BOBA candidate discovery without rendering claims", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Candidate Clip Discovery");
+    expect(resultsSection).toContain("Discover candidates");
+    expect(resultsSection).toContain("Why discovered:");
+    expect(resultsSection).toContain("Standalone");
+    expect(resultsSection).toContain("Payoff");
+    expect(resultsSection).toContain("does not rank, plan, edit, or render clips");
+  });
 });

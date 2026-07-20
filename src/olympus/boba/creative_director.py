@@ -97,7 +97,11 @@ class BobaCreativeDirector:
 
     @staticmethod
     def _candidate_inputs(signals: dict[str, Any]) -> list[dict[str, Any]]:
-        for key in ("selected_plans", "planning_candidates"):
+        for key in (
+            "selected_plans",
+            "planning_candidates",
+            "discovered_candidate_clips",
+        ):
             values = [_dict(item) for item in _list(signals.get(key)) if _dict(item)]
             if values:
                 return values
@@ -133,8 +137,10 @@ class BobaCreativeDirector:
         if timeline:
             editing = {**editing, **timeline}
         analysis = _dict(signals.get("analysis_signals_v2"))
-        start = _number(plan.get("start") or plan.get("source_start"))
-        end = _number(plan.get("end") or plan.get("source_end"))
+        start = _number(
+            plan.get("start") or plan.get("source_start") or plan.get("start_seconds")
+        )
+        end = _number(plan.get("end") or plan.get("source_end") or plan.get("end_seconds"))
         duration = max(0.0, end - start)
         if not duration:
             duration = _number(
