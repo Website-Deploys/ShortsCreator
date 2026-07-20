@@ -74,6 +74,7 @@ import type {
   BobaCandidatesResponse,
   BobaClipRankingV1,
   BobaCreativeBriefsResponse,
+  BobaCreativeDirectionSetV2,
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
@@ -229,6 +230,15 @@ export const api = {
     request<BobaExplanationSetV1>(`/boba/projects/${projectId}/explanations`, {
       method: "POST",
     }),
+  getBobaCreativeDirectionV2: (projectId: string) =>
+    request<BobaCreativeDirectionSetV2>(
+      `/boba/projects/${projectId}/creative-direction-v2`,
+    ),
+  createBobaCreativeDirectionV2: (projectId: string) =>
+    request<BobaCreativeDirectionSetV2>(
+      `/boba/projects/${projectId}/creative-direction-v2`,
+      { method: "POST" },
+    ),
   decideBobaCreativeBrief: (
     projectId: string,
     clipId: string,

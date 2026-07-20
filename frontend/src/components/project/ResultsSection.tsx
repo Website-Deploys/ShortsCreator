@@ -11,6 +11,7 @@ import {
   useBobaCandidateClipDiscovery,
   useBobaCandidates,
   useBobaClipRanking,
+  useBobaCreativeDirectionV2,
   useBobaCreatorMemory,
   useBobaCreativeBriefs,
   useBobaEditorialDecisions,
@@ -19,6 +20,7 @@ import {
   useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
   useCreateBobaEditorialDecisions,
+  useCreateBobaCreativeDirectionV2,
   useCreateBobaExplanations,
   useCreatorProfiles,
   useExportCreatorProfile,
@@ -41,6 +43,7 @@ import type {
   BobaBrainStateV1,
   BobaCandidateClipDiscoveryV1,
   BobaClipRankingV1,
+  BobaCreativeDirectionSetV2,
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
@@ -1641,6 +1644,181 @@ function BobaExplanationPanel({
   );
 }
 
+function BobaCreativeDirectionV2Panel({
+  direction,
+  directing,
+  canDirect,
+  onDirect,
+}: {
+  direction: BobaCreativeDirectionSetV2 | null | undefined;
+  directing: boolean;
+  canDirect: boolean;
+  onDirect: () => void;
+}) {
+  return (
+    <section className="rounded-xl border border-violet-300/20 bg-violet-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Creative Director V2</p>
+          <p className="text-xs text-muted">
+            Senior-editor guidance from saved BOBA decisions. Advisory only; it does not edit or render media.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={!canDirect || directing}
+          onClick={onDirect}
+          className="rounded border border-violet-200/30 px-2 py-1 text-[11px] text-violet-100 hover:border-violet-100 disabled:opacity-50"
+        >
+          {directing
+            ? "Creating…"
+            : direction
+              ? "Refresh creative direction"
+              : "Create creative direction"}
+        </button>
+      </div>
+
+      {direction ? (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <div className="rounded border border-white/10 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="font-semibold text-white">
+                  {direction.project_direction.overall_style}
+                </p>
+                <p className="mt-1">Tone: {direction.project_direction.tone}</p>
+              </div>
+              <span className="rounded bg-white/5 px-2 py-1 text-[11px] text-white">
+                {Math.round(direction.creative_quality_summary.overall_confidence)}/100 confidence
+              </span>
+            </div>
+            <p className="mt-2">
+              Target feeling: {direction.project_direction.target_viewer_feeling}
+            </p>
+            <details className="mt-2 rounded border border-white/10 p-2">
+              <summary className="cursor-pointer font-semibold text-white">
+                Project creative philosophy
+              </summary>
+              <div className="mt-2 space-y-1">
+                <p>Pacing: {direction.project_direction.pacing_philosophy}</p>
+                <p>Captions: {direction.project_direction.caption_philosophy}</p>
+                <p>Motion: {direction.project_direction.motion_philosophy}</p>
+                <p>Audio: {direction.project_direction.audio_philosophy}</p>
+                <p>
+                  Human review: {direction.project_direction.human_review_notes.join("; ") || "Not available"}
+                </p>
+              </div>
+            </details>
+          </div>
+
+          {direction.clip_directions.map((clip) => (
+            <article
+              key={clip.candidate_id}
+              className="rounded border border-white/10 p-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-white">{clip.candidate_id}</p>
+                  <p>
+                    {clip.render_readiness.replace(/_/g, " ")} · {formatPercent(clip.confidence)} evidence confidence
+                  </p>
+                </div>
+                <span className="rounded bg-white/5 px-2 py-1 text-[11px] text-white">
+                  {Math.round(clip.creative_quality_score.overall_confidence)}/100 creative quality
+                </span>
+              </div>
+              <p className="mt-2">Angle: {clip.final_clip_angle}</p>
+              <p className="mt-1">
+                Hook: {clip.hook_treatment.hook_type.replace(/_/g, " ")} · {clip.hook_treatment.opening_line_direction}
+              </p>
+              <div className="mt-2 rounded border border-violet-200/10 bg-violet-200/[0.03] p-2">
+                <p className="font-semibold text-violet-100">Opening three seconds</p>
+                <p className="mt-1">Visual: {clip.opening_three_second_plan.what_viewer_sees_first}</p>
+                <p>Caption: {clip.opening_three_second_plan.caption_implication}</p>
+                <p>Curiosity: {clip.opening_three_second_plan.curiosity_gap}</p>
+                <p>Motion: {clip.opening_three_second_plan.motion_choice}</p>
+              </div>
+
+              <details className="mt-2 rounded border border-white/10 p-2">
+                <summary className="cursor-pointer font-semibold text-white">
+                  Pacing, captions, and motion
+                </summary>
+                <div className="mt-2 space-y-1">
+                  <p>0–3s: {clip.pacing_map.first_3_seconds}</p>
+                  <p>3–10s: {clip.pacing_map.seconds_3_to_10}</p>
+                  <p>Middle: {clip.pacing_map.middle_section}</p>
+                  <p>Payoff: {clip.pacing_map.payoff_section}</p>
+                  <p>Ending: {clip.pacing_map.ending}</p>
+                  <p>
+                    Caption style: {clip.caption_direction.style.replace(/_/g, " ")} · Emphasis: {clip.caption_direction.emphasis_words.join(", ") || "Not available"}
+                  </p>
+                  <p>Caption rhythm: {clip.caption_direction.rhythm}</p>
+                  <p>
+                    Motion: {clip.motion_direction.style.replace(/_/g, " ")} · Stable moments: {clip.motion_direction.stable_moments.join("; ")}
+                  </p>
+                  {clip.motion_direction.safety_warnings.length > 0 && (
+                    <p className="text-amber-100">
+                      Motion safety: {clip.motion_direction.safety_warnings.join("; ")}
+                    </p>
+                  )}
+                </div>
+              </details>
+
+              <details className="mt-2 rounded border border-white/10 p-2">
+                <summary className="cursor-pointer font-semibold text-white">
+                  Audio, retention, and emotional arc
+                </summary>
+                <div className="mt-2 space-y-1">
+                  <p>
+                    Music mood: {clip.audio_direction.music_mood.replace(/_/g, " ")} (metadata only; no track selected)
+                  </p>
+                  <p>SFX intensity: {clip.audio_direction.sfx_intensity}</p>
+                  <p>Ducking: {clip.audio_direction.ducking_guidance}</p>
+                  <p>Speech: {clip.audio_direction.speech_clarity_notes}</p>
+                  <p>Retention opening: {clip.retention_plan.opening_hook}</p>
+                  <p>Mid-clip hold: {clip.retention_plan.mid_clip_hold}</p>
+                  <p>Payoff: {clip.retention_plan.payoff_delivery}</p>
+                  <p>Replay trigger: {clip.retention_plan.replay_trigger}</p>
+                  <p>
+                    Emotional arc: {clip.emotional_arc.starting_emotion} → {clip.emotional_arc.build_emotion} → {clip.emotional_arc.payoff_emotion}
+                  </p>
+                </div>
+              </details>
+
+              {(clip.risk_fixes.length > 0 || clip.warnings.length > 0) && (
+                <p className="mt-2 text-amber-100">
+                  Review: {[...clip.risk_fixes, ...clip.warnings].slice(0, 8).join("; ")}
+                </p>
+              )}
+            </article>
+          ))}
+
+          <details className="rounded border border-white/10 p-3">
+            <summary className="cursor-pointer font-semibold text-white">
+              Signal usage and limitations
+            </summary>
+            <div className="mt-2 space-y-1">
+              <p>
+                Fallback used: {direction.signal_usage.fallback_used ? "Yes" : "No"} · Missing: {direction.signal_usage.unavailable_signals.join(", ") || "None reported"}
+              </p>
+              <p>
+                Warnings: {[...direction.warnings, ...direction.signal_usage.warnings].join("; ") || "None reported"}
+              </p>
+              <p>Limitations: {direction.limitations.join("; ")}</p>
+            </div>
+          </details>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          {canDirect
+            ? "No saved V2 creative direction. Create it from the saved editorial decisions."
+            : "Create editorial decisions before generating V2 creative direction."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function BobaMemoryPanel({
   projectMemory,
   creatorMemory,
@@ -2540,6 +2718,8 @@ export function ResultsSection({
   const createEditorialDecisions = useCreateBobaEditorialDecisions(projectId);
   const explanationsQuery = useBobaExplanations(projectId);
   const createExplanations = useCreateBobaExplanations(projectId);
+  const creativeDirectionV2Query = useBobaCreativeDirectionV2(projectId);
+  const createCreativeDirectionV2 = useCreateBobaCreativeDirectionV2(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -2596,6 +2776,14 @@ export function ResultsSection({
       onExplain={() => createExplanations.mutate()}
     />
   );
+  const creativeDirectionV2Panel = (
+    <BobaCreativeDirectionV2Panel
+      direction={creativeDirectionV2Query.data}
+      directing={createCreativeDirectionV2.isPending}
+      canDirect={Boolean(editorialDecisionsQuery.data)}
+      onDirect={() => createCreativeDirectionV2.mutate()}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -2608,6 +2796,7 @@ export function ResultsSection({
         {clipRankingPanel}
         {editorialDecisionPanel}
         {explanationPanel}
+        {creativeDirectionV2Panel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -2633,6 +2822,7 @@ export function ResultsSection({
         {clipRankingPanel}
         {editorialDecisionPanel}
         {explanationPanel}
+        {creativeDirectionV2Panel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2654,6 +2844,7 @@ export function ResultsSection({
         {clipRankingPanel}
         {editorialDecisionPanel}
         {explanationPanel}
+        {creativeDirectionV2Panel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -2675,6 +2866,7 @@ export function ResultsSection({
       {clipRankingPanel}
       {editorialDecisionPanel}
       {explanationPanel}
+      {creativeDirectionV2Panel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState

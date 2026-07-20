@@ -1664,6 +1664,150 @@ export interface BobaExplanationSetV1 {
   limitations: string[];
 }
 
+export interface BobaOpeningThreeSecondPlanV2 {
+  what_viewer_sees_first: string;
+  caption_implication: string;
+  curiosity_gap: string;
+  motion_choice: string;
+  avoid: string[];
+}
+
+export interface BobaHookTreatmentV2 {
+  hook_type: string;
+  opening_line_direction: string;
+  first_visual_emphasis: string;
+  curiosity_trigger: string;
+  pattern_interrupt: string;
+  reason_it_should_work: string;
+  hook_risk: string;
+}
+
+export interface BobaPacingMapV2 {
+  first_3_seconds: string;
+  seconds_3_to_10: string;
+  middle_section: string;
+  payoff_section: string;
+  ending: string;
+  pacing_intensity: string;
+  filler_cut_notes: string[];
+}
+
+export interface BobaCaptionDirectionV2 {
+  style: string;
+  emphasis_words: string[];
+  rhythm: string;
+  highlight_moments: string[];
+  readability_notes: string[];
+  warnings: string[];
+}
+
+export interface BobaMotionDirectionV2 {
+  style: string;
+  zoom_moments: string[];
+  punch_in_moments: string[];
+  stable_moments: string[];
+  layout_safe_moments: string[];
+  visual_emphasis_moments: string[];
+  safety_warnings: string[];
+}
+
+export interface BobaAudioDirectionV2 {
+  music_mood: string;
+  sfx_intensity: string;
+  ducking_guidance: string;
+  silence_notes: string;
+  speech_clarity_notes: string;
+  warnings: string[];
+}
+
+export interface BobaRetentionPlanV2 {
+  opening_hook: string;
+  curiosity_loop: string;
+  mid_clip_hold: string;
+  payoff_delivery: string;
+  replay_trigger: string;
+  retention_risks: string[];
+}
+
+export interface BobaEmotionalArcV2 {
+  starting_emotion: string;
+  build_emotion: string;
+  payoff_emotion: string;
+  intended_viewer_feeling: string;
+  emotional_risk: string;
+}
+
+export interface BobaCreativeQualityScoreV2 {
+  hook_quality: number;
+  clarity: number;
+  emotional_pull: number;
+  pacing_strength: number;
+  visual_direction_strength: number;
+  caption_strength: number;
+  audio_direction_strength: number;
+  overall_confidence: number;
+}
+
+export interface BobaCreativeDirectorSignalUsageV2 {
+  editorial_decisions_used: boolean;
+  explanations_used: boolean;
+  clip_ranking_used: boolean;
+  candidate_discovery_used: boolean;
+  whole_video_understanding_used: boolean;
+  analysis_signals_used: boolean;
+  memory_used: boolean;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaProjectCreativeDirectionV2 {
+  overall_style: string;
+  tone: string;
+  pacing_philosophy: string;
+  caption_philosophy: string;
+  motion_philosophy: string;
+  audio_philosophy: string;
+  target_viewer_feeling: string;
+  human_review_notes: string[];
+}
+
+export interface BobaClipCreativeDirectionV2 {
+  candidate_id: string;
+  ranked_clip_id: string;
+  project_id: string;
+  selected: boolean;
+  render_readiness: string;
+  final_clip_angle: string;
+  hook_treatment: BobaHookTreatmentV2;
+  opening_three_second_plan: BobaOpeningThreeSecondPlanV2;
+  story_framing: string;
+  pacing_map: BobaPacingMapV2;
+  caption_direction: BobaCaptionDirectionV2;
+  motion_direction: BobaMotionDirectionV2;
+  audio_direction: BobaAudioDirectionV2;
+  retention_plan: BobaRetentionPlanV2;
+  emotional_arc: BobaEmotionalArcV2;
+  creative_quality_score: BobaCreativeQualityScoreV2;
+  risk_fixes: string[];
+  editor_notes: string[];
+  warnings: string[];
+  confidence: number;
+}
+
+export interface BobaCreativeDirectionSetV2 {
+  schema_version: "boba_creative_director_v2";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  project_direction: BobaProjectCreativeDirectionV2;
+  clip_directions: BobaClipCreativeDirectionV2[];
+  creative_quality_summary: BobaCreativeQualityScoreV2;
+  signal_usage: BobaCreativeDirectorSignalUsageV2;
+  warnings: string[];
+  limitations: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;
