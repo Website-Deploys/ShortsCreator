@@ -1242,6 +1242,98 @@ export interface BobaWholeVideoUnderstandingV1 {
   limitations: string[];
 }
 
+export type BobaCandidateClipType =
+  | "hook_moment"
+  | "payoff_moment"
+  | "emotional_beat"
+  | "story_turn"
+  | "high_energy_section"
+  | "explanation_section"
+  | "curiosity_gap"
+  | "motivational_moment"
+  | "funny_moment"
+  | "controversial_moment"
+  | "educational_moment"
+  | "unknown";
+
+export interface BobaCandidateClipDiscoveryV1 {
+  schema_version: "boba_candidate_clip_discovery_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  video_duration_seconds: number;
+  summary: string;
+  candidates: Array<{
+    candidate_id: string;
+    project_id: string;
+    start_seconds: number;
+    end_seconds: number;
+    duration_seconds: number;
+    suggested_title: string;
+    hook_idea: string;
+    story_angle: string;
+    candidate_type: BobaCandidateClipType;
+    discovery_reason: string;
+    confidence: number;
+    standalone_score: number;
+    setup_required: boolean;
+    payoff_present: boolean;
+    context_needed: boolean;
+    source_topic: string;
+    emotion_label: string;
+    virality_cues: string[];
+    boundary_suggestion: {
+      recommended_start_seconds: number;
+      recommended_end_seconds: number;
+      pre_roll_seconds: number;
+      post_roll_seconds: number;
+      abrupt_start_warning: boolean;
+      abrupt_end_warning: boolean;
+      reason: string;
+    };
+    evidence: {
+      transcript_snippets: string[];
+      source_signals: string[];
+      topic_segment_ids: string[];
+      emotional_beat_ids: string[];
+      context_payoff_link_ids: string[];
+      section_score_ids: string[];
+      virality_reasons: string[];
+    };
+    warnings: string[];
+  }>;
+  rejected_windows: Array<{
+    start_seconds: number;
+    end_seconds: number;
+    reason: string;
+    overlap_with_candidate_id: string | null;
+    confidence: number;
+  }>;
+  diversity_summary: {
+    candidate_count: number;
+    topic_count: number;
+    emotion_count: number;
+    candidate_types: BobaCandidateClipType[];
+    duplicate_windows_removed: number;
+    high_overlap_windows_removed: number;
+    warnings: string[];
+  };
+  signal_usage: {
+    whole_video_understanding_used: boolean;
+    transcript_used: boolean;
+    analysis_signals_used: boolean;
+    story_used: boolean;
+    virality_used: boolean;
+    planning_used: boolean;
+    memory_used: boolean;
+    fallback_used: boolean;
+    unavailable_signals: string[];
+    warnings: string[];
+  };
+  warnings: string[];
+  limitations: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

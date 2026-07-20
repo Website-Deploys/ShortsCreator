@@ -7,6 +7,10 @@ from typing import Any
 
 from olympus.boba.approvals import BobaApprovalService
 from olympus.boba.brain import BobaBrain
+from olympus.boba.clip_discovery import (
+    BobaCandidateClipDiscoveryEngine,
+    BobaCandidateClipDiscoveryV1,
+)
 from olympus.boba.contracts import (
     BobaBrainStateV1,
     BobaClipRankingV1,
@@ -74,6 +78,7 @@ class BobaIntegration:
         self.scout = BobaScout(store)
         self.creative_director = BobaCreativeDirector(store)
         self.whole_video = BobaWholeVideoUnderstandingEngine()
+        self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
         self.approvals = BobaApprovalService(store)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
@@ -253,6 +258,11 @@ class BobaIntegration:
             saved_understanding = self.store.load_whole_video_understanding(project_id)
         except ValidationError as exc:
             warnings.append(f"BOBA whole-video artifact is unreadable: {exc}")
+        saved_discovery = None
+        try:
+            saved_discovery = self.store.load_candidate_clip_discovery(project_id)
+        except ValidationError as exc:
+            warnings.append(f"BOBA candidate-discovery artifact is unreadable: {exc}")
         summary_data = _data(story_summary)
         main_topics = [
             str(item.get("title") or item.get("topic") or item.get("summary") or "")
@@ -346,6 +356,17 @@ class BobaIntegration:
                 else {}
             ),
             "whole_video_understanding_available": saved_understanding is not None,
+            "candidate_clip_discovery": (
+                saved_discovery.model_dump(mode="json")
+                if saved_discovery is not None
+                else {}
+            ),
+            "candidate_clip_discovery_available": saved_discovery is not None,
+            "discovered_candidate_clips": (
+                [item.model_dump(mode="json") for item in saved_discovery.candidates]
+                if saved_discovery is not None
+                else []
+            ),
         }
 
     async def collect_clip_signals(self, project_id: str, clip_id: str) -> dict[str, Any]:
@@ -469,6 +490,23 @@ class BobaIntegration:
     ) -> BobaWholeVideoUnderstandingV1:
         signals = await self.collect_project_signals(project_id)
         return self._build_and_save_whole_video(project_id, signals)
+
+    def _build_and_save_candidate_discovery(
+        self, project_id: str, signals: dict[str, Any]
+    ) -> BobaCandidateClipDiscoveryV1:
+        memory = self.store.load_project_memory(project_id) if self.memory_enabled else None
+        discovery = self.candidate_discovery.discover_from_signals(
+            project_id,
+            signals,
+            memory=memory,
+        )
+        return self.store.save_candidate_clip_discovery(discovery)
+
+    async def discover_candidate_clips(
+        self, project_id: str
+    ) -> BobaCandidateClipDiscoveryV1:
+        signals = await self.collect_project_signals(project_id)
+        return self._build_and_save_candidate_discovery(project_id, signals)
 
     async def generate_creative_briefs(
         self, project_id: str
