@@ -114,7 +114,9 @@ POST /api/v1/boba/projects/{project_id}/creative-briefs/{clip_id}/reject
 ```
 
 Brief generation reads persisted Olympus artifacts and writes BOBA JSON only. It never calls the
-renderer.
+renderer directly. The existing Editing completion handoff invokes brief generation before it
+starts Rendering. BOBA failures are logged honestly but do not block the established Olympus render
+handoff.
 
 ## Validator
 

@@ -7,11 +7,14 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from olympus.api import dependencies
 from olympus.api.dependencies import boba_integration_provider
 from olympus.boba import (
     BobaApprovalEventV1,
@@ -25,6 +28,8 @@ from olympus.boba import (
     BobaScoutScoreV1,
 )
 from olympus.data.storage.local import LocalStorage
+from olympus.domain.entities.editing import EditingAnalysis
+from olympus.domain.entities.project import Project
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -350,6 +355,59 @@ def test_clip_idea_approval_stores_creative_preference(tmp_path: Path) -> None:
     )
     assert event.target_type == "clip_idea"
     assert lesson.metadata["creative_preferences"]
+
+
+@pytest.mark.asyncio
+async def test_pre_render_hook_generates_briefs_before_render(monkeypatch: Any) -> None:
+    events: list[str] = []
+
+    class FakeBoba:
+        async def generate_creative_briefs(self, project_id: str) -> list[object]:
+            events.append(f"briefs:{project_id}")
+            return [object()]
+
+    class FakeRenderer:
+        async def start(self, project: Project) -> None:
+            events.append(f"render:{project.id}")
+
+    monkeypatch.setattr(
+        dependencies,
+        "get_settings",
+        lambda: SimpleNamespace(boba=SimpleNamespace(enabled=True)),
+    )
+    monkeypatch.setattr(dependencies, "boba_integration_provider", lambda: FakeBoba())
+    monkeypatch.setattr(dependencies, "rendering_service_provider", lambda: FakeRenderer())
+    project = cast(Project, SimpleNamespace(id="proj_hook"))
+    editing = cast(EditingAnalysis, object())
+    await dependencies._start_rendering_after_boba(project, editing)
+    assert events == ["briefs:proj_hook", "render:proj_hook"]
+
+
+@pytest.mark.asyncio
+async def test_pre_render_hook_does_not_block_render_on_boba_failure(
+    monkeypatch: Any,
+) -> None:
+    rendered: list[str] = []
+
+    class FailingBoba:
+        async def generate_creative_briefs(self, _project_id: str) -> list[object]:
+            raise RuntimeError("synthetic BOBA failure")
+
+    class FakeRenderer:
+        async def start(self, project: Project) -> None:
+            rendered.append(project.id)
+
+    monkeypatch.setattr(
+        dependencies,
+        "get_settings",
+        lambda: SimpleNamespace(boba=SimpleNamespace(enabled=True)),
+    )
+    monkeypatch.setattr(dependencies, "boba_integration_provider", lambda: FailingBoba())
+    monkeypatch.setattr(dependencies, "rendering_service_provider", lambda: FakeRenderer())
+    project = cast(Project, SimpleNamespace(id="proj_fallback"))
+    editing = cast(EditingAnalysis, object())
+    await dependencies._start_rendering_after_boba(project, editing)
+    assert rendered == ["proj_fallback"]
 
 
 def _run_validator(argument: str) -> dict[str, Any]:
