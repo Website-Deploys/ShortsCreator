@@ -362,6 +362,35 @@ async def get_explanations(
     return explanations.model_dump(mode="json")
 
 
+@router.post("/projects/{project_id}/creative-direction-v2")
+async def create_creative_direction_v2(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    direction = await boba.generate_creative_direction_v2(project_id)
+    return direction.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/creative-direction-v2")
+async def get_creative_direction_v2(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    direction = boba.store.load_creative_direction_v2(project_id)
+    if direction is None:
+        raise NotFoundError(
+            "BOBA Creative Director V2 direction is not available.",
+            details={"project_id": project_id},
+        )
+    return direction.model_dump(mode="json")
+
+
 def _brief_decision(
     project_id: str,
     clip_id: str,

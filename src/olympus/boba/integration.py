@@ -24,7 +24,12 @@ from olympus.boba.contracts import (
     BobaEditorialPolicyV1,
     BobaReasoningV1,
 )
-from olympus.boba.creative_director import BobaCreativeBriefV1, BobaCreativeDirector
+from olympus.boba.creative_director import (
+    BobaCreativeBriefV1,
+    BobaCreativeDirectionSetV2,
+    BobaCreativeDirector,
+    BobaCreativeDirectorV2Engine,
+)
 from olympus.boba.decision_bus import BobaDecisionBus
 from olympus.boba.editorial_decision import (
     BobaEditorialDecisionEngine,
@@ -88,6 +93,7 @@ class BobaIntegration:
         self.bus = BobaDecisionBus(store)
         self.scout = BobaScout(store)
         self.creative_director = BobaCreativeDirector(store)
+        self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.whole_video = BobaWholeVideoUnderstandingEngine()
         self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
         self.clip_ranking = BobaClipRankingEngine()
@@ -292,6 +298,13 @@ class BobaIntegration:
             saved_explanations = self.store.load_explanations(project_id)
         except ValidationError as exc:
             warnings.append(f"BOBA explanation artifact is unreadable: {exc}")
+        saved_creative_direction_v2 = None
+        try:
+            saved_creative_direction_v2 = self.store.load_creative_direction_v2(
+                project_id
+            )
+        except ValidationError as exc:
+            warnings.append(f"BOBA Creative Director V2 artifact is unreadable: {exc}")
         discovery_by_id = {
             item.candidate_id: item
             for item in (saved_discovery.candidates if saved_discovery is not None else [])
@@ -449,6 +462,12 @@ class BobaIntegration:
                 else {}
             ),
             "explanations_available": saved_explanations is not None,
+            "creative_direction_v2": (
+                saved_creative_direction_v2.model_dump(mode="json")
+                if saved_creative_direction_v2 is not None
+                else {}
+            ),
+            "creative_direction_v2_available": saved_creative_direction_v2 is not None,
         }
 
     async def collect_clip_signals(self, project_id: str, clip_id: str) -> dict[str, Any]:
@@ -661,6 +680,28 @@ class BobaIntegration:
             memory=memory,
         )
         return self.store.save_explanations(explanations)
+
+    async def generate_creative_direction_v2(
+        self, project_id: str
+    ) -> BobaCreativeDirectionSetV2:
+        signals = await self.collect_project_signals(project_id)
+        decisions = self.store.load_editorial_decisions(project_id)
+        ranking = self.store.load_clip_ranking(project_id)
+        discovery = self.store.load_candidate_clip_discovery(project_id)
+        understanding = self.store.load_whole_video_understanding(project_id)
+        explanations = self.store.load_explanations(project_id)
+        memory = self.store.load_project_memory(project_id) if self.memory_enabled else None
+        direction = self.creative_director_v2.direct_from_signals(
+            project_id,
+            signals,
+            editorial_decisions=decisions,
+            clip_ranking=ranking,
+            candidate_discovery=discovery,
+            whole_video_understanding=understanding,
+            explanations=explanations,
+            memory=memory,
+        )
+        return self.store.save_creative_direction_v2(direction)
 
     async def generate_creative_briefs(
         self, project_id: str

@@ -27,7 +27,10 @@ from olympus.boba.contracts import (
     BobaLearningNoteV1,
     BobaObservationV1,
 )
-from olympus.boba.creative_director import BobaCreativeBriefV1
+from olympus.boba.creative_director import (
+    BobaCreativeBriefV1,
+    BobaCreativeDirectionSetV2,
+)
 from olympus.boba.editorial_decision import BobaEditorialDecisionSetV1
 from olympus.boba.explanation import BobaExplanationSetV1
 from olympus.boba.memory import sanitize_memory_payload
@@ -432,6 +435,30 @@ class BobaMemoryStore:
     def load_explanations(self, project_id: str) -> BobaExplanationSetV1 | None:
         raw = self._read(self.explanation_path(project_id), None)
         return BobaExplanationSetV1.model_validate(raw) if isinstance(raw, dict) else None
+
+    def creative_direction_v2_path(self, project_id: str) -> Path:
+        return self._path(project_id, "creative_direction_v2/index.json")
+
+    def save_creative_direction_v2(
+        self, direction: BobaCreativeDirectionSetV2
+    ) -> BobaCreativeDirectionSetV2:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                direction.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            )
+            self._atomic_write(self.creative_direction_v2_path(direction.project_id), safe)
+        return direction
+
+    def load_creative_direction_v2(
+        self, project_id: str
+    ) -> BobaCreativeDirectionSetV2 | None:
+        raw = self._read(self.creative_direction_v2_path(project_id), None)
+        return (
+            BobaCreativeDirectionSetV2.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
 
     @staticmethod
     def _validate_memory_id(value: str, *, field: str) -> str:
