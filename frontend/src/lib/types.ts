@@ -1124,6 +1124,8 @@ export interface BobaCreativeBriefV1 {
   editing_notes: string[];
   risk_warnings: string[];
   why_it_may_work: string;
+  whole_video_understanding_used: boolean;
+  understanding_guidance: string[];
 }
 
 export interface BobaCreativeBriefsResponse {
@@ -1131,6 +1133,113 @@ export interface BobaCreativeBriefsResponse {
   count: number;
   briefs: BobaCreativeBriefV1[];
   rendering_triggered?: false;
+}
+
+export interface BobaWholeVideoStoryBeatV1 {
+  start_seconds: number;
+  end_seconds: number;
+  summary: string;
+  confidence: number;
+  source_signals: string[];
+}
+
+export interface BobaWholeVideoUnderstandingV1 {
+  schema_version: "boba_whole_video_understanding_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  video_duration_seconds: number;
+  overall_summary: string;
+  video_type: string;
+  primary_topic: string;
+  secondary_topics: string[];
+  creator_intent: string;
+  audience_value: string;
+  tone: string;
+  topic_timeline: Array<{
+    segment_id: string;
+    start_seconds: number;
+    end_seconds: number;
+    topic: string;
+    summary: string;
+    confidence: number;
+    supporting_evidence: string[];
+    source_signals: string[];
+  }>;
+  story_arc: {
+    setup: BobaWholeVideoStoryBeatV1[];
+    context: BobaWholeVideoStoryBeatV1[];
+    build_up: BobaWholeVideoStoryBeatV1[];
+    key_moments: BobaWholeVideoStoryBeatV1[];
+    payoff: BobaWholeVideoStoryBeatV1[];
+    conclusion: BobaWholeVideoStoryBeatV1[];
+    unresolved_threads: string[];
+    confidence: number;
+  };
+  emotional_beats: Array<{
+    beat_id: string;
+    start_seconds: number;
+    end_seconds: number;
+    emotion_label: string;
+    intensity: number;
+    reason: string;
+    confidence: number;
+    source_signals: string[];
+  }>;
+  context_payoff_map: Array<{
+    link_id: string;
+    context_start_seconds: number;
+    context_end_seconds: number;
+    payoff_start_seconds: number;
+    payoff_end_seconds: number;
+    description: string;
+    standalone_clip_possible: boolean;
+    setup_required: boolean;
+    confidence: number;
+  }>;
+  section_scores: Array<{
+    section_id: string;
+    start_seconds: number;
+    end_seconds: number;
+    importance_score: number;
+    clarity_score: number;
+    energy_score: number;
+    novelty_score: number;
+    shortability_score: number;
+    filler_score: number;
+    repetition_score: number;
+    reasons: string[];
+    warnings: string[];
+  }>;
+  shortability_hints: Array<{
+    hint_id: string;
+    start_seconds: number;
+    end_seconds: number;
+    suggested_clip_type:
+      | "candidate_for_short"
+      | "needs_more_context"
+      | "avoid_as_standalone"
+      | "possible_hook"
+      | "payoff_clip";
+    hook_potential: number;
+    setup_needed: boolean;
+    payoff_strength: number;
+    recommended_action: "consider" | "include_setup" | "avoid" | "review";
+    reason: string;
+  }>;
+  signal_usage: {
+    transcript_used: boolean;
+    analysis_signals_used: boolean;
+    story_used: boolean;
+    virality_used: boolean;
+    planning_used: boolean;
+    memory_used: boolean;
+    unavailable_signals: string[];
+    fallback_used: boolean;
+    warnings: string[];
+  };
+  warnings: string[];
+  limitations: string[];
 }
 
 /** The published render manifest (the contract the Optimization Engine consumes). */

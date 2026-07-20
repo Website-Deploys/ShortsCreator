@@ -12,12 +12,14 @@ import {
   useBobaCreatorMemory,
   useBobaCreativeBriefs,
   useBobaProjectMemory,
+  useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
   useCreatorProfiles,
   useExportCreatorProfile,
   useDecideBobaCandidate,
   useDecideBobaCreativeBrief,
   useGenerateBobaCreativeBriefs,
+  useGenerateBobaWholeVideoUnderstanding,
   usePlans,
   useRenderManifest,
   useResetCreatorProfile,
@@ -31,6 +33,7 @@ import type {
   BobaBrainStateV1,
   BobaCreatorMemoryV1,
   BobaProjectMemoryV1,
+  BobaWholeVideoUnderstandingV1,
   ClipPlan,
   CreatorProfileV2,
   RenderRun,
@@ -1023,6 +1026,127 @@ function bobaClipSummary(render: RenderedVideo) {
   };
 }
 
+function BobaWholeVideoPanel({
+  understanding,
+  building,
+  onBuild,
+}: {
+  understanding: BobaWholeVideoUnderstandingV1 | null | undefined;
+  building: boolean;
+  onBuild: () => void;
+}) {
+  const bestSections = understanding
+    ? understanding.section_scores
+        .slice()
+        .sort((left, right) => right.shortability_score - left.shortability_score)
+        .slice(0, 3)
+    : [];
+  const weakSections = understanding
+    ? understanding.section_scores
+        .filter((section) => section.filler_score >= 0.35 || section.clarity_score < 0.5)
+        .sort((left, right) => right.filler_score - left.filler_score)
+        .slice(0, 3)
+    : [];
+
+  return (
+    <section className="rounded-xl border border-sky-300/20 bg-sky-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Whole Video Understanding</p>
+          <p className="text-xs text-muted">
+            Local transcript and Olympus-signal heuristics; no cloud AI or audience-performance proof.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={building}
+          onClick={onBuild}
+          className="rounded border border-sky-200/30 px-2 py-1 text-[11px] text-sky-100 hover:border-sky-100 disabled:opacity-50"
+        >
+          {building ? "Building…" : understanding ? "Refresh understanding" : "Build understanding"}
+        </button>
+      </div>
+      {understanding ? (
+        <div className="mt-3 grid gap-3 text-xs text-muted lg:grid-cols-2">
+          <div className="space-y-1 lg:col-span-2">
+            <p className="font-semibold text-white">Overall summary</p>
+            <p>{understanding.overall_summary}</p>
+            <p>
+              {understanding.video_type.replace(/_/g, " ")} · Topic: {understanding.primary_topic} · Tone: {understanding.tone.replace(/_/g, " ")}
+            </p>
+            <p>Intent: {understanding.creator_intent} · Value: {understanding.audience_value}</p>
+          </div>
+          <div>
+            <p className="font-semibold text-white">Topic timeline</p>
+            {understanding.topic_timeline.slice(0, 5).map((topic) => (
+              <p key={topic.segment_id}>
+                {formatDuration(topic.start_seconds)}–{formatDuration(topic.end_seconds)}: {topic.topic}
+              </p>
+            ))}
+          </div>
+          <div>
+            <p className="font-semibold text-white">Story arc</p>
+            <p>Setup: {understanding.story_arc.setup[0]?.summary ?? "Not available"}</p>
+            <p>Payoff: {understanding.story_arc.payoff[0]?.summary ?? "Not confirmed"}</p>
+            <p>
+              Unresolved: {understanding.story_arc.unresolved_threads.slice(0, 2).join("; ") || "None reported"}
+            </p>
+          </div>
+          <div>
+            <p className="font-semibold text-white">Emotional beats</p>
+            <p>
+              {understanding.emotional_beats
+                .slice(0, 5)
+                .map((beat) => `${formatDuration(beat.start_seconds)} ${beat.emotion_label.replace(/_/g, " ")}`)
+                .join("; ") || "Not available"}
+            </p>
+          </div>
+          <div>
+            <p className="font-semibold text-white">Best sections</p>
+            {bestSections.map((section) => (
+              <p key={section.section_id}>
+                {formatDuration(section.start_seconds)}–{formatDuration(section.end_seconds)} · shortability {formatPercent(section.shortability_score)}
+              </p>
+            ))}
+          </div>
+          <div>
+            <p className="font-semibold text-white">Weak / filler sections</p>
+            <p>
+              {weakSections
+                .map((section) => `${formatDuration(section.start_seconds)} filler ${formatPercent(section.filler_score)}`)
+                .join("; ") || "None reported"}
+            </p>
+          </div>
+          <div>
+            <p className="font-semibold text-white">Shortability hints</p>
+            <p>
+              {understanding.shortability_hints
+                .slice(0, 4)
+                .map((hint) => `${hint.suggested_clip_type.replace(/_/g, " ")}: ${hint.reason}`)
+                .join("; ") || "Not available"}
+            </p>
+          </div>
+          <div className="lg:col-span-2">
+            <p className="font-semibold text-white">Signal limitations</p>
+            <p>
+              {understanding.signal_usage.unavailable_signals.join(", ") || "No optional signal gap reported"}
+            </p>
+            {(understanding.warnings.length > 0 || understanding.limitations.length > 0) && (
+              <p className="mt-1 text-amber-100">
+                Warning: {[...understanding.warnings, ...understanding.limitations].slice(0, 3).join("; ")}
+              </p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          Whole-video understanding is not available. Build it after transcript analysis completes.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function BobaMemoryPanel({
   projectMemory,
   creatorMemory,
@@ -1912,6 +2036,8 @@ export function ResultsSection({
   const plansQuery = usePlans(projectId, terminal);
   const profilesQuery = useCreatorProfiles();
   const bobaQuery = useBobaBrain(projectId);
+  const wholeVideoQuery = useBobaWholeVideoUnderstanding(projectId);
+  const generateWholeVideo = useGenerateBobaWholeVideoUnderstanding(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -1925,6 +2051,13 @@ export function ResultsSection({
       creatorMemory={creatorMemoryQuery.data}
     />
   );
+  const wholeVideoPanel = (
+    <BobaWholeVideoPanel
+      understanding={wholeVideoQuery.data}
+      building={generateWholeVideo.isPending}
+      onBuild={() => generateWholeVideo.mutate()}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -1932,6 +2065,7 @@ export function ResultsSection({
       <div className="space-y-4">
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
+        {wholeVideoPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -1952,6 +2086,7 @@ export function ResultsSection({
       <div className="space-y-4">
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
+        {wholeVideoPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -1968,6 +2103,7 @@ export function ResultsSection({
       <div className="space-y-4">
         <PersonalizationPanel />
         <BobaBrainPanel brain={bobaQuery.data} />
+        {wholeVideoPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -1984,6 +2120,7 @@ export function ResultsSection({
     <div className="space-y-4">
       <PersonalizationPanel />
       <BobaBrainPanel brain={bobaQuery.data} />
+      {wholeVideoPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState

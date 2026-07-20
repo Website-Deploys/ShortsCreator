@@ -213,6 +213,35 @@ async def get_creative_briefs(
     }
 
 
+@router.post("/projects/{project_id}/whole-video-understanding")
+async def create_whole_video_understanding(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    understanding = await boba.generate_whole_video_understanding(project_id)
+    return understanding.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/whole-video-understanding")
+async def get_whole_video_understanding(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    understanding = boba.store.load_whole_video_understanding(project_id)
+    if understanding is None:
+        raise NotFoundError(
+            "BOBA whole-video understanding is not available.",
+            details={"project_id": project_id},
+        )
+    return understanding.model_dump(mode="json")
+
+
 def _brief_decision(
     project_id: str,
     clip_id: str,

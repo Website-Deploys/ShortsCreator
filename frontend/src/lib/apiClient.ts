@@ -76,6 +76,7 @@ import type {
   BobaGlobalMemoryV1,
   BobaProjectMemoryV1,
   BobaScoutScoreV1,
+  BobaWholeVideoUnderstandingV1,
   CostEstimate,
   EnginesResponse,
   FailuresResponse,
@@ -185,6 +186,15 @@ export const api = {
     request<BobaCreativeBriefsResponse>(`/boba/projects/${projectId}/creative-briefs`, {
       method: "POST",
     }),
+  getBobaWholeVideoUnderstanding: (projectId: string) =>
+    request<BobaWholeVideoUnderstandingV1>(
+      `/boba/projects/${projectId}/whole-video-understanding`,
+    ),
+  createBobaWholeVideoUnderstanding: (projectId: string) =>
+    request<BobaWholeVideoUnderstandingV1>(
+      `/boba/projects/${projectId}/whole-video-understanding`,
+      { method: "POST" },
+    ),
   decideBobaCreativeBrief: (
     projectId: string,
     clipId: string,

@@ -150,4 +150,17 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).toContain("Memory used:");
     expect(resultsSection).toContain("No cloud sync or passive learning.");
   });
+
+  it("shows bounded whole-video understanding and signal limits", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Whole Video Understanding");
+    expect(resultsSection).toContain("Topic timeline");
+    expect(resultsSection).toContain("Story arc");
+    expect(resultsSection).toContain("Emotional beats");
+    expect(resultsSection).toContain("Weak / filler sections");
+    expect(resultsSection).toContain("Shortability hints");
+    expect(resultsSection).toContain("Signal limitations");
+    expect(resultsSection).toContain("no cloud AI or audience-performance proof");
+  });
 });

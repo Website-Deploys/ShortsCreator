@@ -37,6 +37,7 @@ from olympus.boba.memory_contracts import (
 )
 from olympus.boba.memory_validation import validate_memory_export, validate_memory_record
 from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
+from olympus.boba.whole_video import BobaWholeVideoUnderstandingV1
 from olympus.platform.errors import ValidationError
 
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -314,6 +315,29 @@ class BobaMemoryStore:
             for value in values.values()
             if isinstance(value, dict)
         ]
+
+    def whole_video_understanding_path(self, project_id: str) -> Path:
+        return self._path(project_id, "whole_video_understanding/index.json")
+
+    def save_whole_video_understanding(
+        self, understanding: BobaWholeVideoUnderstandingV1
+    ) -> BobaWholeVideoUnderstandingV1:
+        with self._lock:
+            self._write(
+                self.whole_video_understanding_path(understanding.project_id),
+                understanding.model_dump(mode="json"),
+            )
+        return understanding
+
+    def load_whole_video_understanding(
+        self, project_id: str
+    ) -> BobaWholeVideoUnderstandingV1 | None:
+        raw = self._read(self.whole_video_understanding_path(project_id), None)
+        return (
+            BobaWholeVideoUnderstandingV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
 
     @staticmethod
     def _validate_memory_id(value: str, *, field: str) -> str:
