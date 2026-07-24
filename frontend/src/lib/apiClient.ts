@@ -82,6 +82,7 @@ import type {
   BobaExplanationSetV1,
   BobaGlobalMemoryV1,
   BobaHookRetentionSetV1,
+  BobaMusicMoodRecommendationSetV1,
   BobaProjectMemoryV1,
   BobaScoutScoreV1,
   BobaWholeVideoUnderstandingV1,
@@ -264,6 +265,15 @@ export const api = {
   createBobaCaptionMotion: (projectId: string) =>
     request<BobaCaptionMotionRecommendationSetV1>(
       `/boba/projects/${projectId}/caption-motion`,
+      { method: "POST" },
+    ),
+  getBobaMusicMood: (projectId: string) =>
+    request<BobaMusicMoodRecommendationSetV1>(
+      `/boba/projects/${projectId}/music-mood`,
+    ),
+  createBobaMusicMood: (projectId: string) =>
+    request<BobaMusicMoodRecommendationSetV1>(
+      `/boba/projects/${projectId}/music-mood`,
       { method: "POST" },
     ),
   decideBobaCreativeBrief: (

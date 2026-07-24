@@ -19,6 +19,7 @@ import {
   useBobaEditorialDecisions,
   useBobaExplanations,
   useBobaHookRetention,
+  useBobaMusicMood,
   useBobaProjectMemory,
   useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
@@ -28,6 +29,7 @@ import {
   useCreateBobaCreativeDirectionV2,
   useCreateBobaExplanations,
   useCreateBobaHookRetention,
+  useCreateBobaMusicMood,
   useCreatorProfiles,
   useExportCreatorProfile,
   useDecideBobaCandidate,
@@ -56,6 +58,7 @@ import type {
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
   BobaHookRetentionSetV1,
+  BobaMusicMoodRecommendationSetV1,
   BobaProjectMemoryV1,
   BobaWholeVideoUnderstandingV1,
   ClipPlan,
@@ -2386,6 +2389,170 @@ function BobaCaptionMotionPanel({
   );
 }
 
+function BobaMusicMoodPanel({
+  recommendations,
+  generating,
+  canGenerate,
+  onGenerate,
+}: {
+  recommendations: BobaMusicMoodRecommendationSetV1 | null | undefined;
+  generating: boolean;
+  canGenerate: boolean;
+  onGenerate: () => void;
+}) {
+  return (
+    <section className="rounded-xl border border-emerald-300/20 bg-emerald-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            BOBA Music Mood Brain V1
+          </p>
+          <p className="text-xs text-muted">
+            Advisory mood, speech-clarity, ducking, and SFX guidance. No music is
+            selected or applied.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={!canGenerate || generating}
+          onClick={onGenerate}
+          className="rounded border border-emerald-200/30 px-2 py-1 text-[11px] text-emerald-100 hover:border-emerald-100 disabled:opacity-50"
+        >
+          {generating
+            ? "Recommending..."
+            : recommendations
+              ? "Refresh audio guidance"
+              : "Recommend audio mood"}
+        </button>
+      </div>
+
+      {recommendations ? (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <div className="rounded border border-white/10 p-3">
+            <p className="font-semibold text-white">Project audio summary</p>
+            <p className="mt-1">{recommendations.project_audio_summary}</p>
+          </div>
+
+          {recommendations.recommendations.map((item) => {
+            const risks = [
+              [item.audio_risk_review.music_overpowering_risk, "Music overpowering"],
+              [item.audio_risk_review.wrong_mood_risk, "Wrong mood"],
+              [item.audio_risk_review.speech_clarity_risk, "Speech clarity"],
+              [item.audio_risk_review.sfx_overload_risk, "SFX overload"],
+              [item.audio_risk_review.silence_damage_risk, "Silence damage"],
+              [item.audio_risk_review.emotional_mismatch_risk, "Emotional mismatch"],
+            ]
+              .filter(([enabled]) => enabled)
+              .map(([, label]) => label);
+            return (
+              <article
+                key={item.recommendation_id}
+                className="rounded border border-white/10 p-3"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-white">{item.candidate_id}</p>
+                    <p>
+                      {item.music_mood.primary_mood.replace(/_/g, " ")} /{" "}
+                      {item.music_mood.secondary_mood.replace(/_/g, " ")} -{" "}
+                      {item.music_mood.energy_level} energy
+                    </p>
+                    <p>
+                      Role {item.music_mood.music_role.replace(/_/g, " ")} - speech{" "}
+                      {item.speech_clarity_plan.speech_priority}
+                    </p>
+                  </div>
+                  <span className="rounded bg-emerald-200/10 px-2 py-1 text-emerald-100">
+                    Audio {Math.round(item.recommendation_score.overall_audio_score)}/100
+                  </span>
+                </div>
+
+                <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                  <div className="rounded border border-emerald-200/10 p-2">
+                    <p className="font-semibold text-emerald-100">Speech + ducking</p>
+                    <p className="mt-1">{item.speech_clarity_plan.ducking_guidance}</p>
+                    <p>{item.speech_clarity_plan.music_volume_guidance}</p>
+                    <p>{item.speech_clarity_plan.silence_guidance}</p>
+                  </div>
+                  <div className="rounded border border-emerald-200/10 p-2">
+                    <p className="font-semibold text-emerald-100">SFX recommendation</p>
+                    <p className="mt-1">
+                      Intensity: {item.sfx_recommendation.sfx_intensity}
+                    </p>
+                    <p>{item.sfx_recommendation.hook_sfx_guidance}</p>
+                    <p>{item.sfx_recommendation.payoff_sfx_guidance}</p>
+                  </div>
+                </div>
+
+                <details className="mt-2 rounded border border-white/10 p-2">
+                  <summary className="cursor-pointer font-semibold text-white">
+                    Audio energy map and risks
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    <p>0-3s: {item.audio_energy_map.seconds_0_to_3}</p>
+                    <p>3-10s: {item.audio_energy_map.seconds_3_to_10}</p>
+                    <p>Middle: {item.audio_energy_map.middle_section}</p>
+                    <p>Payoff: {item.audio_energy_map.payoff_section}</p>
+                    <p>Ending: {item.audio_energy_map.ending_section}</p>
+                    <p>
+                      Protected silence:{" "}
+                      {item.audio_energy_map.silence_moments.join("; ") ||
+                        "None identified"}
+                    </p>
+                    <p>Risks: {risks.join(", ") || "None in supplied metadata"}</p>
+                  </div>
+                </details>
+
+                <details className="mt-2 rounded border border-white/10 p-2">
+                  <summary className="cursor-pointer font-semibold text-white">
+                    Advisory clip-brief audio enhancement
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    <p>{item.brief_enhancement.improved_audio_instruction}</p>
+                    <p>{item.brief_enhancement.improved_sfx_instruction}</p>
+                    <p className="text-amber-100">
+                      Not applied automatically.{" "}
+                      {item.brief_enhancement.rights_review_warning}
+                    </p>
+                  </div>
+                </details>
+              </article>
+            );
+          })}
+
+          <details className="rounded border border-white/10 p-3">
+            <summary className="cursor-pointer font-semibold text-white">
+              Signal usage and limitations
+            </summary>
+            <div className="mt-2 space-y-1">
+              <p>
+                Audio signals:{" "}
+                {recommendations.signal_usage.audio_signals_used ? "Used" : "Unavailable"}
+                {" - "}Silence signals:{" "}
+                {recommendations.signal_usage.silence_signals_used
+                  ? "Used"
+                  : "Unavailable"}
+              </p>
+              <p>
+                Missing:{" "}
+                {recommendations.signal_usage.unavailable_signals.join(", ") ||
+                  "None reported"}
+              </p>
+              <p>Limitations: {recommendations.limitations.join("; ")}</p>
+            </div>
+          </details>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          {canGenerate
+            ? "No saved music-mood artifact. Generate advisory audio guidance from the clip briefs."
+            : "Create selected or backup clip briefs before running Music Mood Brain V1."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function BobaMemoryPanel({
   projectMemory,
   creatorMemory,
@@ -3293,6 +3460,8 @@ export function ResultsSection({
   const createHookRetention = useCreateBobaHookRetention(projectId);
   const captionMotionQuery = useBobaCaptionMotion(projectId);
   const createCaptionMotion = useCreateBobaCaptionMotion(projectId);
+  const musicMoodQuery = useBobaMusicMood(projectId);
+  const createMusicMood = useCreateBobaMusicMood(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -3386,6 +3555,17 @@ export function ResultsSection({
       onGenerate={() => createCaptionMotion.mutate()}
     />
   );
+  const musicMoodPanel = (
+    <BobaMusicMoodPanel
+      recommendations={musicMoodQuery.data}
+      generating={createMusicMood.isPending}
+      canGenerate={Boolean(
+        clipBriefsQuery.data?.selected_briefs.length ||
+          clipBriefsQuery.data?.backup_briefs.length,
+      )}
+      onGenerate={() => createMusicMood.mutate()}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -3402,6 +3582,7 @@ export function ResultsSection({
         {clipBriefPanel}
         {hookRetentionPanel}
         {captionMotionPanel}
+        {musicMoodPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -3431,6 +3612,7 @@ export function ResultsSection({
         {clipBriefPanel}
         {hookRetentionPanel}
         {captionMotionPanel}
+        {musicMoodPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -3456,6 +3638,7 @@ export function ResultsSection({
         {clipBriefPanel}
         {hookRetentionPanel}
         {captionMotionPanel}
+        {musicMoodPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -3481,6 +3664,7 @@ export function ResultsSection({
       {clipBriefPanel}
       {hookRetentionPanel}
       {captionMotionPanel}
+      {musicMoodPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState

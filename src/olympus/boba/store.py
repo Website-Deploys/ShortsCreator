@@ -48,6 +48,7 @@ from olympus.boba.memory_contracts import (
     memory_now_iso,
 )
 from olympus.boba.memory_validation import validate_memory_export, validate_memory_record
+from olympus.boba.music_mood import BobaMusicMoodRecommendationSetV1
 from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
 from olympus.boba.whole_video import BobaWholeVideoUnderstandingV1
 from olympus.platform.errors import ValidationError
@@ -524,6 +525,35 @@ class BobaMemoryStore:
         raw = self._read(self.caption_motion_path(project_id), None)
         return (
             BobaCaptionMotionRecommendationSetV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def music_mood_path(self, project_id: str) -> Path:
+        return self._path(project_id, "music_mood/index.json")
+
+    def save_music_mood(
+        self,
+        recommendations: BobaMusicMoodRecommendationSetV1,
+    ) -> BobaMusicMoodRecommendationSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                recommendations.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            )
+            self._atomic_write(
+                self.music_mood_path(recommendations.project_id),
+                safe,
+            )
+        return recommendations
+
+    def load_music_mood(
+        self,
+        project_id: str,
+    ) -> BobaMusicMoodRecommendationSetV1 | None:
+        raw = self._read(self.music_mood_path(project_id), None)
+        return (
+            BobaMusicMoodRecommendationSetV1.model_validate(raw)
             if isinstance(raw, dict)
             else None
         )

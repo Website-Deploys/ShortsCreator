@@ -478,6 +478,35 @@ async def get_caption_motion(
     return recommendations.model_dump(mode="json")
 
 
+@router.post("/projects/{project_id}/music-mood")
+async def create_music_mood(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    recommendations = await boba.generate_music_mood(project_id)
+    return recommendations.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/music-mood")
+async def get_music_mood(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    recommendations = boba.store.load_music_mood(project_id)
+    if recommendations is None:
+        raise NotFoundError(
+            "BOBA music mood recommendations are not available.",
+            details={"project_id": project_id},
+        )
+    return recommendations.model_dump(mode="json")
+
+
 def _brief_decision(
     project_id: str,
     clip_id: str,

@@ -59,6 +59,7 @@ import type {
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
   BobaHookRetentionSetV1,
+  BobaMusicMoodRecommendationSetV1,
   BobaProjectMemoryV1,
   BobaWholeVideoUnderstandingV1,
   CostEstimate,
@@ -97,6 +98,8 @@ export const queryKeys = {
     ["boba", "projects", id, "hook-retention"] as const,
   bobaCaptionMotion: (id: string) =>
     ["boba", "projects", id, "caption-motion"] as const,
+  bobaMusicMood: (id: string) =>
+    ["boba", "projects", id, "music-mood"] as const,
   creatorProfiles: ["personalization", "profiles"] as const,
   creatorPersonalizationSummary: ["personalization", "summary"] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
@@ -452,6 +455,31 @@ export function useCreateBobaCaptionMotion(projectId: string) {
     mutationFn: () => api.createBobaCaptionMotion(projectId),
     onSuccess: (result) => {
       queryClient.setQueryData(queryKeys.bobaCaptionMotion(projectId), result);
+    },
+  });
+}
+
+export function useBobaMusicMood(projectId: string) {
+  return useQuery<BobaMusicMoodRecommendationSetV1 | null>({
+    queryKey: queryKeys.bobaMusicMood(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaMusicMood(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useCreateBobaMusicMood(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.createBobaMusicMood(projectId),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaMusicMood(projectId), result);
     },
   });
 }
