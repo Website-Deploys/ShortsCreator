@@ -39,6 +39,10 @@ from olympus.boba.editorial_decision import (
 from olympus.boba.editorial_policy import create_editorial_policy
 from olympus.boba.explanation import BobaExplanationEngine, BobaExplanationSetV1
 from olympus.boba.global_memory import build_and_save_global_memory
+from olympus.boba.hook_retention import (
+    BobaHookRetentionBrainV1,
+    BobaHookRetentionSetV1,
+)
 from olympus.boba.memory_application import create_memory_application
 from olympus.boba.memory_contracts import BobaProjectMemoryV1
 from olympus.boba.memory_retrieval import (
@@ -96,6 +100,7 @@ class BobaIntegration:
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
+        self.hook_retention_brain = BobaHookRetentionBrainV1()
         self.whole_video = BobaWholeVideoUnderstandingEngine()
         self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
         self.clip_ranking = BobaClipRankingEngine()
@@ -312,6 +317,11 @@ class BobaIntegration:
             saved_clip_briefs = self.store.load_clip_briefs(project_id)
         except ValidationError as exc:
             warnings.append(f"BOBA clip-brief artifact is unreadable: {exc}")
+        saved_hook_retention = None
+        try:
+            saved_hook_retention = self.store.load_hook_retention(project_id)
+        except ValidationError as exc:
+            warnings.append(f"BOBA hook-retention artifact is unreadable: {exc}")
         discovery_by_id = {
             item.candidate_id: item
             for item in (saved_discovery.candidates if saved_discovery is not None else [])
@@ -481,6 +491,12 @@ class BobaIntegration:
                 else {}
             ),
             "clip_briefs_available": saved_clip_briefs is not None,
+            "hook_retention": (
+                saved_hook_retention.model_dump(mode="json")
+                if saved_hook_retention is not None
+                else {}
+            ),
+            "hook_retention_available": saved_hook_retention is not None,
         }
 
     async def collect_clip_signals(self, project_id: str, clip_id: str) -> dict[str, Any]:
@@ -737,6 +753,33 @@ class BobaIntegration:
             memory=memory,
         )
         return self.store.save_clip_briefs(briefs)
+
+    async def generate_hook_retention(
+        self, project_id: str
+    ) -> BobaHookRetentionSetV1:
+        signals = await self.collect_project_signals(project_id)
+        briefs = self.store.load_clip_briefs(project_id)
+        creative = self.store.load_creative_direction_v2(project_id)
+        decisions = self.store.load_editorial_decisions(project_id)
+        ranking = self.store.load_clip_ranking(project_id)
+        discovery = self.store.load_candidate_clip_discovery(project_id)
+        understanding = self.store.load_whole_video_understanding(project_id)
+        explanations = self.store.load_explanations(project_id)
+        memory = self.store.load_project_memory(project_id) if self.memory_enabled else None
+        analysis = self.hook_retention_brain.analyze_from_signals(
+            project_id,
+            signals,
+            clip_briefs=briefs,
+            creative_direction_v2=creative,
+            editorial_decisions=decisions,
+            clip_ranking=ranking,
+            candidate_discovery=discovery,
+            whole_video_understanding=understanding,
+            explanations=explanations,
+            virality=_dict(signals.get("virality_summary")),
+            memory=memory,
+        )
+        return self.store.save_hook_retention(analysis)
 
     async def generate_creative_briefs(
         self, project_id: str

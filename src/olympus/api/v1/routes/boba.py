@@ -420,6 +420,35 @@ async def get_clip_briefs(
     return briefs.model_dump(mode="json")
 
 
+@router.post("/projects/{project_id}/hook-retention")
+async def create_hook_retention(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    analysis = await boba.generate_hook_retention(project_id)
+    return analysis.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/hook-retention")
+async def get_hook_retention(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    analysis = boba.store.load_hook_retention(project_id)
+    if analysis is None:
+        raise NotFoundError(
+            "BOBA hook and retention analysis is not available.",
+            details={"project_id": project_id},
+        )
+    return analysis.model_dump(mode="json")
+
+
 def _brief_decision(
     project_id: str,
     clip_id: str,

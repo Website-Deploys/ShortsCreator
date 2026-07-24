@@ -80,6 +80,7 @@ import type {
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
   BobaGlobalMemoryV1,
+  BobaHookRetentionSetV1,
   BobaProjectMemoryV1,
   BobaScoutScoreV1,
   BobaWholeVideoUnderstandingV1,
@@ -246,6 +247,15 @@ export const api = {
     request<BobaClipBriefSetV1>(`/boba/projects/${projectId}/clip-briefs`, {
       method: "POST",
     }),
+  getBobaHookRetention: (projectId: string) =>
+    request<BobaHookRetentionSetV1>(
+      `/boba/projects/${projectId}/hook-retention`,
+    ),
+  createBobaHookRetention: (projectId: string) =>
+    request<BobaHookRetentionSetV1>(
+      `/boba/projects/${projectId}/hook-retention`,
+      { method: "POST" },
+    ),
   decideBobaCreativeBrief: (
     projectId: string,
     clipId: string,

@@ -1923,6 +1923,144 @@ export interface BobaClipBriefSetV1 {
   limitations: string[];
 }
 
+export type BobaHookType =
+  | "curiosity_gap"
+  | "emotional_reveal"
+  | "contradiction"
+  | "shocking_truth"
+  | "problem_solution"
+  | "motivational_payoff"
+  | "story_turn"
+  | "educational_open_loop"
+  | "direct_value"
+  | "mystery"
+  | "tension"
+  | "humor"
+  | "unknown";
+
+export type BobaHookRecommendationLabel =
+  | "best"
+  | "safest"
+  | "boldest"
+  | "backup"
+  | "avoid";
+
+export interface BobaHookAnalysisV1 {
+  hook_type: BobaHookType;
+  hook_strength: number;
+  curiosity_gap: string;
+  first_three_second_clarity: number;
+  pattern_interrupt: string;
+  opening_line_direction: string;
+  visual_opening_direction: string;
+  hook_risk: string;
+  improved_hook_direction: string;
+  reason: string;
+}
+
+export interface BobaHookAlternativeV1 {
+  alternative_id: string;
+  hook_type: BobaHookType;
+  opening_line_direction: string;
+  caption_direction: string;
+  visual_direction: string;
+  strength_score: number;
+  risk_score: number;
+  why_it_may_work: string;
+  why_it_may_fail: string;
+  recommendation_label: BobaHookRecommendationLabel;
+}
+
+export interface BobaRetentionPlanV1 {
+  seconds_0_to_3: string;
+  seconds_3_to_10: string;
+  middle_hold_strategy: string;
+  payoff_timing_strategy: string;
+  ending_replay_trigger: string;
+  pacing_notes: string[];
+  retention_tactics: string[];
+}
+
+export interface BobaRetentionRiskReviewV1 {
+  slow_start_risk: boolean;
+  unclear_context_risk: boolean;
+  weak_payoff_risk: boolean;
+  filler_risk: boolean;
+  over_editing_risk: boolean;
+  under_editing_risk: boolean;
+  caption_overload_risk: boolean;
+  audio_distraction_risk: boolean;
+  risk_fixes: string[];
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface BobaRetentionScoreV1 {
+  hook_score: number;
+  curiosity_score: number;
+  clarity_score: number;
+  momentum_score: number;
+  payoff_score: number;
+  replay_score: number;
+  dropoff_risk_score: number;
+  overall_retention_score: number;
+}
+
+export interface BobaBriefHookEnhancementV1 {
+  brief_id: string;
+  enhanced_opening_line_direction: string;
+  enhanced_pattern_interrupt: string;
+  enhanced_caption_hook: string;
+  enhanced_payoff_timing: string;
+  enhanced_replay_trigger: string;
+  retention_warning: string;
+  apply_suggestion: false;
+}
+
+export interface BobaHookRetentionSignalUsageV1 {
+  clip_briefs_used: boolean;
+  creative_direction_used: boolean;
+  editorial_decision_used: boolean;
+  clip_ranking_used: boolean;
+  candidate_discovery_used: boolean;
+  whole_video_understanding_used: boolean;
+  explanation_used: boolean;
+  virality_used: boolean;
+  memory_used: boolean;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaHookRetentionAnalysisV1 {
+  analysis_id: string;
+  project_id: string;
+  candidate_id: string;
+  brief_id: string;
+  source_window: BobaSourceWindowV1;
+  hook_analysis: BobaHookAnalysisV1;
+  hook_alternatives: BobaHookAlternativeV1[];
+  retention_plan: BobaRetentionPlanV1;
+  retention_risk_review: BobaRetentionRiskReviewV1;
+  retention_score: BobaRetentionScoreV1;
+  brief_enhancements: BobaBriefHookEnhancementV1;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaHookRetentionSetV1 {
+  schema_version: "boba_hook_retention_brain_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  analyses: BobaHookRetentionAnalysisV1[];
+  project_retention_summary: string;
+  signal_usage: BobaHookRetentionSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

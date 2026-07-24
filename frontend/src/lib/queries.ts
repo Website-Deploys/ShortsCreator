@@ -57,6 +57,7 @@ import type {
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
+  BobaHookRetentionSetV1,
   BobaProjectMemoryV1,
   BobaWholeVideoUnderstandingV1,
   CostEstimate,
@@ -91,6 +92,8 @@ export const queryKeys = {
     ["boba", "projects", id, "creative-direction-v2"] as const,
   bobaClipBriefs: (id: string) =>
     ["boba", "projects", id, "clip-briefs"] as const,
+  bobaHookRetention: (id: string) =>
+    ["boba", "projects", id, "hook-retention"] as const,
   creatorProfiles: ["personalization", "profiles"] as const,
   creatorPersonalizationSummary: ["personalization", "summary"] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
@@ -396,6 +399,31 @@ export function useCreateBobaClipBriefs(projectId: string) {
     mutationFn: () => api.createBobaClipBriefs(projectId),
     onSuccess: (result) => {
       qc.setQueryData(queryKeys.bobaClipBriefs(projectId), result);
+    },
+  });
+}
+
+export function useBobaHookRetention(projectId: string) {
+  return useQuery<BobaHookRetentionSetV1 | null>({
+    queryKey: queryKeys.bobaHookRetention(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaHookRetention(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useCreateBobaHookRetention(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.createBobaHookRetention(projectId),
+    onSuccess: (result) => {
+      qc.setQueryData(queryKeys.bobaHookRetention(projectId), result);
     },
   });
 }
