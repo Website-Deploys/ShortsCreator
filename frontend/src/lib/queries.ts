@@ -55,6 +55,8 @@ import type {
   BobaClipRankingV1,
   BobaCreativeBriefsResponse,
   BobaCreativeDirectionSetV2,
+  BobaCreatorFeedbackEventInput,
+  BobaCreatorLearningSetV1,
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
@@ -80,6 +82,8 @@ export const queryKeys = {
   bobaBrain: (id: string) => ["boba", "projects", id, "brain"] as const,
   bobaProjectMemory: (id: string) => ["boba", "memory", "projects", id] as const,
   bobaCreatorMemory: (id: string) => ["boba", "memory", "creators", id] as const,
+  bobaCreatorLearning: (id: string) =>
+    ["boba", "projects", id, "creator-learning"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -215,6 +219,21 @@ export function useBobaCreatorMemory(profileId?: string) {
       }
     },
     enabled: Boolean(profileId),
+  });
+}
+
+export function useBobaCreatorLearning(projectId: string) {
+  return useQuery<BobaCreatorLearningSetV1 | null>({
+    queryKey: queryKeys.bobaCreatorLearning(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaCreatorLearning(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
   });
 }
 
@@ -480,6 +499,42 @@ export function useCreateBobaMusicMood(projectId: string) {
     mutationFn: () => api.createBobaMusicMood(projectId),
     onSuccess: (result) => {
       queryClient.setQueryData(queryKeys.bobaMusicMood(projectId), result);
+    },
+  });
+}
+
+export function useRecordBobaCreatorLearningEvent(projectId: string) {
+  return useMutation({
+    mutationFn: (input: BobaCreatorFeedbackEventInput) =>
+      api.recordBobaCreatorLearningEvent(projectId, input),
+  });
+}
+
+export function useGenerateBobaCreatorLearning(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { creator_id?: string; dry_run?: boolean } = {}) =>
+      api.generateBobaCreatorLearning(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(queryKeys.bobaCreatorLearning(projectId), result);
+      }
+    },
+  });
+}
+
+export function useExportBobaCreatorLearning(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaCreatorLearning(projectId),
+  });
+}
+
+export function useResetBobaCreatorLearning(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaCreatorLearning(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(queryKeys.bobaCreatorLearning(projectId), null);
     },
   });
 }

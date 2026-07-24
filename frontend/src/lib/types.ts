@@ -2350,6 +2350,195 @@ export interface BobaMusicMoodRecommendationSetV1 {
   limitations: string[];
 }
 
+export type BobaCreatorFeedbackEventType =
+  | "approval"
+  | "rejection"
+  | "rating"
+  | "chosen_alternative"
+  | "correction"
+  | "preference_note"
+  | "manual_tag"
+  | "reset"
+  | "export";
+
+export type BobaCreatorFeedbackTargetType =
+  | "clip"
+  | "candidate"
+  | "ranked_clip"
+  | "editorial_decision"
+  | "explanation"
+  | "creative_direction"
+  | "clip_brief"
+  | "hook_alternative"
+  | "caption_motion"
+  | "music_mood"
+  | "project";
+
+export type BobaCreatorUserAction =
+  | "approved"
+  | "rejected"
+  | "liked"
+  | "disliked"
+  | "chose"
+  | "corrected"
+  | "noted"
+  | "tagged"
+  | "reset_requested"
+  | "export_requested";
+
+export type BobaCreatorPreferenceCategory =
+  | "clip_type"
+  | "hook_style"
+  | "caption_style"
+  | "motion_style"
+  | "music_mood"
+  | "pacing"
+  | "story_angle"
+  | "risk_sensitivity"
+  | "production_priority"
+  | "general";
+
+export type BobaCreatorLearningModule =
+  | "ranking"
+  | "editorial_decision"
+  | "creative_director"
+  | "clip_brief"
+  | "hook_retention"
+  | "caption_motion"
+  | "music_mood"
+  | "all";
+
+export interface BobaExtractedPreferenceV1 {
+  preference_id: string;
+  category: BobaCreatorPreferenceCategory;
+  preference: string;
+  polarity: "prefer" | "avoid" | "neutral";
+  strength: number;
+  evidence: string[];
+  confidence: number;
+  applies_to_modules: BobaCreatorLearningModule[];
+}
+
+export interface BobaCreatorFeedbackEventV1 {
+  event_id: string;
+  project_id: string;
+  created_at: string;
+  event_type: BobaCreatorFeedbackEventType;
+  target_type: BobaCreatorFeedbackTargetType;
+  target_id: string;
+  user_action: BobaCreatorUserAction;
+  rating: number | null;
+  note: string;
+  tags: string[];
+  extracted_preferences: BobaExtractedPreferenceV1[];
+  reversible: boolean;
+  source_artifacts: string[];
+  warnings: string[];
+}
+
+export interface BobaCreatorFeedbackEventInput {
+  event_type: BobaCreatorFeedbackEventType;
+  target_type: BobaCreatorFeedbackTargetType;
+  target_id: string;
+  user_action: BobaCreatorUserAction;
+  rating?: number | null;
+  note?: string;
+  tags?: string[];
+  reversible?: boolean;
+}
+
+export interface BobaCreatorLearningProfileV1 {
+  creator_id: string;
+  profile_version: "1";
+  updated_at: string;
+  preferred_clip_types: string[];
+  avoided_clip_types: string[];
+  preferred_hook_styles: string[];
+  avoided_hook_styles: string[];
+  preferred_caption_styles: string[];
+  avoided_caption_styles: string[];
+  preferred_motion_styles: string[];
+  avoided_motion_styles: string[];
+  preferred_music_moods: string[];
+  avoided_music_moods: string[];
+  pacing_preferences: string[];
+  story_angle_preferences: string[];
+  risk_sensitivities: string[];
+  repeated_feedback: string[];
+  confidence: number;
+  data_points: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaLearningInsightV1 {
+  insight_id: string;
+  category: BobaCreatorPreferenceCategory;
+  summary: string;
+  evidence_count: number;
+  confidence: number;
+  suggested_adjustment: string;
+  affected_modules: BobaCreatorLearningModule[];
+  warnings: string[];
+}
+
+export interface BobaRecommendationGuidanceV1 {
+  ranking_guidance: string[];
+  editorial_guidance: string[];
+  creative_direction_guidance: string[];
+  clip_brief_guidance: string[];
+  hook_retention_guidance: string[];
+  caption_motion_guidance: string[];
+  music_mood_guidance: string[];
+  general_guidance: string[];
+  apply_automatically: false;
+}
+
+export interface BobaLearningAuditSummaryV1 {
+  total_events: number;
+  approval_count: number;
+  rejection_count: number;
+  correction_count: number;
+  note_count: number;
+  reversible_event_count: number;
+  irreversible_event_count: number;
+  last_event_at: string | null;
+  reset_available: boolean;
+  export_available: boolean;
+  warnings: string[];
+}
+
+export interface BobaCreatorLearningSignalUsageV1 {
+  boba_memory_used: boolean;
+  feedback_events_used: number;
+  clip_ranking_used: boolean;
+  editorial_decision_used: boolean;
+  explanation_used: boolean;
+  creative_direction_used: boolean;
+  clip_briefs_used: boolean;
+  hook_retention_used: boolean;
+  caption_motion_used: boolean;
+  music_mood_used: boolean;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaCreatorLearningSetV1 {
+  schema_version: "boba_creator_learning_loop_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  learning_profile: BobaCreatorLearningProfileV1;
+  feedback_events: BobaCreatorFeedbackEventV1[];
+  learning_insights: BobaLearningInsightV1[];
+  recommendation_guidance: BobaRecommendationGuidanceV1;
+  audit_summary: BobaLearningAuditSummaryV1;
+  signal_usage: BobaCreatorLearningSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

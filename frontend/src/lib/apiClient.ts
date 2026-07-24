@@ -77,6 +77,9 @@ import type {
   BobaClipRankingV1,
   BobaCreativeBriefsResponse,
   BobaCreativeDirectionSetV2,
+  BobaCreatorFeedbackEventInput,
+  BobaCreatorFeedbackEventV1,
+  BobaCreatorLearningSetV1,
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
@@ -276,6 +279,37 @@ export const api = {
       `/boba/projects/${projectId}/music-mood`,
       { method: "POST" },
     ),
+  getBobaCreatorLearning: (projectId: string) =>
+    request<BobaCreatorLearningSetV1>(
+      `/boba/projects/${projectId}/creator-learning`,
+    ),
+  recordBobaCreatorLearningEvent: (
+    projectId: string,
+    input: BobaCreatorFeedbackEventInput,
+  ) =>
+    request<BobaCreatorFeedbackEventV1>(
+      `/boba/projects/${projectId}/creator-learning/events`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  generateBobaCreatorLearning: (
+    projectId: string,
+    input: { creator_id?: string; dry_run?: boolean } = {},
+  ) =>
+    request<BobaCreatorLearningSetV1>(
+      `/boba/projects/${projectId}/creator-learning`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  exportBobaCreatorLearning: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/creator-learning/export`,
+    ),
+  resetBobaCreatorLearning: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      creator_learning_removed: boolean;
+      unrelated_memory_removed: boolean;
+    }>(`/boba/projects/${projectId}/creator-learning`, { method: "DELETE" }),
   decideBobaCreativeBrief: (
     projectId: string,
     clipId: string,

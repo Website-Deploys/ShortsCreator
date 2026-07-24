@@ -13,6 +13,11 @@ from olympus.api.dependencies import (
     SettingsDep,
 )
 from olympus.boba.approvals import BobaApprovalDecision
+from olympus.boba.creator_learning import (
+    BobaCreatorFeedbackEventType,
+    BobaCreatorFeedbackTargetType,
+    BobaCreatorUserAction,
+)
 from olympus.boba.creator_memory import build_and_save_creator_memory
 from olympus.boba.global_memory import build_and_save_global_memory
 from olympus.boba.memory_contracts import BobaMemoryQueryV1
@@ -54,6 +59,35 @@ class MemoryResetRequest(BaseModel):
     confirm: bool = False
     scope: Literal["project", "creator", "global"]
     identifier: str | None = Field(default=None, max_length=128)
+
+
+class CreatorLearningEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_type: BobaCreatorFeedbackEventType
+    target_type: BobaCreatorFeedbackTargetType
+    target_id: str = Field(
+        min_length=1,
+        max_length=180,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+    user_action: BobaCreatorUserAction
+    rating: float | None = Field(default=None, ge=0.0, le=5.0)
+    note: str = Field(default="", max_length=500)
+    tags: list[str] = Field(default_factory=list, max_length=24)
+    reversible: bool = True
+
+
+class CreatorLearningGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    creator_id: str = Field(
+        default="local_creator",
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    dry_run: bool = False
 
 
 class ScoutScoreRequest(BaseModel):
@@ -505,6 +539,98 @@ async def get_music_mood(
             details={"project_id": project_id},
         )
     return recommendations.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/creator-learning/events")
+async def record_creator_learning_event(
+    project_id: str,
+    body: CreatorLearningEventRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    event = await boba.record_creator_feedback_event(
+        project_id,
+        event_type=body.event_type,
+        target_type=body.target_type,
+        target_id=body.target_id,
+        user_action=body.user_action,
+        rating=body.rating,
+        note=body.note,
+        tags=body.tags,
+        reversible=body.reversible,
+    )
+    return event.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/creator-learning")
+async def generate_creator_learning(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    body: CreatorLearningGenerateRequest | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    request = body or CreatorLearningGenerateRequest()
+    learning = await boba.generate_creator_learning_profile(
+        project_id,
+        creator_id=request.creator_id,
+        dry_run=dry_run or request.dry_run,
+    )
+    return learning.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/creator-learning")
+async def get_creator_learning(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    learning = boba.load_creator_learning_profile(project_id)
+    if learning is None:
+        raise NotFoundError(
+            "BOBA creator learning is not available.",
+            details={"project_id": project_id},
+        )
+    return learning.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/creator-learning/export")
+async def export_creator_learning(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_creator_learning_profile(project_id) is None:
+        raise NotFoundError(
+            "BOBA creator learning is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_creator_learning_profile(project_id)
+
+
+@router.delete("/projects/{project_id}/creator-learning")
+async def reset_creator_learning(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_creator_learning_profile(project_id)
+    return {
+        "reset": True,
+        "project_id": project_id,
+        "creator_learning_removed": removed,
+        "unrelated_memory_removed": False,
+    }
 
 
 def _brief_decision(

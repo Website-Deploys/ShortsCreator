@@ -35,6 +35,15 @@ from olympus.boba.creative_director import (
     BobaCreativeDirector,
     BobaCreativeDirectorV2Engine,
 )
+from olympus.boba.creator_learning import (
+    BobaCreatorFeedbackEventType,
+    BobaCreatorFeedbackEventV1,
+    BobaCreatorFeedbackTargetType,
+    BobaCreatorLearningLoopV1,
+    BobaCreatorLearningSetV1,
+    BobaCreatorUserAction,
+    BobaRecommendationGuidanceV1,
+)
 from olympus.boba.decision_bus import BobaDecisionBus
 from olympus.boba.editorial_decision import (
     BobaEditorialDecisionEngine,
@@ -114,6 +123,7 @@ class BobaIntegration:
         self.hook_retention_brain = BobaHookRetentionBrainV1()
         self.caption_motion_brain = BobaCaptionMotionRecommendationBrainV1()
         self.music_mood_brain = BobaMusicMoodBrainV1()
+        self.creator_learning_loop = BobaCreatorLearningLoopV1()
         self.whole_video = BobaWholeVideoUnderstandingEngine()
         self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
         self.clip_ranking = BobaClipRankingEngine()
@@ -130,6 +140,111 @@ class BobaIntegration:
             and self.store.load_global_memory() is None
         ):
             build_and_save_global_memory(self.store)
+
+    def _creator_learning_artifacts(self, project_id: str) -> dict[str, Any]:
+        return {
+            "clip_ranking": self.store.load_clip_ranking(project_id),
+            "editorial_decision": self.store.load_editorial_decisions(project_id),
+            "explanation": self.store.load_explanations(project_id),
+            "creative_direction": self.store.load_creative_direction_v2(project_id),
+            "clip_briefs": self.store.load_clip_briefs(project_id),
+            "hook_retention": self.store.load_hook_retention(project_id),
+            "caption_motion": self.store.load_caption_motion(project_id),
+            "music_mood": self.store.load_music_mood(project_id),
+        }
+
+    async def record_creator_feedback_event(
+        self,
+        project_id: str,
+        *,
+        event_type: BobaCreatorFeedbackEventType,
+        target_type: BobaCreatorFeedbackTargetType,
+        target_id: str,
+        user_action: BobaCreatorUserAction,
+        rating: float | None = None,
+        note: str = "",
+        tags: list[str] | None = None,
+        reversible: bool = True,
+    ) -> BobaCreatorFeedbackEventV1:
+        if await self.projects.get(project_id) is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        event = self.creator_learning_loop.create_feedback_event(
+            project_id=project_id,
+            event_type=event_type,
+            target_type=target_type,
+            target_id=target_id,
+            user_action=user_action,
+            rating=rating,
+            note=note,
+            tags=tags,
+            reversible=reversible,
+            artifacts=self._creator_learning_artifacts(project_id),
+        )
+        return self.store.record_creator_feedback_event(event)
+
+    async def generate_creator_learning_profile(
+        self,
+        project_id: str,
+        *,
+        creator_id: str = "local_creator",
+        dry_run: bool = False,
+    ) -> BobaCreatorLearningSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        artifacts = self._creator_learning_artifacts(project_id)
+        creator_memory = self.store.load_creator_memory(creator_id)
+        project_memory = self.store.load_project_memory(project_id)
+        learning = self.creator_learning_loop.analyze(
+            project_id,
+            self.store.list_creator_feedback_events(project_id),
+            creator_id=creator_id,
+            source_id=project.id,
+            boba_memory=creator_memory or project_memory,
+            clip_ranking=artifacts["clip_ranking"],
+            editorial_decision=artifacts["editorial_decision"],
+            explanation=artifacts["explanation"],
+            creative_direction=artifacts["creative_direction"],
+            clip_briefs=artifacts["clip_briefs"],
+            hook_retention=artifacts["hook_retention"],
+            caption_motion=artifacts["caption_motion"],
+            music_mood=artifacts["music_mood"],
+        )
+        if dry_run:
+            return learning.model_copy(
+                update={
+                    "warnings": [
+                        *learning.warnings,
+                        "Dry run: creator learning was not persisted.",
+                    ]
+                }
+            )
+        return self.store.save_creator_learning(learning)
+
+    def load_creator_learning_profile(
+        self,
+        project_id: str,
+    ) -> BobaCreatorLearningSetV1 | None:
+        return self.store.load_creator_learning_profile(project_id)
+
+    def export_creator_learning_profile(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_creator_learning_profile(project_id)
+
+    def reset_creator_learning_profile(self, project_id: str) -> bool:
+        return self.store.reset_creator_learning_profile(project_id)
+
+    async def apply_creator_learning_guidance_dry_run(
+        self,
+        project_id: str,
+        *,
+        creator_id: str = "local_creator",
+    ) -> BobaRecommendationGuidanceV1:
+        learning = await self.generate_creator_learning_profile(
+            project_id,
+            creator_id=creator_id,
+            dry_run=True,
+        )
+        return learning.recommendation_guidance
 
     async def _json(self, key: str) -> dict[str, Any]:
         if not await self.storage.exists(key):

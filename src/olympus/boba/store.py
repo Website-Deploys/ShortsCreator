@@ -33,6 +33,10 @@ from olympus.boba.creative_director import (
     BobaCreativeBriefV1,
     BobaCreativeDirectionSetV2,
 )
+from olympus.boba.creator_learning import (
+    BobaCreatorFeedbackEventV1,
+    BobaCreatorLearningSetV1,
+)
 from olympus.boba.editorial_decision import BobaEditorialDecisionSetV1
 from olympus.boba.explanation import BobaExplanationSetV1
 from olympus.boba.hook_retention import BobaHookRetentionSetV1
@@ -112,6 +116,19 @@ class BobaMemoryStore:
         try:
             with temp.open("w", encoding="utf-8", newline="\n") as handle:
                 json.dump(payload, handle, indent=2, ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
+
+    @staticmethod
+    def _atomic_write_text(path: Path, payload: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        try:
+            with temp.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp, path)
@@ -557,6 +574,158 @@ class BobaMemoryStore:
             if isinstance(raw, dict)
             else None
         )
+
+    def creator_learning_path(self, project_id: str) -> Path:
+        return self._path(project_id, "creator_learning/index.json")
+
+    def creator_learning_events_path(self, project_id: str) -> Path:
+        return self._path(project_id, "creator_learning/events.jsonl")
+
+    def save_creator_learning(
+        self,
+        learning: BobaCreatorLearningSetV1,
+    ) -> BobaCreatorLearningSetV1:
+        with self._lock:
+            self._write(
+                self.creator_learning_path(learning.project_id),
+                {
+                    "schema_version": "boba_creator_learning_loop_v1",
+                    "creator_learning": learning.model_dump(mode="json"),
+                },
+            )
+        return learning
+
+    def load_creator_learning(
+        self,
+        project_id: str,
+    ) -> BobaCreatorLearningSetV1 | None:
+        raw = self._read(self.creator_learning_path(project_id), None)
+        if not isinstance(raw, dict):
+            return None
+        value = raw.get("creator_learning", raw)
+        return (
+            BobaCreatorLearningSetV1.model_validate(value)
+            if isinstance(value, dict)
+            else None
+        )
+
+    def load_creator_learning_profile(
+        self,
+        project_id: str,
+    ) -> BobaCreatorLearningSetV1 | None:
+        return self.load_creator_learning(project_id)
+
+    def append_creator_feedback_event(
+        self,
+        event: BobaCreatorFeedbackEventV1,
+    ) -> BobaCreatorFeedbackEventV1:
+        safe_payload = sanitize_memory_payload(
+            event.model_dump(mode="json"),
+            max_excerpt_chars=self.max_excerpt_chars,
+        )
+        safe_event = BobaCreatorFeedbackEventV1.model_validate(safe_payload)
+        with self._lock:
+            events = self.list_creator_feedback_events(event.project_id)
+            existing = next(
+                (item for item in events if item.event_id == event.event_id),
+                None,
+            )
+            if existing is not None:
+                return existing
+            events.append(safe_event)
+            lines = [
+                json.dumps(item.model_dump(mode="json"), ensure_ascii=False)
+                for item in events[-5000:]
+            ]
+            self._atomic_write_text(
+                self.creator_learning_events_path(event.project_id),
+                "\n".join(lines) + "\n",
+            )
+        return safe_event
+
+    def record_creator_feedback_event(
+        self,
+        event: BobaCreatorFeedbackEventV1,
+    ) -> BobaCreatorFeedbackEventV1:
+        return self.append_creator_feedback_event(event)
+
+    def list_creator_feedback_events(
+        self,
+        project_id: str,
+    ) -> list[BobaCreatorFeedbackEventV1]:
+        path = self.creator_learning_events_path(project_id)
+        try:
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise ValidationError(
+                "BOBA creator feedback event storage could not be read.",
+                details={"path": path.name},
+            ) from exc
+        events: list[BobaCreatorFeedbackEventV1] = []
+        for line_number, line in enumerate(lines, start=1):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+                events.append(BobaCreatorFeedbackEventV1.model_validate(raw))
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise ValidationError(
+                    "BOBA creator feedback event storage is corrupt.",
+                    details={"path": path.name, "line": line_number},
+                ) from exc
+        return events
+
+    def export_creator_learning_profile(self, project_id: str) -> dict[str, Any]:
+        learning = self.load_creator_learning(project_id)
+        if learning is None:
+            raise ValidationError(
+                "BOBA creator learning is not available for export.",
+                details={"project_id": project_id},
+            )
+        compact_events = [
+            event.model_dump(
+                mode="json",
+                exclude={"note", "source_artifacts"},
+            )
+            for event in self.list_creator_feedback_events(project_id)
+        ]
+        learning_payload = learning.model_dump(mode="json")
+        learning_payload["feedback_events"] = compact_events
+        payload = {
+            "schema_version": "boba_creator_learning_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "creator_learning": learning_payload,
+            "privacy": {
+                "explicit_feedback_only": True,
+                "compact_preferences_only": True,
+            },
+        }
+        safe = sanitize_memory_payload(
+            payload,
+            max_excerpt_chars=self.max_excerpt_chars,
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA creator learning export is invalid.")
+        return safe
+
+    def reset_creator_learning_profile(self, project_id: str) -> bool:
+        paths = (
+            self.creator_learning_path(project_id),
+            self.creator_learning_events_path(project_id),
+        )
+        removed = False
+        with self._lock:
+            for path in paths:
+                if path.exists():
+                    path.unlink()
+                    removed = True
+            directory = self.creator_learning_path(project_id).parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
 
     @staticmethod
     def _validate_memory_id(value: str, *, field: str) -> str:
