@@ -8,6 +8,7 @@ import { mediaUrls } from "@/lib/apiClient";
 import {
   useActivateCreatorProfile,
   useBobaBrain,
+  useBobaCaptionMotion,
   useBobaCandidateClipDiscovery,
   useBobaCandidates,
   useBobaClipBriefs,
@@ -23,6 +24,7 @@ import {
   useCreateCreatorProfile,
   useCreateBobaEditorialDecisions,
   useCreateBobaClipBriefs,
+  useCreateBobaCaptionMotion,
   useCreateBobaCreativeDirectionV2,
   useCreateBobaExplanations,
   useCreateBobaHookRetention,
@@ -45,6 +47,7 @@ import { formatBytes, formatDuration, isTerminal } from "@/lib/rendering";
 import type {
   ClipFeedbackInput,
   BobaBrainStateV1,
+  BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
   BobaClipBriefSetV1,
   BobaClipRankingV1,
@@ -2204,6 +2207,185 @@ function BobaHookRetentionPanel({
   );
 }
 
+function BobaCaptionMotionPanel({
+  recommendations,
+  generating,
+  canGenerate,
+  onGenerate,
+}: {
+  recommendations: BobaCaptionMotionRecommendationSetV1 | null | undefined;
+  generating: boolean;
+  canGenerate: boolean;
+  onGenerate: () => void;
+}) {
+  return (
+    <section className="rounded-xl border border-violet-300/20 bg-violet-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            BOBA Caption + Motion Recommendation Brain V1
+          </p>
+          <p className="text-xs text-muted">
+            Advisory caption, timing, and motion guidance. It does not alter or render
+            media.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={!canGenerate || generating}
+          onClick={onGenerate}
+          className="rounded border border-violet-200/30 px-2 py-1 text-[11px] text-violet-100 hover:border-violet-100 disabled:opacity-50"
+        >
+          {generating
+            ? "Recommending..."
+            : recommendations
+              ? "Refresh recommendations"
+              : "Recommend captions + motion"}
+        </button>
+      </div>
+
+      {recommendations ? (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <div className="rounded border border-white/10 p-3">
+            <p className="font-semibold text-white">Project recommendation summary</p>
+            <p className="mt-1">{recommendations.project_caption_motion_summary}</p>
+          </div>
+
+          {recommendations.recommendations.map((item) => {
+            const safetyRisks = [
+              [item.safety_review.face_cutoff_risk, "Face cutoff"],
+              [item.safety_review.multi_speaker_layout_risk, "Multi-speaker layout"],
+              [item.safety_review.unavailable_face_signal_risk, "Face signals unavailable"],
+              [item.safety_review.unavailable_layout_signal_risk, "Layout signals unavailable"],
+              [item.safety_review.caption_overload_risk, "Caption overload"],
+              [item.safety_review.readability_risk, "Readability"],
+              [item.safety_review.over_motion_risk, "Over-motion"],
+              [item.safety_review.under_motion_risk, "Under-motion"],
+              [item.safety_review.hook_distraction_risk, "Hook distraction"],
+            ]
+              .filter(([enabled]) => enabled)
+              .map(([, label]) => label);
+            const caption = item.caption_recommendation;
+            const motion = item.motion_recommendation;
+            return (
+              <article
+                key={item.recommendation_id}
+                className="rounded border border-white/10 p-3"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-white">{item.candidate_id}</p>
+                    <p>
+                      Caption {caption.caption_style.replace(/_/g, " ")} -{" "}
+                      {caption.caption_density} density - {caption.caption_rhythm} rhythm
+                    </p>
+                    <p>
+                      Motion {motion.motion_style.replace(/_/g, " ")} -{" "}
+                      {motion.motion_intensity} intensity
+                    </p>
+                  </div>
+                  <span className="rounded bg-violet-200/10 px-2 py-1 text-violet-100">
+                    Overall{" "}
+                    {Math.round(item.recommendation_score.overall_recommendation_score)}
+                    /100
+                  </span>
+                </div>
+
+                <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                  <div className="rounded border border-violet-200/10 p-2">
+                    <p className="font-semibold text-violet-100">Caption guidance</p>
+                    <p className="mt-1">{caption.hook_caption_instruction}</p>
+                    <p>
+                      Keywords: {caption.keyword_highlights.join(", ") || "Not available"}
+                    </p>
+                    <p>Payoff: {caption.payoff_caption_instruction}</p>
+                    <p>
+                      Readability:{" "}
+                      {caption.readability_notes.join("; ") || "Human review required"}
+                    </p>
+                  </div>
+                  <div className="rounded border border-violet-200/10 p-2">
+                    <p className="font-semibold text-violet-100">Motion guidance</p>
+                    <p className="mt-1">{motion.reason}</p>
+                    <p>
+                      Zoom: {motion.zoom_moments.join("; ") || "No zoom recommended"}
+                    </p>
+                    <p>
+                      Punch-in:{" "}
+                      {motion.punch_in_moments.join("; ") || "No punch-in recommended"}
+                    </p>
+                    <p>Stable: {motion.stable_moments.join("; ")}</p>
+                  </div>
+                </div>
+
+                <details className="mt-2 rounded border border-white/10 p-2">
+                  <summary className="cursor-pointer font-semibold text-white">
+                    Timing map and safety review
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    <p>0-3s: {item.timing_map.seconds_0_to_3}</p>
+                    <p>3-10s: {item.timing_map.seconds_3_to_10}</p>
+                    <p>Middle: {item.timing_map.middle_section}</p>
+                    <p>Payoff: {item.timing_map.payoff_section}</p>
+                    <p>Ending: {item.timing_map.ending_section}</p>
+                    <p>
+                      Safety risks: {safetyRisks.join(", ") || "None in supplied metadata"}
+                    </p>
+                    <p>
+                      Fixes:{" "}
+                      {item.safety_review.fixes.join("; ") || "Verify against source"}
+                    </p>
+                  </div>
+                </details>
+
+                <details className="mt-2 rounded border border-white/10 p-2">
+                  <summary className="cursor-pointer font-semibold text-white">
+                    Advisory clip-brief enhancements
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    <p>Caption: {item.brief_enhancement.improved_caption_instruction}</p>
+                    <p>Motion: {item.brief_enhancement.improved_motion_instruction}</p>
+                    <p className="text-amber-100">
+                      Not applied automatically.{" "}
+                      {item.brief_enhancement.layout_safe_warning}
+                    </p>
+                  </div>
+                </details>
+              </article>
+            );
+          })}
+
+          <details className="rounded border border-white/10 p-3">
+            <summary className="cursor-pointer font-semibold text-white">
+              Signal usage and limitations
+            </summary>
+            <div className="mt-2 space-y-1">
+              <p>
+                Fallback used: {recommendations.signal_usage.fallback_used ? "Yes" : "No"}
+                {" - "}Missing:{" "}
+                {recommendations.signal_usage.unavailable_signals.join(", ") ||
+                  "None reported"}
+              </p>
+              <p>
+                Warnings:{" "}
+                {[...recommendations.warnings, ...recommendations.signal_usage.warnings]
+                  .join("; ") || "None reported"}
+              </p>
+              <p>Limitations: {recommendations.limitations.join("; ")}</p>
+            </div>
+          </details>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          {canGenerate
+            ? "No saved caption-motion artifact. Generate advisory recommendations from the clip briefs."
+            : "Create selected or backup clip briefs before running Caption + Motion Brain V1."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function BobaMemoryPanel({
   projectMemory,
   creatorMemory,
@@ -3109,6 +3291,8 @@ export function ResultsSection({
   const createClipBriefs = useCreateBobaClipBriefs(projectId);
   const hookRetentionQuery = useBobaHookRetention(projectId);
   const createHookRetention = useCreateBobaHookRetention(projectId);
+  const captionMotionQuery = useBobaCaptionMotion(projectId);
+  const createCaptionMotion = useCreateBobaCaptionMotion(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -3191,6 +3375,17 @@ export function ResultsSection({
       onGenerate={() => createHookRetention.mutate()}
     />
   );
+  const captionMotionPanel = (
+    <BobaCaptionMotionPanel
+      recommendations={captionMotionQuery.data}
+      generating={createCaptionMotion.isPending}
+      canGenerate={Boolean(
+        clipBriefsQuery.data?.selected_briefs.length ||
+          clipBriefsQuery.data?.backup_briefs.length,
+      )}
+      onGenerate={() => createCaptionMotion.mutate()}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -3206,6 +3401,7 @@ export function ResultsSection({
         {creativeDirectionV2Panel}
         {clipBriefPanel}
         {hookRetentionPanel}
+        {captionMotionPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -3234,6 +3430,7 @@ export function ResultsSection({
         {creativeDirectionV2Panel}
         {clipBriefPanel}
         {hookRetentionPanel}
+        {captionMotionPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -3258,6 +3455,7 @@ export function ResultsSection({
         {creativeDirectionV2Panel}
         {clipBriefPanel}
         {hookRetentionPanel}
+        {captionMotionPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -3282,6 +3480,7 @@ export function ResultsSection({
       {creativeDirectionV2Panel}
       {clipBriefPanel}
       {hookRetentionPanel}
+      {captionMotionPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState

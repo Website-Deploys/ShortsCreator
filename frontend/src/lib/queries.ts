@@ -48,6 +48,7 @@ import type {
   AlertsResponse,
   AuditResponse,
   BobaBrainStateV1,
+  BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
@@ -94,6 +95,8 @@ export const queryKeys = {
     ["boba", "projects", id, "clip-briefs"] as const,
   bobaHookRetention: (id: string) =>
     ["boba", "projects", id, "hook-retention"] as const,
+  bobaCaptionMotion: (id: string) =>
+    ["boba", "projects", id, "caption-motion"] as const,
   creatorProfiles: ["personalization", "profiles"] as const,
   creatorPersonalizationSummary: ["personalization", "summary"] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
@@ -424,6 +427,31 @@ export function useCreateBobaHookRetention(projectId: string) {
     mutationFn: () => api.createBobaHookRetention(projectId),
     onSuccess: (result) => {
       qc.setQueryData(queryKeys.bobaHookRetention(projectId), result);
+    },
+  });
+}
+
+export function useBobaCaptionMotion(projectId: string) {
+  return useQuery<BobaCaptionMotionRecommendationSetV1 | null>({
+    queryKey: queryKeys.bobaCaptionMotion(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaCaptionMotion(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useCreateBobaCaptionMotion(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.createBobaCaptionMotion(projectId),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaCaptionMotion(projectId), result);
     },
   });
 }

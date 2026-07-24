@@ -1445,6 +1445,9 @@ export type BobaCaptionStyle =
   | "emotional_emphasis"
   | "keyword_highlight"
   | "minimal"
+  | "punchline_caption"
+  | "educational_steps"
+  | "no_captions"
   | "none";
 
 export type BobaMotionStyle =
@@ -1453,7 +1456,8 @@ export type BobaMotionStyle =
   | "dynamic_zoom"
   | "punch_in"
   | "high_motion"
-  | "layout_safe";
+  | "layout_safe"
+  | "minimal_motion";
 
 export type BobaMusicMood =
   | "none"
@@ -2057,6 +2061,138 @@ export interface BobaHookRetentionSetV1 {
   analyses: BobaHookRetentionAnalysisV1[];
   project_retention_summary: string;
   signal_usage: BobaHookRetentionSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export type BobaCaptionDensity = "low" | "medium" | "high";
+export type BobaCaptionRhythm = "calm" | "normal" | "fast" | "punchy";
+export type BobaMotionIntensity = "none" | "light" | "moderate" | "high";
+
+export interface BobaCaptionRecommendationV1 {
+  caption_style: BobaCaptionStyle;
+  caption_density: BobaCaptionDensity;
+  caption_rhythm: BobaCaptionRhythm;
+  hook_caption_instruction: string;
+  keyword_highlights: string[];
+  emotional_emphasis_words: string[];
+  payoff_caption_instruction: string;
+  readability_notes: string[];
+  avoid_this: string[];
+  reason: string;
+}
+
+export interface BobaMotionRecommendationV1 {
+  motion_style: BobaMotionStyle;
+  motion_intensity: BobaMotionIntensity;
+  zoom_moments: string[];
+  punch_in_moments: string[];
+  stable_moments: string[];
+  layout_safe_moments: string[];
+  visual_emphasis_moments: string[];
+  payoff_emphasis_moment: string;
+  avoid_this: string[];
+  reason: string;
+}
+
+export interface BobaCaptionMotionTimestampV1 {
+  start_seconds: number;
+  end_seconds: number;
+  action: string;
+  reason: string;
+  priority: "required" | "recommended" | "optional";
+}
+
+export interface BobaCaptionMotionTimingMapV1 {
+  seconds_0_to_3: string;
+  seconds_3_to_10: string;
+  middle_section: string;
+  payoff_section: string;
+  ending_section: string;
+  caption_highlight_timestamps: BobaCaptionMotionTimestampV1[];
+  motion_timestamps: BobaCaptionMotionTimestampV1[];
+}
+
+export interface BobaCaptionMotionSafetyReviewV1 {
+  face_cutoff_risk: boolean;
+  multi_speaker_layout_risk: boolean;
+  unavailable_face_signal_risk: boolean;
+  unavailable_layout_signal_risk: boolean;
+  caption_overload_risk: boolean;
+  readability_risk: boolean;
+  over_motion_risk: boolean;
+  under_motion_risk: boolean;
+  hook_distraction_risk: boolean;
+  blockers: string[];
+  warnings: string[];
+  fixes: string[];
+}
+
+export interface BobaCaptionMotionScoreV1 {
+  caption_fit_score: number;
+  caption_readability_score: number;
+  motion_fit_score: number;
+  motion_safety_score: number;
+  hook_support_score: number;
+  retention_support_score: number;
+  overall_recommendation_score: number;
+}
+
+export interface BobaCaptionMotionBriefEnhancementV1 {
+  brief_id: string;
+  improved_caption_instruction: string;
+  improved_motion_instruction: string;
+  keyword_highlights: string[];
+  zoom_notes: string[];
+  punch_in_notes: string[];
+  layout_safe_warning: string;
+  readability_warning: string;
+  apply_suggestion: false;
+}
+
+export interface BobaCaptionMotionSignalUsageV1 {
+  clip_briefs_used: boolean;
+  hook_retention_used: boolean;
+  creative_direction_used: boolean;
+  editorial_decision_used: boolean;
+  clip_ranking_used: boolean;
+  candidate_discovery_used: boolean;
+  whole_video_understanding_used: boolean;
+  explanation_used: boolean;
+  face_motion_validation_used: boolean;
+  multi_speaker_validation_used: boolean;
+  analysis_signals_used: boolean;
+  memory_used: boolean;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaCaptionMotionRecommendationV1 {
+  recommendation_id: string;
+  project_id: string;
+  candidate_id: string;
+  brief_id: string;
+  source_window: BobaSourceWindowV1;
+  caption_recommendation: BobaCaptionRecommendationV1;
+  motion_recommendation: BobaMotionRecommendationV1;
+  timing_map: BobaCaptionMotionTimingMapV1;
+  safety_review: BobaCaptionMotionSafetyReviewV1;
+  recommendation_score: BobaCaptionMotionScoreV1;
+  brief_enhancement: BobaCaptionMotionBriefEnhancementV1;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaCaptionMotionRecommendationSetV1 {
+  schema_version: "boba_caption_motion_recommendation_brain_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  recommendations: BobaCaptionMotionRecommendationV1[];
+  project_caption_motion_summary: string;
+  signal_usage: BobaCaptionMotionSignalUsageV1;
   warnings: string[];
   limitations: string[];
 }
