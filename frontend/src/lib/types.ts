@@ -2197,6 +2197,159 @@ export interface BobaCaptionMotionRecommendationSetV1 {
   limitations: string[];
 }
 
+export type BobaMusicMoodRecommendationNameV1 =
+  | "motivational"
+  | "emotional"
+  | "cinematic"
+  | "calm"
+  | "tense"
+  | "suspenseful"
+  | "inspiring"
+  | "funny"
+  | "dramatic"
+  | "educational_clean"
+  | "luxury"
+  | "heroic"
+  | "mysterious"
+  | "upbeat"
+  | "minimal"
+  | "no_music"
+  | "unknown";
+
+export type BobaAudioEnergyLevelV1 = "none" | "low" | "medium" | "high";
+export type BobaSpeechPriorityV1 = "low" | "medium" | "high" | "critical";
+export type BobaMusicMoodSfxIntensityV1 = "none" | "light" | "moderate" | "high";
+
+export interface BobaMusicMoodV1 {
+  primary_mood: BobaMusicMoodRecommendationNameV1;
+  secondary_mood: BobaMusicMoodRecommendationNameV1;
+  energy_level: BobaAudioEnergyLevelV1;
+  emotional_direction: string;
+  pacing_fit: string;
+  music_role:
+    | "support_speech"
+    | "build_emotion"
+    | "create_tension"
+    | "increase_energy"
+    | "preserve_silence"
+    | "emphasize_payoff"
+    | "stay_minimal";
+  avoid_this: string[];
+  reason: string;
+}
+
+export interface BobaAudioEnergyMapV1 {
+  seconds_0_to_3: string;
+  seconds_3_to_10: string;
+  middle_section: string;
+  payoff_section: string;
+  ending_section: string;
+  energy_shift_notes: string[];
+  silence_moments: string[];
+}
+
+export interface BobaSpeechClarityPlanV1 {
+  speech_priority: BobaSpeechPriorityV1;
+  ducking_guidance: string;
+  music_volume_guidance: string;
+  sfx_volume_guidance: string;
+  silence_guidance: string;
+  clarity_risk: boolean;
+  warnings: string[];
+}
+
+export interface BobaMusicMoodSfxRecommendationV1 {
+  sfx_intensity: BobaMusicMoodSfxIntensityV1;
+  hook_sfx_guidance: string;
+  transition_sfx_guidance: string;
+  payoff_sfx_guidance: string;
+  avoid_sfx_moments: string[];
+  reason: string;
+  warnings: string[];
+}
+
+export interface BobaAudioRiskReviewV1 {
+  music_overpowering_risk: boolean;
+  wrong_mood_risk: boolean;
+  speech_clarity_risk: boolean;
+  sfx_overload_risk: boolean;
+  silence_damage_risk: boolean;
+  emotional_mismatch_risk: boolean;
+  rights_review_required: boolean;
+  blockers: string[];
+  warnings: string[];
+  fixes: string[];
+}
+
+export interface BobaMusicMoodScoreV1 {
+  mood_fit_score: number;
+  speech_clarity_score: number;
+  sfx_fit_score: number;
+  emotional_fit_score: number;
+  retention_support_score: number;
+  overall_audio_score: number;
+}
+
+export interface BobaMusicMoodBriefEnhancementV1 {
+  brief_id: string;
+  improved_audio_instruction: string;
+  improved_music_mood: BobaMusicMoodRecommendationNameV1;
+  improved_sfx_instruction: string;
+  ducking_warning: string;
+  speech_clarity_warning: string;
+  rights_review_warning: string;
+  apply_suggestion: false;
+}
+
+export interface BobaMusicMoodSignalUsageV1 {
+  clip_briefs_used: boolean;
+  hook_retention_used: boolean;
+  caption_motion_used: boolean;
+  creative_direction_used: boolean;
+  editorial_decision_used: boolean;
+  clip_ranking_used: boolean;
+  candidate_discovery_used: boolean;
+  whole_video_understanding_used: boolean;
+  explanation_used: boolean;
+  audio_signals_used: boolean;
+  silence_signals_used: boolean;
+  music_manifest_seen: boolean;
+  memory_used: boolean;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaMusicMoodRecommendationV1 {
+  recommendation_id: string;
+  project_id: string;
+  candidate_id: string;
+  brief_id: string;
+  source_window: BobaSourceWindowV1;
+  music_mood: BobaMusicMoodV1;
+  audio_energy_map: BobaAudioEnergyMapV1;
+  speech_clarity_plan: BobaSpeechClarityPlanV1;
+  sfx_recommendation: BobaMusicMoodSfxRecommendationV1;
+  audio_risk_review: BobaAudioRiskReviewV1;
+  recommendation_score: BobaMusicMoodScoreV1;
+  brief_enhancement: BobaMusicMoodBriefEnhancementV1;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaMusicMoodRecommendationSetV1 {
+  schema_version: "boba_music_mood_brain_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  recommendations: BobaMusicMoodRecommendationV1[];
+  project_audio_summary: string;
+  signal_usage: BobaMusicMoodSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

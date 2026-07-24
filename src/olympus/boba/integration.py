@@ -54,6 +54,11 @@ from olympus.boba.memory_retrieval import (
     retrieve_for_editorial_policy,
     retrieve_for_project,
 )
+from olympus.boba.music_mood import (
+    BobaMusicMoodBrainV1,
+    BobaMusicMoodRecommendationSetV1,
+    music_manifest_awareness,
+)
 from olympus.boba.project_memory import build_and_save_project_memory
 from olympus.boba.ranking import rank_candidates
 from olympus.boba.reasoning import explain_clip_selection, summarize_project_understanding
@@ -68,7 +73,9 @@ from olympus.boba.whole_video import (
 )
 from olympus.data.repositories.project_repository import StorageProjectRepository
 from olympus.domain.contracts.storage import StoragePort
+from olympus.music import load_music_assets
 from olympus.personalization import apply as personalization
+from olympus.platform.config import get_settings
 from olympus.platform.errors import NotFoundError, ValidationError
 from olympus.utils import new_id
 
@@ -106,6 +113,7 @@ class BobaIntegration:
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
         self.hook_retention_brain = BobaHookRetentionBrainV1()
         self.caption_motion_brain = BobaCaptionMotionRecommendationBrainV1()
+        self.music_mood_brain = BobaMusicMoodBrainV1()
         self.whole_video = BobaWholeVideoUnderstandingEngine()
         self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
         self.clip_ranking = BobaClipRankingEngine()
@@ -332,6 +340,11 @@ class BobaIntegration:
             saved_caption_motion = self.store.load_caption_motion(project_id)
         except ValidationError as exc:
             warnings.append(f"BOBA caption-motion artifact is unreadable: {exc}")
+        saved_music_mood = None
+        try:
+            saved_music_mood = self.store.load_music_mood(project_id)
+        except ValidationError as exc:
+            warnings.append(f"BOBA music-mood artifact is unreadable: {exc}")
         face_motion_results: list[dict[str, Any]] = []
         multi_speaker_results: list[dict[str, Any]] = []
         for render in _list(render_manifest.get("renders")):
@@ -590,6 +603,12 @@ class BobaIntegration:
                 else {}
             ),
             "caption_motion_available": saved_caption_motion is not None,
+            "music_mood": (
+                saved_music_mood.model_dump(mode="json")
+                if saved_music_mood is not None
+                else {}
+            ),
+            "music_mood_available": saved_music_mood is not None,
             "face_motion_validation": (
                 {"project_id": project_id, "results": face_motion_results}
                 if face_motion_results
@@ -914,6 +933,40 @@ class BobaIntegration:
             ),
         )
         return self.store.save_caption_motion(recommendations)
+
+    async def generate_music_mood(
+        self,
+        project_id: str,
+    ) -> BobaMusicMoodRecommendationSetV1:
+        signals = await self.collect_project_signals(project_id)
+        try:
+            registry = load_music_assets(get_settings().rendering.asset_root)
+        except (OSError, ValueError):
+            manifest_metadata: dict[str, Any] = {}
+        else:
+            manifest_metadata = music_manifest_awareness(registry)
+        recommendations = self.music_mood_brain.analyze_from_signals(
+            project_id,
+            signals,
+            clip_briefs=self.store.load_clip_briefs(project_id),
+            hook_retention=self.store.load_hook_retention(project_id),
+            caption_motion=self.store.load_caption_motion(project_id),
+            creative_direction_v2=self.store.load_creative_direction_v2(project_id),
+            editorial_decisions=self.store.load_editorial_decisions(project_id),
+            clip_ranking=self.store.load_clip_ranking(project_id),
+            candidate_discovery=self.store.load_candidate_clip_discovery(project_id),
+            whole_video_understanding=self.store.load_whole_video_understanding(
+                project_id
+            ),
+            explanations=self.store.load_explanations(project_id),
+            music_manifest_metadata=manifest_metadata,
+            memory=(
+                self.store.load_project_memory(project_id)
+                if self.memory_enabled
+                else None
+            ),
+        )
+        return self.store.save_music_mood(recommendations)
 
     async def generate_creative_briefs(
         self, project_id: str
