@@ -34,6 +34,7 @@ from olympus.boba.creative_director import (
 )
 from olympus.boba.editorial_decision import BobaEditorialDecisionSetV1
 from olympus.boba.explanation import BobaExplanationSetV1
+from olympus.boba.hook_retention import BobaHookRetentionSetV1
 from olympus.boba.memory import sanitize_memory_payload
 from olympus.boba.memory_contracts import (
     BobaCreatorMemoryV1,
@@ -476,6 +477,26 @@ class BobaMemoryStore:
     def load_clip_briefs(self, project_id: str) -> BobaClipBriefSetV1 | None:
         raw = self._read(self.clip_briefs_path(project_id), None)
         return BobaClipBriefSetV1.model_validate(raw) if isinstance(raw, dict) else None
+
+    def hook_retention_path(self, project_id: str) -> Path:
+        return self._path(project_id, "hook_retention/index.json")
+
+    def save_hook_retention(
+        self, analysis: BobaHookRetentionSetV1
+    ) -> BobaHookRetentionSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                analysis.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            )
+            self._atomic_write(self.hook_retention_path(analysis.project_id), safe)
+        return analysis
+
+    def load_hook_retention(
+        self, project_id: str
+    ) -> BobaHookRetentionSetV1 | None:
+        raw = self._read(self.hook_retention_path(project_id), None)
+        return BobaHookRetentionSetV1.model_validate(raw) if isinstance(raw, dict) else None
 
     @staticmethod
     def _validate_memory_id(value: str, *, field: str) -> str:

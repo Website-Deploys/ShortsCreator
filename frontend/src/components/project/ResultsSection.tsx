@@ -17,6 +17,7 @@ import {
   useBobaCreativeBriefs,
   useBobaEditorialDecisions,
   useBobaExplanations,
+  useBobaHookRetention,
   useBobaProjectMemory,
   useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
@@ -24,6 +25,7 @@ import {
   useCreateBobaClipBriefs,
   useCreateBobaCreativeDirectionV2,
   useCreateBobaExplanations,
+  useCreateBobaHookRetention,
   useCreatorProfiles,
   useExportCreatorProfile,
   useDecideBobaCandidate,
@@ -50,6 +52,7 @@ import type {
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
+  BobaHookRetentionSetV1,
   BobaProjectMemoryV1,
   BobaWholeVideoUnderstandingV1,
   ClipPlan,
@@ -2003,6 +2006,204 @@ function BobaClipBriefPanel({
   );
 }
 
+function BobaHookRetentionPanel({
+  analysis,
+  generating,
+  canGenerate,
+  onGenerate,
+}: {
+  analysis: BobaHookRetentionSetV1 | null | undefined;
+  generating: boolean;
+  canGenerate: boolean;
+  onGenerate: () => void;
+}) {
+  return (
+    <section className="rounded-xl border border-fuchsia-300/20 bg-fuchsia-300/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            BOBA Hook + Retention Brain V1
+          </p>
+          <p className="text-xs text-muted">
+            Bounded hook alternatives and retention guidance from saved BOBA artifacts.
+            Advisory only; it does not edit or render media.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={!canGenerate || generating}
+          onClick={onGenerate}
+          className="rounded border border-fuchsia-200/30 px-2 py-1 text-[11px] text-fuchsia-100 hover:border-fuchsia-100 disabled:opacity-50"
+        >
+          {generating
+            ? "Analyzingâ€¦"
+            : analysis
+              ? "Refresh hook analysis"
+              : "Analyze hooks"}
+        </button>
+      </div>
+
+      {analysis ? (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <div className="rounded border border-white/10 p-3">
+            <p className="font-semibold text-white">Project retention summary</p>
+            <p className="mt-1">{analysis.project_retention_summary}</p>
+          </div>
+
+          {analysis.analyses.map((item) => {
+            const featuredAlternatives = item.hook_alternatives.filter((alternative) =>
+              ["best", "safest", "boldest"].includes(alternative.recommendation_label),
+            );
+            const activeRisks = [
+              [item.retention_risk_review.slow_start_risk, "Slow start"],
+              [item.retention_risk_review.unclear_context_risk, "Unclear context"],
+              [item.retention_risk_review.weak_payoff_risk, "Weak payoff"],
+              [item.retention_risk_review.filler_risk, "Filler"],
+              [item.retention_risk_review.over_editing_risk, "Over-editing"],
+              [item.retention_risk_review.under_editing_risk, "Under-editing"],
+              [item.retention_risk_review.caption_overload_risk, "Caption overload"],
+              [item.retention_risk_review.audio_distraction_risk, "Audio distraction"],
+            ]
+              .filter(([enabled]) => enabled)
+              .map(([, label]) => label);
+            return (
+              <article
+                key={item.analysis_id}
+                className="rounded border border-white/10 p-3"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-white">{item.candidate_id}</p>
+                    <p>
+                      {item.hook_analysis.hook_type.replace(/_/g, " ")} Â·{" "}
+                      {formatPercent(item.confidence)} evidence confidence
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded bg-fuchsia-200/10 px-2 py-1 text-fuchsia-100">
+                      Hook {Math.round(item.retention_score.hook_score)}/100
+                    </span>
+                    <span className="rounded bg-white/5 px-2 py-1 text-white">
+                      Retention{" "}
+                      {Math.round(item.retention_score.overall_retention_score)}/100
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-2 rounded border border-fuchsia-200/10 bg-fuchsia-200/[0.03] p-2">
+                  <p className="font-semibold text-fuchsia-100">Opening three seconds</p>
+                  <p className="mt-1">{item.retention_plan.seconds_0_to_3}</p>
+                  <p>Improved hook: {item.hook_analysis.improved_hook_direction}</p>
+                  <p>Pattern interrupt: {item.hook_analysis.pattern_interrupt}</p>
+                </div>
+
+                <div className="mt-2 grid gap-2 lg:grid-cols-3">
+                  {featuredAlternatives.map((alternative) => (
+                    <div
+                      key={alternative.alternative_id}
+                      className="rounded border border-white/10 p-2"
+                    >
+                      <p className="font-semibold text-white">
+                        {alternative.recommendation_label} Â·{" "}
+                        {alternative.hook_type.replace(/_/g, " ")}
+                      </p>
+                      <p className="mt-1">{alternative.opening_line_direction}</p>
+                      <p className="mt-1">
+                        Strength {Math.round(alternative.strength_score)}/100 Â· Risk{" "}
+                        {Math.round(alternative.risk_score)}/100
+                      </p>
+                      <p className="mt-1">May work: {alternative.why_it_may_work}</p>
+                      <p>May fail: {alternative.why_it_may_fail}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <details className="mt-2 rounded border border-white/10 p-2">
+                  <summary className="cursor-pointer font-semibold text-white">
+                    Retention plan and drop-off review
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    <p>0â€“3s: {item.retention_plan.seconds_0_to_3}</p>
+                    <p>3â€“10s: {item.retention_plan.seconds_3_to_10}</p>
+                    <p>Middle: {item.retention_plan.middle_hold_strategy}</p>
+                    <p>Payoff: {item.retention_plan.payoff_timing_strategy}</p>
+                    <p>Ending / replay: {item.retention_plan.ending_replay_trigger}</p>
+                    <p>
+                      Drop-off risks: {activeRisks.join(", ") || "None detected from saved metadata"}
+                    </p>
+                    <p>
+                      Risk fixes: {item.retention_risk_review.risk_fixes.join("; ") || "Human source review only"}
+                    </p>
+                  </div>
+                </details>
+
+                <details className="mt-2 rounded border border-white/10 p-2">
+                  <summary className="cursor-pointer font-semibold text-white">
+                    Clip brief enhancement suggestions
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    <p>
+                      Opening:{" "}
+                      {item.brief_enhancements.enhanced_opening_line_direction}
+                    </p>
+                    <p>
+                      Caption: {item.brief_enhancements.enhanced_caption_hook}
+                    </p>
+                    <p>
+                      Payoff: {item.brief_enhancements.enhanced_payoff_timing}
+                    </p>
+                    <p>
+                      Replay: {item.brief_enhancements.enhanced_replay_trigger}
+                    </p>
+                    <p className="text-amber-100">
+                      Not applied automatically:{" "}
+                      {item.brief_enhancements.retention_warning}
+                    </p>
+                  </div>
+                </details>
+
+                {(item.warnings.length > 0 || item.limitations.length > 0) && (
+                  <p className="mt-2 text-amber-100">
+                    Human review: {[...item.warnings, ...item.limitations]
+                      .slice(0, 8)
+                      .join("; ")}
+                  </p>
+                )}
+              </article>
+            );
+          })}
+
+          <details className="rounded border border-white/10 p-3">
+            <summary className="cursor-pointer font-semibold text-white">
+              Signal usage and limitations
+            </summary>
+            <div className="mt-2 space-y-1">
+              <p>
+                Fallback used: {analysis.signal_usage.fallback_used ? "Yes" : "No"} Â·
+                Missing:{" "}
+                {analysis.signal_usage.unavailable_signals.join(", ") ||
+                  "None reported"}
+              </p>
+              <p>
+                Warnings:{" "}
+                {[...analysis.warnings, ...analysis.signal_usage.warnings].join("; ") ||
+                  "None reported"}
+              </p>
+              <p>Limitations: {analysis.limitations.join("; ")}</p>
+            </div>
+          </details>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          {canGenerate
+            ? "No saved hook-retention artifact. Analyze the selected clip briefs."
+            : "Create selected clip briefs before running Hook + Retention Brain V1."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function BobaMemoryPanel({
   projectMemory,
   creatorMemory,
@@ -2906,6 +3107,8 @@ export function ResultsSection({
   const createCreativeDirectionV2 = useCreateBobaCreativeDirectionV2(projectId);
   const clipBriefsQuery = useBobaClipBriefs(projectId);
   const createClipBriefs = useCreateBobaClipBriefs(projectId);
+  const hookRetentionQuery = useBobaHookRetention(projectId);
+  const createHookRetention = useCreateBobaHookRetention(projectId);
   const renders = manifestQuery.data?.manifest.renders ?? [];
   const plans = plansQuery.data?.plans ?? [];
   const activeProfile = profilesQuery.data?.profiles.find(
@@ -2980,6 +3183,14 @@ export function ResultsSection({
       onGenerate={() => createClipBriefs.mutate()}
     />
   );
+  const hookRetentionPanel = (
+    <BobaHookRetentionPanel
+      analysis={hookRetentionQuery.data}
+      generating={createHookRetention.isPending}
+      canGenerate={Boolean(clipBriefsQuery.data?.selected_briefs.length)}
+      onGenerate={() => createHookRetention.mutate()}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -2994,6 +3205,7 @@ export function ResultsSection({
         {explanationPanel}
         {creativeDirectionV2Panel}
         {clipBriefPanel}
+        {hookRetentionPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -3021,6 +3233,7 @@ export function ResultsSection({
         {explanationPanel}
         {creativeDirectionV2Panel}
         {clipBriefPanel}
+        {hookRetentionPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -3044,6 +3257,7 @@ export function ResultsSection({
         {explanationPanel}
         {creativeDirectionV2Panel}
         {clipBriefPanel}
+        {hookRetentionPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -3067,6 +3281,7 @@ export function ResultsSection({
       {explanationPanel}
       {creativeDirectionV2Panel}
       {clipBriefPanel}
+      {hookRetentionPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState
