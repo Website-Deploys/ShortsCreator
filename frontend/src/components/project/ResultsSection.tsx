@@ -14,6 +14,7 @@ import {
   useBobaClipBriefs,
   useBobaClipRanking,
   useBobaCreativeDirectionV2,
+  useBobaCreatorLearning,
   useBobaCreatorMemory,
   useBobaCreativeBriefs,
   useBobaEditorialDecisions,
@@ -32,15 +33,19 @@ import {
   useCreateBobaMusicMood,
   useCreatorProfiles,
   useExportCreatorProfile,
+  useExportBobaCreatorLearning,
   useDecideBobaCandidate,
   useDecideBobaCreativeBrief,
   useDiscoverBobaCandidateClips,
   useGenerateBobaCreativeBriefs,
+  useGenerateBobaCreatorLearning,
   useGenerateBobaWholeVideoUnderstanding,
   usePlans,
   useRenderManifest,
   useResetCreatorProfile,
   useRankBobaCandidateClips,
+  useRecordBobaCreatorLearningEvent,
+  useResetBobaCreatorLearning,
   useScoreBobaCandidate,
   useSubmitClipFeedback,
   useUpdateCreatorProfile,
@@ -54,6 +59,8 @@ import type {
   BobaClipBriefSetV1,
   BobaClipRankingV1,
   BobaCreativeDirectionSetV2,
+  BobaCreatorFeedbackEventInput,
+  BobaCreatorFeedbackTargetType,
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
@@ -2553,10 +2560,309 @@ function BobaMusicMoodPanel({
   );
 }
 
+const creatorLearningTargetTypes: BobaCreatorFeedbackTargetType[] = [
+  "project",
+  "clip",
+  "candidate",
+  "ranked_clip",
+  "editorial_decision",
+  "explanation",
+  "creative_direction",
+  "clip_brief",
+  "hook_alternative",
+  "caption_motion",
+  "music_mood",
+];
+
+function BobaCreatorLearningPanel({
+  projectId,
+  creatorId,
+}: {
+  projectId: string;
+  creatorId?: string;
+}) {
+  const learningQuery = useBobaCreatorLearning(projectId);
+  const recordEvent = useRecordBobaCreatorLearningEvent(projectId);
+  const generateLearning = useGenerateBobaCreatorLearning(projectId);
+  const exportLearning = useExportBobaCreatorLearning(projectId);
+  const resetLearning = useResetBobaCreatorLearning(projectId);
+  const [targetType, setTargetType] =
+    useState<BobaCreatorFeedbackTargetType>("project");
+  const [targetId, setTargetId] = useState(projectId);
+  const [note, setNote] = useState("");
+  const [tags, setTags] = useState("");
+  const [rating, setRating] = useState("5");
+  const [status, setStatus] = useState("");
+  const learning = learningQuery.data;
+  const busy =
+    recordEvent.isPending ||
+    generateLearning.isPending ||
+    exportLearning.isPending ||
+    resetLearning.isPending;
+
+  function parsedTags() {
+    return tags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .slice(0, 24);
+  }
+
+  function submitEvent(
+    eventType: BobaCreatorFeedbackEventInput["event_type"],
+    userAction: BobaCreatorFeedbackEventInput["user_action"],
+    eventRating?: number,
+  ) {
+    if (!targetId.trim()) {
+      setStatus("Choose a target ID before recording feedback.");
+      return;
+    }
+    if (
+      (eventType === "preference_note" || eventType === "correction") &&
+      !note.trim()
+    ) {
+      setStatus("Add a short explicit note first.");
+      return;
+    }
+    if (eventType === "manual_tag" && parsedTags().length === 0) {
+      setStatus("Add at least one explicit preference tag first.");
+      return;
+    }
+    setStatus("");
+    recordEvent.mutate(
+      {
+        event_type: eventType,
+        target_type: targetType,
+        target_id: targetId.trim(),
+        user_action: userAction,
+        rating: eventRating,
+        note: note.trim(),
+        tags: parsedTags(),
+        reversible: true,
+      },
+      {
+        onSuccess: (event) => {
+          setStatus(
+            `Recorded ${event.event_type.replace(/_/g, " ")} feedback. Generate the profile when ready.`,
+          );
+          setNote("");
+          setTags("");
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function generate(dryRun: boolean) {
+    setStatus("");
+    generateLearning.mutate(
+      {
+        creator_id: creatorId ?? "local_creator",
+        dry_run: dryRun,
+      },
+      {
+        onSuccess: (result) =>
+          setStatus(
+            dryRun
+              ? `Dry run complete at ${formatPercent(result.learning_profile.confidence)} confidence; nothing was saved.`
+              : `Creator learning updated from ${result.audit_summary.total_events} explicit event(s).`,
+          ),
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function downloadExport() {
+    setStatus("");
+    exportLearning.mutate(undefined, {
+      onSuccess: (payload) => {
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {
+          type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `boba_creator_learning_${projectId}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        setStatus("Safe creator-learning export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's creator-learning profile and explicit event log? Other BOBA memory is preserved.",
+      )
+    ) {
+      return;
+    }
+    setStatus("");
+    resetLearning.mutate(undefined, {
+      onSuccess: () => setStatus("Project creator learning reset; other BOBA memory remains."),
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  const preferred = learning
+    ? [
+        ...learning.learning_profile.preferred_clip_types,
+        ...learning.learning_profile.preferred_hook_styles,
+        ...learning.learning_profile.preferred_caption_styles,
+        ...learning.learning_profile.preferred_motion_styles,
+        ...learning.learning_profile.preferred_music_moods,
+      ]
+    : [];
+  const avoided = learning
+    ? [
+        ...learning.learning_profile.avoided_clip_types,
+        ...learning.learning_profile.avoided_hook_styles,
+        ...learning.learning_profile.avoided_caption_styles,
+        ...learning.learning_profile.avoided_motion_styles,
+        ...learning.learning_profile.avoided_music_moods,
+      ]
+    : [];
+
+  return (
+    <div className="mt-4 border-t border-cyan-300/15 pt-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">Creator Learning Loop</p>
+          <p className="text-xs text-cyan-100">
+            BOBA learns only from feedback you submit.
+          </p>
+          <p className="text-[11px] text-muted">
+            Guidance remains advisory and is never applied automatically.
+          </p>
+        </div>
+        <span className="rounded bg-white/5 px-2 py-1 text-[11px] text-muted">
+          {learning
+            ? `${learning.audit_summary.total_events} event(s) · ${formatPercent(learning.learning_profile.confidence)} confidence`
+            : "Not generated"}
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <select
+          value={targetType}
+          onChange={(event) =>
+            setTargetType(event.target.value as BobaCreatorFeedbackTargetType)
+          }
+          className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white"
+        >
+          {creatorLearningTargetTypes.map((value) => (
+            <option key={value} value={value}>
+              {value.replace(/_/g, " ")}
+            </option>
+          ))}
+        </select>
+        <input
+          value={targetId}
+          maxLength={180}
+          onChange={(event) => setTargetId(event.target.value)}
+          placeholder="Target ID"
+          className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white placeholder:text-white/30"
+        />
+        <select
+          value={rating}
+          onChange={(event) => setRating(event.target.value)}
+          className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white"
+        >
+          {[5, 4, 3, 2, 1].map((value) => (
+            <option key={value} value={value}>
+              Rating {value}/5
+            </option>
+          ))}
+        </select>
+        <input
+          value={note}
+          maxLength={500}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="Explicit preference note or correction"
+          className="sm:col-span-2 rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white placeholder:text-white/30"
+        />
+        <input
+          value={tags}
+          maxLength={500}
+          onChange={(event) => setTags(event.target.value)}
+          placeholder="Tags, e.g. hook_style:curiosity_gap"
+          className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white placeholder:text-white/30"
+        />
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <button type="button" disabled={busy} onClick={() => submitEvent("approval", "approved")} className="rounded border border-emerald-300/30 px-2 py-1 text-[11px] text-emerald-100 disabled:opacity-50">Record approval</button>
+        <button type="button" disabled={busy} onClick={() => submitEvent("rejection", "rejected")} className="rounded border border-rose-300/30 px-2 py-1 text-[11px] text-rose-100 disabled:opacity-50">Record rejection</button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            const numericRating = Number(rating);
+            submitEvent(
+              "rating",
+              numericRating >= 4 ? "liked" : numericRating <= 2 ? "disliked" : "noted",
+              numericRating,
+            );
+          }}
+          className="rounded border border-white/10 px-2 py-1 text-[11px] text-white disabled:opacity-50"
+        >
+          Record rating
+        </button>
+        <button type="button" disabled={busy || !note.trim()} onClick={() => submitEvent("preference_note", "noted")} className="rounded border border-white/10 px-2 py-1 text-[11px] text-white disabled:opacity-50">Save note</button>
+        <button type="button" disabled={busy || !note.trim()} onClick={() => submitEvent("correction", "corrected")} className="rounded border border-white/10 px-2 py-1 text-[11px] text-white disabled:opacity-50">Save correction</button>
+        <button type="button" disabled={busy || parsedTags().length === 0} onClick={() => submitEvent("manual_tag", "tagged")} className="rounded border border-white/10 px-2 py-1 text-[11px] text-white disabled:opacity-50">Save tags</button>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <button type="button" disabled={busy} onClick={() => generate(false)} className="rounded bg-cyan-300/15 px-2.5 py-1.5 text-[11px] text-cyan-100 disabled:opacity-50">Update learning profile</button>
+        <button type="button" disabled={busy} onClick={() => generate(true)} className="rounded border border-white/10 px-2.5 py-1.5 text-[11px] text-muted disabled:opacity-50">Dry run</button>
+        <button type="button" disabled={busy || !learning} onClick={downloadExport} className="rounded border border-white/10 px-2.5 py-1.5 text-[11px] text-muted disabled:opacity-50">Export</button>
+        <button type="button" disabled={busy || !learning} onClick={reset} className="rounded border border-rose-300/20 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50">Reset project learning</button>
+      </div>
+
+      {learning && (
+        <details className="mt-3 rounded-lg border border-white/10 bg-black/10 p-3 text-xs text-muted">
+          <summary className="cursor-pointer font-semibold text-white">
+            Learned preferences and advisory guidance
+          </summary>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <p>Preferred: {preferred.slice(0, 8).join(", ") || "Not enough evidence"}</p>
+            <p>Avoided: {avoided.slice(0, 8).join(", ") || "Not enough evidence"}</p>
+            <p className="sm:col-span-2">
+              Repeated feedback: {learning.learning_profile.repeated_feedback.slice(0, 4).join("; ") || "None yet"}
+            </p>
+            <p className="sm:col-span-2">
+              Guidance: {learning.recommendation_guidance.general_guidance.slice(0, 4).join("; ")}
+            </p>
+            <p>
+              Audit: {learning.audit_summary.approval_count} approval(s), {learning.audit_summary.rejection_count} rejection(s), {learning.audit_summary.correction_count} correction(s)
+            </p>
+            <p>
+              Automatic application: {learning.recommendation_guidance.apply_automatically ? "Enabled" : "Disabled"}
+            </p>
+            {(learning.warnings.length > 0 || learning.learning_profile.warnings.length > 0) && (
+              <p className="sm:col-span-2 text-amber-100">
+                Review: {[...learning.warnings, ...learning.learning_profile.warnings].slice(0, 4).join("; ")}
+              </p>
+            )}
+          </div>
+        </details>
+      )}
+      {status && <p className="mt-2 text-[11px] text-cyan-100">{status}</p>}
+    </div>
+  );
+}
+
 function BobaMemoryPanel({
+  projectId,
+  creatorId,
   projectMemory,
   creatorMemory,
 }: {
+  projectId: string;
+  creatorId?: string;
   projectMemory: BobaProjectMemoryV1 | null | undefined;
   creatorMemory: BobaCreatorMemoryV1 | null | undefined;
 }) {
@@ -2609,6 +2915,7 @@ function BobaMemoryPanel({
           <p className="mt-1">Creator memory is not available.</p>
         )}
       </div>
+      <BobaCreatorLearningPanel projectId={projectId} creatorId={creatorId} />
     </section>
   );
 }
@@ -3471,6 +3778,8 @@ export function ResultsSection({
   const creatorMemoryQuery = useBobaCreatorMemory(activeProfile?.profile_id);
   const memoryPanel = (
     <BobaMemoryPanel
+      projectId={projectId}
+      creatorId={activeProfile?.profile_id}
       projectMemory={projectMemoryQuery.data}
       creatorMemory={creatorMemoryQuery.data}
     />
