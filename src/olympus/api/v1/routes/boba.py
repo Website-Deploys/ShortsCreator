@@ -449,6 +449,35 @@ async def get_hook_retention(
     return analysis.model_dump(mode="json")
 
 
+@router.post("/projects/{project_id}/caption-motion")
+async def create_caption_motion(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    recommendations = await boba.generate_caption_motion(project_id)
+    return recommendations.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/caption-motion")
+async def get_caption_motion(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    recommendations = boba.store.load_caption_motion(project_id)
+    if recommendations is None:
+        raise NotFoundError(
+            "BOBA caption and motion recommendations are not available.",
+            details={"project_id": project_id},
+        )
+    return recommendations.model_dump(mode="json")
+
+
 def _brief_decision(
     project_id: str,
     clip_id: str,

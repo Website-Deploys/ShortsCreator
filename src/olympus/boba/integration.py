@@ -7,6 +7,10 @@ from typing import Any
 
 from olympus.boba.approvals import BobaApprovalService
 from olympus.boba.brain import BobaBrain
+from olympus.boba.caption_motion import (
+    BobaCaptionMotionRecommendationBrainV1,
+    BobaCaptionMotionRecommendationSetV1,
+)
 from olympus.boba.clip_brief import BobaClipBriefGeneratorV1, BobaClipBriefSetV1
 from olympus.boba.clip_discovery import (
     BobaCandidateClipDiscoveryEngine,
@@ -101,6 +105,7 @@ class BobaIntegration:
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
         self.hook_retention_brain = BobaHookRetentionBrainV1()
+        self.caption_motion_brain = BobaCaptionMotionRecommendationBrainV1()
         self.whole_video = BobaWholeVideoUnderstandingEngine()
         self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
         self.clip_ranking = BobaClipRankingEngine()
@@ -322,6 +327,88 @@ class BobaIntegration:
             saved_hook_retention = self.store.load_hook_retention(project_id)
         except ValidationError as exc:
             warnings.append(f"BOBA hook-retention artifact is unreadable: {exc}")
+        saved_caption_motion = None
+        try:
+            saved_caption_motion = self.store.load_caption_motion(project_id)
+        except ValidationError as exc:
+            warnings.append(f"BOBA caption-motion artifact is unreadable: {exc}")
+        face_motion_results: list[dict[str, Any]] = []
+        multi_speaker_results: list[dict[str, Any]] = []
+        for render in _list(render_manifest.get("renders")):
+            render_data = _dict(render)
+            metadata = _dict(render_data.get("metadata"))
+            clip_id = str(
+                render_data.get("clip_id")
+                or metadata.get("candidate_id")
+                or metadata.get("clip_id")
+                or ""
+            )
+            if not clip_id:
+                continue
+            face_tracking = _dict(
+                metadata.get("face_tracking")
+                or metadata.get("face_tracking_plan")
+            )
+            motion_validation = _dict(metadata.get("motion_render_validation"))
+            if face_tracking or motion_validation:
+                face_motion_results.append(
+                    {
+                        "candidate_id": clip_id,
+                        "face_tracking_available": bool(
+                            face_tracking.get("applied")
+                            or face_tracking.get("applied_to_render")
+                            or face_tracking.get("keyframes_count")
+                        ),
+                        "face_cutoff_detected": bool(
+                            face_tracking.get("face_cutoff_detected")
+                            or motion_validation.get("face_cutoff_detected")
+                        ),
+                        "face_inside_safe_zone_ratio": face_tracking.get(
+                            "face_inside_safe_zone_ratio"
+                        ),
+                        "motion_render_passed": motion_validation.get("passed"),
+                        "warnings": [
+                            *(
+                                item
+                                for item in _list(face_tracking.get("warnings"))
+                                if isinstance(item, str)
+                            ),
+                            *(
+                                item
+                                for item in _list(motion_validation.get("warnings"))
+                                if isinstance(item, str)
+                            ),
+                        ][:16],
+                    }
+                )
+            layout = _dict(metadata.get("multi_speaker_layout_v2"))
+            layout_validation = _dict(metadata.get("multi_speaker_validation"))
+            if layout or layout_validation:
+                layout_decision = _dict(layout.get("layout_decision"))
+                multi_speaker_results.append(
+                    {
+                        "candidate_id": clip_id,
+                        "detected_speaker_count": layout.get("speaker_count"),
+                        "face_count_detected": layout.get("face_count"),
+                        "layout_strategy": (
+                            layout_validation.get("applied_mode")
+                            or layout_decision.get("mode")
+                            or layout.get("mode")
+                        ),
+                        "passed": layout_validation.get("passed"),
+                        "face_cutoff_detected": layout_validation.get(
+                            "face_cutoff_detected"
+                        ),
+                        "wrong_speaker_focus_warnings": _list(
+                            layout_validation.get("wrong_speaker_focus_warnings")
+                        )[:8],
+                        "warnings": [
+                            item
+                            for item in _list(layout_validation.get("warnings"))
+                            if isinstance(item, str)
+                        ][:16],
+                    }
+                )
         discovery_by_id = {
             item.candidate_id: item
             for item in (saved_discovery.candidates if saved_discovery is not None else [])
@@ -497,6 +584,22 @@ class BobaIntegration:
                 else {}
             ),
             "hook_retention_available": saved_hook_retention is not None,
+            "caption_motion": (
+                saved_caption_motion.model_dump(mode="json")
+                if saved_caption_motion is not None
+                else {}
+            ),
+            "caption_motion_available": saved_caption_motion is not None,
+            "face_motion_validation": (
+                {"project_id": project_id, "results": face_motion_results}
+                if face_motion_results
+                else {}
+            ),
+            "multi_speaker_validation": (
+                {"project_id": project_id, "results": multi_speaker_results}
+                if multi_speaker_results
+                else {}
+            ),
         }
 
     async def collect_clip_signals(self, project_id: str, clip_id: str) -> dict[str, Any]:
@@ -780,6 +883,37 @@ class BobaIntegration:
             memory=memory,
         )
         return self.store.save_hook_retention(analysis)
+
+    async def generate_caption_motion(
+        self,
+        project_id: str,
+    ) -> BobaCaptionMotionRecommendationSetV1:
+        signals = await self.collect_project_signals(project_id)
+        recommendations = self.caption_motion_brain.analyze_from_signals(
+            project_id,
+            signals,
+            clip_briefs=self.store.load_clip_briefs(project_id),
+            hook_retention=self.store.load_hook_retention(project_id),
+            creative_direction_v2=self.store.load_creative_direction_v2(project_id),
+            editorial_decisions=self.store.load_editorial_decisions(project_id),
+            clip_ranking=self.store.load_clip_ranking(project_id),
+            candidate_discovery=self.store.load_candidate_clip_discovery(project_id),
+            whole_video_understanding=self.store.load_whole_video_understanding(
+                project_id
+            ),
+            explanations=self.store.load_explanations(project_id),
+            face_motion_validation=_dict(signals.get("face_motion_validation")),
+            multi_speaker_validation=_dict(
+                signals.get("multi_speaker_validation")
+            ),
+            analysis_signals=_dict(signals.get("analysis_signals_v2")),
+            memory=(
+                self.store.load_project_memory(project_id)
+                if self.memory_enabled
+                else None
+            ),
+        )
+        return self.store.save_caption_motion(recommendations)
 
     async def generate_creative_briefs(
         self, project_id: str

@@ -69,6 +69,7 @@ import type {
   AlertsResponse,
   AuditResponse,
   BobaBrainStateV1,
+  BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
   BobaCandidateV1,
   BobaCandidatesResponse,
@@ -254,6 +255,15 @@ export const api = {
   createBobaHookRetention: (projectId: string) =>
     request<BobaHookRetentionSetV1>(
       `/boba/projects/${projectId}/hook-retention`,
+      { method: "POST" },
+    ),
+  getBobaCaptionMotion: (projectId: string) =>
+    request<BobaCaptionMotionRecommendationSetV1>(
+      `/boba/projects/${projectId}/caption-motion`,
+    ),
+  createBobaCaptionMotion: (projectId: string) =>
+    request<BobaCaptionMotionRecommendationSetV1>(
+      `/boba/projects/${projectId}/caption-motion`,
       { method: "POST" },
     ),
   decideBobaCreativeBrief: (

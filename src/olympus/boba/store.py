@@ -15,6 +15,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from olympus.boba.approvals import BobaApprovalEventV1, BobaApprovalTargetType
+from olympus.boba.caption_motion import BobaCaptionMotionRecommendationSetV1
 from olympus.boba.clip_brief import BobaClipBriefSetV1
 from olympus.boba.clip_discovery import BobaCandidateClipDiscoveryV1
 from olympus.boba.clip_ranking import (
@@ -497,6 +498,35 @@ class BobaMemoryStore:
     ) -> BobaHookRetentionSetV1 | None:
         raw = self._read(self.hook_retention_path(project_id), None)
         return BobaHookRetentionSetV1.model_validate(raw) if isinstance(raw, dict) else None
+
+    def caption_motion_path(self, project_id: str) -> Path:
+        return self._path(project_id, "caption_motion/index.json")
+
+    def save_caption_motion(
+        self,
+        recommendations: BobaCaptionMotionRecommendationSetV1,
+    ) -> BobaCaptionMotionRecommendationSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                recommendations.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            )
+            self._atomic_write(
+                self.caption_motion_path(recommendations.project_id),
+                safe,
+            )
+        return recommendations
+
+    def load_caption_motion(
+        self,
+        project_id: str,
+    ) -> BobaCaptionMotionRecommendationSetV1 | None:
+        raw = self._read(self.caption_motion_path(project_id), None)
+        return (
+            BobaCaptionMotionRecommendationSetV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
 
     @staticmethod
     def _validate_memory_id(value: str, *, field: str) -> str:
