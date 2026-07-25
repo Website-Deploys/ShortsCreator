@@ -221,4 +221,24 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).toContain("saved metadata only");
     expect(resultsSection).toContain("no rendered proof or audience-performance prediction");
   });
+
+  it("shows advisory experimentation plans without execution claims", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Experimentation System V1");
+    expect(resultsSection).toContain(
+      "Experiments are plans only. BOBA does not upload, render, or collect",
+    );
+    expect(resultsSection).toContain(
+      "Creator approval is required before treating any experiment as active.",
+    );
+    expect(resultsSection).toContain("Baseline");
+    expect(resultsSection).toContain("Changed variable:");
+    expect(resultsSection).toContain("Hypothesis");
+    expect(resultsSection).toContain("Success + risk");
+    expect(resultsSection).toContain("Rejected unsafe or unsupported ideas");
+    expect(resultsSection).toContain("Automatic application:");
+    expect(resultsSection).not.toContain("autoStartExperiment");
+    expect(resultsSection).not.toContain("collectViewerAnalytics");
+  });
 });

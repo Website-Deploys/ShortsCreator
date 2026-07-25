@@ -41,6 +41,10 @@ from olympus.boba.creator_learning import (
     BobaCreatorLearningSetV1,
 )
 from olympus.boba.editorial_decision import BobaEditorialDecisionSetV1
+from olympus.boba.experimentation import (
+    BobaExperimentationSetV1,
+    BobaExperimentManualResultV1,
+)
 from olympus.boba.explanation import BobaExplanationSetV1
 from olympus.boba.hook_retention import BobaHookRetentionSetV1
 from olympus.boba.memory import sanitize_memory_payload
@@ -577,6 +581,146 @@ class BobaMemoryStore:
             if isinstance(raw, dict)
             else None
         )
+
+    def experimentation_path(self, project_id: str) -> Path:
+        return self._path(project_id, "experimentation/index.json")
+
+    def experimentation_results_path(self, project_id: str) -> Path:
+        return self._path(project_id, "experimentation/results.jsonl")
+
+    def save_experimentation_plan(
+        self,
+        experimentation: BobaExperimentationSetV1,
+    ) -> BobaExperimentationSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                experimentation.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            )
+            self._atomic_write(
+                self.experimentation_path(experimentation.project_id),
+                safe,
+            )
+        return experimentation
+
+    def load_experimentation_plan(
+        self,
+        project_id: str,
+    ) -> BobaExperimentationSetV1 | None:
+        raw = self._read(self.experimentation_path(project_id), None)
+        return (
+            BobaExperimentationSetV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def record_manual_experiment_result(
+        self,
+        project_id: str,
+        result: BobaExperimentManualResultV1,
+    ) -> BobaExperimentManualResultV1:
+        safe_payload = sanitize_memory_payload(
+            result.model_dump(mode="json"),
+            max_excerpt_chars=max(self.max_excerpt_chars, 500),
+        )
+        safe_result = BobaExperimentManualResultV1.model_validate(safe_payload)
+        with self._lock:
+            results = self.list_manual_experiment_results(project_id)
+            existing = next(
+                (item for item in results if item.result_id == result.result_id),
+                None,
+            )
+            if existing is not None:
+                return existing
+            results.append(safe_result)
+            lines = [
+                json.dumps(item.model_dump(mode="json"), ensure_ascii=False)
+                for item in results[-500:]
+            ]
+            self._atomic_write_text(
+                self.experimentation_results_path(project_id),
+                "\n".join(lines) + "\n",
+            )
+        return safe_result
+
+    def list_manual_experiment_results(
+        self,
+        project_id: str,
+    ) -> list[BobaExperimentManualResultV1]:
+        path = self.experimentation_results_path(project_id)
+        try:
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise ValidationError(
+                "BOBA manual experiment result storage could not be read.",
+                details={"path": path.name},
+            ) from exc
+        results: list[BobaExperimentManualResultV1] = []
+        for line_number, line in enumerate(lines, start=1):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+                results.append(BobaExperimentManualResultV1.model_validate(raw))
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise ValidationError(
+                    "BOBA manual experiment result storage is corrupt.",
+                    details={"path": path.name, "line": line_number},
+                ) from exc
+        return results
+
+    def export_experimentation_plan(self, project_id: str) -> dict[str, Any]:
+        experimentation = self.load_experimentation_plan(project_id)
+        if experimentation is None:
+            raise ValidationError(
+                "BOBA experimentation plan is not available for export.",
+                details={"project_id": project_id},
+            )
+        manual_results = [
+            item.model_dump(mode="json", exclude={"creator_note"})
+            for item in self.list_manual_experiment_results(project_id)
+        ]
+        payload = {
+            "schema_version": "boba_experimentation_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "experimentation": experimentation.model_dump(mode="json"),
+            "manual_results": manual_results,
+            "privacy": {
+                "advisory_plans_only": True,
+                "manual_results_only": True,
+                "manual_notes_excluded": True,
+                "media_files_excluded": True,
+                "source_text_excluded": True,
+                "credentials_excluded": True,
+                "viewer_analytics_excluded": True,
+            },
+        }
+        safe = sanitize_memory_payload(
+            payload,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA experimentation export is invalid.")
+        return safe
+
+    def reset_experimentation_plan(self, project_id: str) -> bool:
+        paths = (
+            self.experimentation_path(project_id),
+            self.experimentation_results_path(project_id),
+        )
+        removed = False
+        with self._lock:
+            for path in paths:
+                if path.exists():
+                    path.unlink()
+                    removed = True
+            directory = self.experimentation_path(project_id).parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
 
     def approval_rejection_learning_path(self, project_id: str) -> Path:
         return self._path(project_id, "approval_rejection_learning/index.json")

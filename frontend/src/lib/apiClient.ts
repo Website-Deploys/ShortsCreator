@@ -84,6 +84,8 @@ import type {
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
+  BobaExperimentationSetV1,
+  BobaExperimentManualResultV1,
   BobaGlobalMemoryV1,
   BobaHookRetentionSetV1,
   BobaMusicMoodRecommendationSetV1,
@@ -279,6 +281,37 @@ export const api = {
     request<BobaMusicMoodRecommendationSetV1>(
       `/boba/projects/${projectId}/music-mood`,
       { method: "POST" },
+    ),
+  getBobaExperimentation: (projectId: string) =>
+    request<BobaExperimentationSetV1>(
+      `/boba/projects/${projectId}/experimentation`,
+    ),
+  generateBobaExperimentation: (
+    projectId: string,
+    input: { creator_id?: string; dry_run?: boolean } = {},
+  ) =>
+    request<BobaExperimentationSetV1>(
+      `/boba/projects/${projectId}/experimentation`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  exportBobaExperimentation: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/experimentation/export`,
+    ),
+  resetBobaExperimentation: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      experimentation_removed: boolean;
+      unrelated_memory_removed: boolean;
+    }>(`/boba/projects/${projectId}/experimentation`, { method: "DELETE" }),
+  recordBobaExperimentManualResult: (
+    projectId: string,
+    input: Omit<BobaExperimentManualResultV1, "result_id" | "created_at" | "warnings">,
+  ) =>
+    request<BobaExperimentManualResultV1>(
+      `/boba/projects/${projectId}/experimentation/results`,
+      { method: "POST", body: JSON.stringify(input) },
     ),
   getBobaCreatorLearning: (projectId: string) =>
     request<BobaCreatorLearningSetV1>(

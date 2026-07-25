@@ -55,6 +55,12 @@ from olympus.boba.editorial_decision import (
     BobaEditorialDecisionSetV1,
 )
 from olympus.boba.editorial_policy import create_editorial_policy
+from olympus.boba.experimentation import (
+    BobaExperimentationSetV1,
+    BobaExperimentationSystemV1,
+    BobaExperimentManualResultV1,
+    BobaExperimentOutcomeLabel,
+)
 from olympus.boba.explanation import BobaExplanationEngine, BobaExplanationSetV1
 from olympus.boba.global_memory import build_and_save_global_memory
 from olympus.boba.hook_retention import (
@@ -128,6 +134,7 @@ class BobaIntegration:
         self.hook_retention_brain = BobaHookRetentionBrainV1()
         self.caption_motion_brain = BobaCaptionMotionRecommendationBrainV1()
         self.music_mood_brain = BobaMusicMoodBrainV1()
+        self.experimentation_system = BobaExperimentationSystemV1()
         self.creator_learning_loop = BobaCreatorLearningLoopV1()
         self.approval_rejection_learning = BobaApprovalRejectionLearningV1()
         self.whole_video = BobaWholeVideoUnderstandingEngine()
@@ -1146,6 +1153,126 @@ class BobaIntegration:
             ),
         )
         return self.store.save_music_mood(recommendations)
+
+    async def generate_experimentation_plan(
+        self,
+        project_id: str,
+        *,
+        creator_id: str = "local_creator",
+        dry_run: bool = False,
+    ) -> BobaExperimentationSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        experimentation = self.experimentation_system.analyze(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+            clip_briefs=self.store.load_clip_briefs(project_id),
+            hook_retention=self.store.load_hook_retention(project_id),
+            caption_motion=self.store.load_caption_motion(project_id),
+            music_mood=self.store.load_music_mood(project_id),
+            creative_direction=self.store.load_creative_direction_v2(project_id),
+            editorial_decision=self.store.load_editorial_decisions(project_id),
+            explanation=self.store.load_explanations(project_id),
+            creator_learning=self.store.load_creator_learning(project_id),
+            approval_rejection_learning=(
+                self.store.load_approval_rejection_learning(project_id)
+            ),
+            boba_memory=(
+                self.store.load_project_memory(project_id)
+                if self.memory_enabled
+                else None
+            ),
+            dry_run=dry_run,
+        )
+        if creator_id != "local_creator":
+            experimentation.warnings = list(
+                dict.fromkeys(
+                    [
+                        *experimentation.warnings,
+                        (
+                            "Creator identifier selected the local advisory context; "
+                            "no cross-project profile data was copied."
+                        ),
+                    ]
+                )
+            )
+        if dry_run:
+            return experimentation
+        return self.store.save_experimentation_plan(experimentation)
+
+    def load_experimentation_plan(
+        self,
+        project_id: str,
+    ) -> BobaExperimentationSetV1 | None:
+        return self.store.load_experimentation_plan(project_id)
+
+    def export_experimentation_plan(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_experimentation_plan(project_id)
+
+    def reset_experimentation_plan(self, project_id: str) -> bool:
+        return self.store.reset_experimentation_plan(project_id)
+
+    def record_manual_experiment_result(
+        self,
+        project_id: str,
+        *,
+        experiment_id: str,
+        selected_variant_id: str,
+        manual_rating: float,
+        outcome_label: BobaExperimentOutcomeLabel,
+        creator_note: str = "",
+        should_feed_learning: bool = False,
+    ) -> BobaExperimentManualResultV1:
+        experimentation = self.store.load_experimentation_plan(project_id)
+        if experimentation is None:
+            raise ValidationError(
+                "BOBA experimentation plan is not available.",
+                details={"project_id": project_id},
+            )
+        experiment = next(
+            (
+                item
+                for item in experimentation.experiment_plans
+                if item.experiment_id == experiment_id
+            ),
+            None,
+        )
+        if experiment is None:
+            raise ValidationError(
+                "BOBA experiment was not found.",
+                details={
+                    "project_id": project_id,
+                    "experiment_id": experiment_id,
+                },
+            )
+        try:
+            result = self.experimentation_system.create_manual_result(
+                experiment,
+                selected_variant_id=selected_variant_id,
+                manual_rating=manual_rating,
+                outcome_label=outcome_label,
+                creator_note=creator_note,
+                should_feed_learning=should_feed_learning,
+            )
+        except ValueError as exc:
+            raise ValidationError(
+                "BOBA manual experiment result is invalid.",
+                details={"reason": str(exc)},
+            ) from exc
+        return self.store.record_manual_experiment_result(project_id, result)
+
+    async def apply_experiment_guidance_dry_run(
+        self,
+        project_id: str,
+        *,
+        creator_id: str = "local_creator",
+    ) -> BobaExperimentationSetV1:
+        return await self.generate_experimentation_plan(
+            project_id,
+            creator_id=creator_id,
+            dry_run=True,
+        )
 
     async def generate_creative_briefs(
         self, project_id: str

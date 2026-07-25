@@ -2722,6 +2722,222 @@ export interface BobaApprovalRejectionLearningSetV1 {
   limitations: string[];
 }
 
+export type BobaExperimentTargetType =
+  | "clip"
+  | "candidate"
+  | "clip_brief"
+  | "hook_alternative"
+  | "caption_motion"
+  | "music_mood"
+  | "creative_direction"
+  | "project";
+
+export type BobaExperimentType =
+  | "hook_ab_test"
+  | "caption_ab_test"
+  | "motion_ab_test"
+  | "music_mood_ab_test"
+  | "sfx_ab_test"
+  | "opening_ab_test"
+  | "retention_ab_test"
+  | "brief_ab_test"
+  | "project_style_test";
+
+export type BobaExperimentStatus =
+  | "draft"
+  | "needs_creator_approval"
+  | "approved"
+  | "rejected"
+  | "completed_manually"
+  | "cancelled";
+
+export type BobaExperimentVariantType =
+  | "hook"
+  | "caption"
+  | "motion"
+  | "music_mood"
+  | "sfx"
+  | "opening"
+  | "retention"
+  | "brief"
+  | "style";
+
+export type BobaExperimentPrimaryMetric =
+  | "manual_creator_preference"
+  | "approval_rate"
+  | "hook_quality_review"
+  | "retention_quality_review"
+  | "caption_readability_review"
+  | "motion_safety_review"
+  | "audio_fit_review"
+  | "future_viewer_retention"
+  | "future_viewer_engagement";
+
+export interface BobaExperimentBaselineV1 {
+  baseline_id: string;
+  source_artifact: string;
+  source_field: string;
+  summary: string;
+  current_instruction: string;
+  strengths: string[];
+  weaknesses: string[];
+  confidence: number;
+}
+
+export interface BobaExperimentVariantV1 {
+  variant_id: string;
+  label: string;
+  variant_type: BobaExperimentVariantType;
+  summary: string;
+  changed_variable: string;
+  instruction: string;
+  expected_effect: string;
+  risk: string;
+  should_test: boolean;
+  reason: string;
+}
+
+export interface BobaExperimentHypothesisV1 {
+  hypothesis_id: string;
+  statement: string;
+  reason: string;
+  expected_improvement_area: string;
+  confidence: number;
+  assumptions: string[];
+}
+
+export interface BobaExperimentMetricPlanV1 {
+  primary_metric: BobaExperimentPrimaryMetric;
+  secondary_metrics: BobaExperimentPrimaryMetric[];
+  manual_review_questions: string[];
+  required_result_fields: string[];
+  analytics_required_later: boolean;
+  notes: string[];
+}
+
+export interface BobaExperimentSuccessCriteriaV1 {
+  success_definition: string;
+  minimum_manual_rating: number;
+  approval_required: boolean;
+  failure_conditions: string[];
+  decision_rule: string;
+}
+
+export interface BobaExperimentRiskReviewV1 {
+  rights_risk: boolean;
+  clarity_risk: boolean;
+  over_editing_risk: boolean;
+  under_editing_risk: boolean;
+  misleading_hook_risk: boolean;
+  caption_overload_risk: boolean;
+  motion_safety_risk: boolean;
+  audio_mismatch_risk: boolean;
+  speech_clarity_risk: boolean;
+  warnings: string[];
+  blockers: string[];
+}
+
+export interface BobaExperimentLearningHandoffV1 {
+  consume_result_in_modules: string[];
+  feedback_to_collect: string[];
+  expected_learning_update: string;
+  approval_rejection_learning_target: string;
+  creator_learning_target: string;
+  apply_automatically: false;
+}
+
+export interface BobaExperimentPlanV1 {
+  experiment_id: string;
+  project_id: string;
+  target_type: BobaExperimentTargetType;
+  target_id: string;
+  candidate_id: string;
+  brief_id: string;
+  experiment_type: BobaExperimentType;
+  title: string;
+  baseline: BobaExperimentBaselineV1;
+  variants: BobaExperimentVariantV1[];
+  hypothesis: BobaExperimentHypothesisV1;
+  metric_plan: BobaExperimentMetricPlanV1;
+  success_criteria: BobaExperimentSuccessCriteriaV1;
+  risk_review: BobaExperimentRiskReviewV1;
+  learning_handoff: BobaExperimentLearningHandoffV1;
+  required_creator_approval: boolean;
+  status: BobaExperimentStatus;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRejectedExperimentIdeaV1 {
+  idea_id: string;
+  target_id: string;
+  experiment_type: BobaExperimentType;
+  reason_rejected: string;
+  risk: string;
+  warnings: string[];
+}
+
+export interface BobaExperimentApprovalRequirementV1 {
+  requirement_id: string;
+  experiment_id: string;
+  approval_type:
+    | "creator_approval"
+    | "rights_review"
+    | "human_review"
+    | "safety_review";
+  reason: string;
+  required_before_status: BobaExperimentStatus;
+  warnings: string[];
+}
+
+export interface BobaExperimentationSignalUsageV1 {
+  clip_briefs_used: boolean;
+  hook_retention_used: boolean;
+  caption_motion_used: boolean;
+  music_mood_used: boolean;
+  creative_direction_used: boolean;
+  editorial_decision_used: boolean;
+  explanation_used: boolean;
+  creator_learning_used: boolean;
+  approval_rejection_learning_used: boolean;
+  memory_used: boolean;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaExperimentationSetV1 {
+  schema_version: "boba_experimentation_system_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  experiment_plans: BobaExperimentPlanV1[];
+  rejected_experiment_ideas: BobaRejectedExperimentIdeaV1[];
+  experiment_summary: string;
+  approval_requirements: BobaExperimentApprovalRequirementV1[];
+  signal_usage: BobaExperimentationSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaExperimentManualResultV1 {
+  result_id: string;
+  experiment_id: string;
+  selected_variant_id: string;
+  manual_rating: number;
+  creator_note: string;
+  outcome_label:
+    | "baseline_preferred"
+    | "variant_preferred"
+    | "no_clear_winner"
+    | "rejected_all"
+    | "needs_more_review";
+  created_at: string;
+  should_feed_learning: boolean;
+  warnings: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

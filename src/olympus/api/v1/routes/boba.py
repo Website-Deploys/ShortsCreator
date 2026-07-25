@@ -19,6 +19,7 @@ from olympus.boba.creator_learning import (
     BobaCreatorUserAction,
 )
 from olympus.boba.creator_memory import build_and_save_creator_memory
+from olympus.boba.experimentation import BobaExperimentOutcomeLabel
 from olympus.boba.global_memory import build_and_save_global_memory
 from olympus.boba.memory_contracts import BobaMemoryQueryV1
 from olympus.boba.memory_learning import BobaMemoryLearner
@@ -100,6 +101,29 @@ class ApprovalRejectionLearningGenerateRequest(BaseModel):
         pattern=r"^[A-Za-z0-9_-]+$",
     )
     dry_run: bool = False
+
+
+class ExperimentationGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    creator_id: str = Field(
+        default="local_creator",
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    dry_run: bool = False
+
+
+class ExperimentManualResultRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    experiment_id: str = Field(min_length=1, max_length=128)
+    selected_variant_id: str = Field(min_length=1, max_length=128)
+    manual_rating: float = Field(ge=0.0, le=5.0)
+    creator_note: str = Field(default="", max_length=500)
+    outcome_label: BobaExperimentOutcomeLabel
+    should_feed_learning: bool = False
 
 
 class ScoutScoreRequest(BaseModel):
@@ -551,6 +575,94 @@ async def get_music_mood(
             details={"project_id": project_id},
         )
     return recommendations.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/experimentation")
+async def create_experimentation(
+    project_id: str,
+    body: ExperimentationGenerateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    experimentation = await boba.generate_experimentation_plan(
+        project_id,
+        creator_id=body.creator_id,
+        dry_run=body.dry_run,
+    )
+    return experimentation.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/experimentation")
+async def get_experimentation(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    experimentation = boba.load_experimentation_plan(project_id)
+    if experimentation is None:
+        raise NotFoundError(
+            "BOBA experimentation plan is not available.",
+            details={"project_id": project_id},
+        )
+    return experimentation.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/experimentation/export")
+async def export_experimentation(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_experimentation_plan(project_id) is None:
+        raise NotFoundError(
+            "BOBA experimentation plan is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_experimentation_plan(project_id)
+
+
+@router.delete("/projects/{project_id}/experimentation")
+async def reset_experimentation(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_experimentation_plan(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "experimentation_removed": removed,
+        "unrelated_memory_removed": False,
+    }
+
+
+@router.post("/projects/{project_id}/experimentation/results")
+async def record_experimentation_result(
+    project_id: str,
+    body: ExperimentManualResultRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    result = boba.record_manual_experiment_result(
+        project_id,
+        experiment_id=body.experiment_id,
+        selected_variant_id=body.selected_variant_id,
+        manual_rating=body.manual_rating,
+        outcome_label=body.outcome_label,
+        creator_note=body.creator_note,
+        should_feed_learning=body.should_feed_learning,
+    )
+    return result.model_dump(mode="json")
 
 
 @router.post("/projects/{project_id}/creator-learning/events")
