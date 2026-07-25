@@ -65,6 +65,7 @@ from olympus.boba.performance_feedback import (
     BobaPerformanceFeedbackEventV1,
     BobaPerformanceFeedbackSetV1,
 )
+from olympus.boba.research_brain import BobaResearchBrainSetV1
 from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
 from olympus.boba.whole_video import BobaWholeVideoUnderstandingV1
 from olympus.platform.errors import ValidationError
@@ -972,6 +973,86 @@ class BobaMemoryStore:
 
     def reset_content_scout_v2(self, project_id: str) -> bool:
         path = self.content_scout_v2_path(project_id)
+        removed = False
+        with self._lock:
+            if path.exists():
+                path.unlink()
+                removed = True
+            directory = path.parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
+
+    def research_brain_path(self, project_id: str) -> Path:
+        return self._path(project_id, "research_brain/index.json")
+
+    def save_research_brain(
+        self,
+        research: BobaResearchBrainSetV1,
+    ) -> BobaResearchBrainSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                research.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 700),
+            )
+            self._atomic_write(self.research_brain_path(research.project_id), safe)
+        return research
+
+    def load_research_brain(
+        self,
+        project_id: str,
+    ) -> BobaResearchBrainSetV1 | None:
+        raw = self._read(self.research_brain_path(project_id), None)
+        return (
+            BobaResearchBrainSetV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def export_research_brain(self, project_id: str) -> dict[str, Any]:
+        research = self.load_research_brain(project_id)
+        if research is None:
+            raise ValidationError(
+                "BOBA Research Brain V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = research.model_dump(mode="json")
+        for source in payload.get("imported_sources", []):
+            if isinstance(source, dict):
+                source.pop("source_path", None)
+        for source in payload.get("research_sources", []):
+            if isinstance(source, dict):
+                source.pop("rights_usage_notes", None)
+                source.pop("user_notes", None)
+        export = {
+            "schema_version": "boba_research_brain_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "research_brain": payload,
+            "privacy": {
+                "local_paths_excluded": True,
+                "raw_source_content_excluded": True,
+                "full_transcripts_excluded": True,
+                "media_files_excluded": True,
+                "user_notes_excluded": True,
+                "credentials_excluded": True,
+                "evidence_snippets_bounded": True,
+                "external_api_used": False,
+                "url_fetching_used": False,
+                "scraping_used": False,
+                "downloading_used": False,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 700),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Research Brain V1 export is invalid.")
+        return safe
+
+    def reset_research_brain(self, project_id: str) -> bool:
+        path = self.research_brain_path(project_id)
         removed = False
         with self._lock:
             if path.exists():

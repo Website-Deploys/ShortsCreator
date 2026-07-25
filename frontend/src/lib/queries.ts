@@ -69,6 +69,8 @@ import type {
   BobaPerformanceFeedbackEventInput,
   BobaPerformanceFeedbackSetV1,
   BobaProjectMemoryV1,
+  BobaResearchBrainGenerateInputV1,
+  BobaResearchBrainSetV1,
   BobaWholeVideoUnderstandingV1,
   CostEstimate,
   EnginesResponse,
@@ -94,6 +96,8 @@ export const queryKeys = {
     ["boba", "projects", id, "approval-rejection-learning"] as const,
   bobaContentScoutV2: (id: string) =>
     ["boba", "projects", id, "content-scout-v2"] as const,
+  bobaResearchBrain: (id: string) =>
+    ["boba", "projects", id, "research-brain"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -314,6 +318,50 @@ export function useResetBobaContentScoutV2(projectId: string) {
     mutationFn: () => api.resetBobaContentScoutV2(projectId),
     onSuccess: () => {
       queryClient.setQueryData(queryKeys.bobaContentScoutV2(projectId), null);
+    },
+  });
+}
+
+export function useBobaResearchBrain(projectId: string) {
+  return useQuery<BobaResearchBrainSetV1 | null>({
+    queryKey: queryKeys.bobaResearchBrain(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaResearchBrain(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useGenerateBobaResearchBrain(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaResearchBrainGenerateInputV1 = {}) =>
+      api.generateBobaResearchBrain(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(queryKeys.bobaResearchBrain(projectId), result);
+      }
+    },
+  });
+}
+
+export function useExportBobaResearchBrain(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaResearchBrain(projectId),
+  });
+}
+
+export function useResetBobaResearchBrain(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaResearchBrain(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(queryKeys.bobaResearchBrain(projectId), null);
     },
   });
 }

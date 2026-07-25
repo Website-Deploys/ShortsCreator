@@ -95,6 +95,10 @@ from olympus.boba.performance_feedback import (
 from olympus.boba.project_memory import build_and_save_project_memory
 from olympus.boba.ranking import rank_candidates
 from olympus.boba.reasoning import explain_clip_selection, summarize_project_understanding
+from olympus.boba.research_brain import (
+    BobaResearchBrainSetV1,
+    BobaResearchBrainV1,
+)
 from olympus.boba.scout import BobaScout
 from olympus.boba.store import BobaMemoryStore
 from olympus.boba.validation import compact_boba_summary
@@ -142,6 +146,7 @@ class BobaIntegration:
         self.bus = BobaDecisionBus(store)
         self.scout = BobaScout(store)
         self.content_scout_v2 = BobaContentScoutV2()
+        self.research_brain = BobaResearchBrainV1()
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1422,6 +1427,55 @@ class BobaIntegration:
 
     def reset_content_scout_v2(self, project_id: str) -> bool:
         return self.store.reset_content_scout_v2(project_id)
+
+    async def generate_research_brain(
+        self,
+        project_id: str,
+        *,
+        manual_sources: list[dict[str, Any]] | None = None,
+        pasted_text_entries: list[str | dict[str, Any]] | None = None,
+        import_paths: list[str] | None = None,
+        source_label: str = "manual",
+        dry_run: bool = False,
+    ) -> BobaResearchBrainSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        research = self.research_brain.analyze(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+            manual_sources=manual_sources or [],
+            pasted_text_entries=pasted_text_entries or [],
+            import_paths=import_paths or [],
+            source_label=source_label,
+            content_scout=self.store.load_content_scout_v2(project_id),
+            creator_learning=self.store.load_creator_learning(project_id),
+            approval_rejection_learning=(
+                self.store.load_approval_rejection_learning(project_id)
+            ),
+            performance_feedback=self.store.load_performance_feedback(project_id),
+            boba_memory=(
+                self.store.load_project_memory(project_id)
+                if self.memory_enabled
+                else None
+            ),
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return research
+        return self.store.save_research_brain(research)
+
+    def load_research_brain(
+        self,
+        project_id: str,
+    ) -> BobaResearchBrainSetV1 | None:
+        return self.store.load_research_brain(project_id)
+
+    def export_research_brain(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_research_brain(project_id)
+
+    def reset_research_brain(self, project_id: str) -> bool:
+        return self.store.reset_research_brain(project_id)
 
     async def generate_performance_feedback(
         self,

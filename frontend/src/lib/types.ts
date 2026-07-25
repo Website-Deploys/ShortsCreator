@@ -1270,6 +1270,184 @@ export interface BobaContentScoutGenerateInputV2 {
   dry_run?: boolean;
 }
 
+export type BobaResearchSourceTypeV1 =
+  | "txt"
+  | "md"
+  | "csv"
+  | "json"
+  | "manual"
+  | "pasted_text"
+  | "test_synthetic";
+
+export type BobaResearchInsightTypeV1 =
+  | "topic"
+  | "audience_pain"
+  | "audience_desire"
+  | "controversy"
+  | "tension"
+  | "story_angle"
+  | "hook_angle"
+  | "format_idea"
+  | "caution"
+  | "verification_needed";
+
+export type BobaResearchFormatStyleV1 =
+  | "story"
+  | "explainer"
+  | "list"
+  | "comparison"
+  | "myth_vs_fact"
+  | "mistake_to_avoid"
+  | "reaction"
+  | "tutorial"
+  | "transformation"
+  | "interview_clip"
+  | "commentary"
+  | "unknown";
+
+export interface BobaResearchImportSourceV1 {
+  import_id: string;
+  source_type: BobaResearchSourceTypeV1;
+  source_label: string;
+  source_path: string;
+  imported_at: string;
+  item_count: number;
+  accepted_count: number;
+  rejected_count: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaResearchEvidenceSnippetV1 {
+  snippet_id: string;
+  source_id: string;
+  snippet: string;
+  topic_tags: string[];
+  start_hint: string;
+  confidence: number;
+  usage_warning: string;
+}
+
+export interface BobaResearchSourceV1 {
+  research_source_id: string;
+  source_type: BobaResearchSourceTypeV1;
+  source_label: string;
+  title: string;
+  author_or_source_name: string;
+  published_at: string;
+  topic_tags: string[];
+  rights_usage_notes: string;
+  user_notes: string;
+  content_summary: string;
+  evidence_snippets: BobaResearchEvidenceSnippetV1[];
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaResearchInsightV1 {
+  insight_id: string;
+  insight_type: BobaResearchInsightTypeV1;
+  summary: string;
+  source_ids: string[];
+  evidence: BobaResearchEvidenceSnippetV1[];
+  content_opportunity: string;
+  risk: string;
+  confidence: number;
+  human_verification_required: boolean;
+  warnings: string[];
+}
+
+export interface BobaResearchShortsIdeaV1 {
+  idea_id: string;
+  title: string;
+  topic: string;
+  hook_direction: string;
+  target_viewer: string;
+  format_style: BobaResearchFormatStyleV1;
+  why_it_might_work: string;
+  source_ids: string[];
+  evidence: BobaResearchEvidenceSnippetV1[];
+  risk: string;
+  confidence: number;
+  human_review_required: boolean;
+}
+
+export interface BobaResearchSafetyReviewV1 {
+  weak_evidence_warnings: string[];
+  unverifiable_claim_warnings: string[];
+  copyrighted_content_warnings: string[];
+  sensitive_topic_warnings: string[];
+  rights_usage_warnings: string[];
+  human_verification_notes: string[];
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface BobaContentScoutResearchHandoffV1 {
+  recommended_topics: string[];
+  recommended_keywords: string[];
+  suggested_content_categories: string[];
+  avoid_topics: string[];
+  rights_review_reminders: string[];
+  suggested_review_questions: string[];
+  scout_item_notes: string[];
+  apply_automatically: false;
+}
+
+export interface BobaResearchSummaryV1 {
+  total_sources: number;
+  total_insights: number;
+  total_shorts_ideas: number;
+  strongest_topics: string[];
+  repeated_themes: string[];
+  strongest_audience_problems: string[];
+  strongest_hook_angles: string[];
+  weak_or_risky_claims: string[];
+  human_review_notes: string[];
+}
+
+export interface BobaResearchSignalUsageV1 {
+  content_scout_used: boolean;
+  creator_learning_used: boolean;
+  approval_rejection_learning_used: boolean;
+  performance_feedback_used: boolean;
+  memory_used: boolean;
+  local_import_used: boolean;
+  manual_input_used: boolean;
+  external_api_used: false;
+  url_fetching_used: false;
+  scraping_used: false;
+  downloading_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaResearchBrainSetV1 {
+  schema_version: "boba_research_brain_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  imported_sources: BobaResearchImportSourceV1[];
+  research_sources: BobaResearchSourceV1[];
+  research_insights: BobaResearchInsightV1[];
+  shorts_ideas: BobaResearchShortsIdeaV1[];
+  safety_review: BobaResearchSafetyReviewV1;
+  content_scout_handoff: BobaContentScoutResearchHandoffV1;
+  research_summary: BobaResearchSummaryV1;
+  signal_usage: BobaResearchSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaResearchBrainGenerateInputV1 {
+  manual_sources?: Record<string, unknown>[];
+  pasted_text_entries?: (string | Record<string, unknown>)[];
+  import_paths?: string[];
+  source_label?: string;
+  dry_run?: boolean;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;
