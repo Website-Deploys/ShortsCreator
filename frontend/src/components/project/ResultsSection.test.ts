@@ -149,6 +149,13 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).toContain("explicit feedback item(s)");
     expect(resultsSection).toContain("Memory used:");
     expect(resultsSection).toContain("No cloud sync or passive learning.");
+    expect(resultsSection).toContain("Approval / Rejection Learning");
+    expect(resultsSection).toContain(
+      "BOBA learns only from feedback you submit. Guidance is advisory unless",
+    );
+    expect(resultsSection).toContain("Analyze decisions");
+    expect(resultsSection).toContain("Reset analysis");
+    expect(resultsSection).not.toContain("collectImplicitApproval");
   });
 
   it("shows bounded whole-video understanding and signal limits", () => {

@@ -5,6 +5,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from olympus.boba.approval_rejection_learning import (
+    BobaApprovalRejectionLearningSetV1,
+    BobaApprovalRejectionLearningV1,
+    BobaApprovalRejectionModuleGuidanceV1,
+)
 from olympus.boba.approvals import BobaApprovalService
 from olympus.boba.brain import BobaBrain
 from olympus.boba.caption_motion import (
@@ -124,6 +129,7 @@ class BobaIntegration:
         self.caption_motion_brain = BobaCaptionMotionRecommendationBrainV1()
         self.music_mood_brain = BobaMusicMoodBrainV1()
         self.creator_learning_loop = BobaCreatorLearningLoopV1()
+        self.approval_rejection_learning = BobaApprovalRejectionLearningV1()
         self.whole_video = BobaWholeVideoUnderstandingEngine()
         self.candidate_discovery = BobaCandidateClipDiscoveryEngine()
         self.clip_ranking = BobaClipRankingEngine()
@@ -245,6 +251,64 @@ class BobaIntegration:
             dry_run=True,
         )
         return learning.recommendation_guidance
+
+    async def generate_approval_rejection_learning(
+        self,
+        project_id: str,
+        *,
+        creator_id: str = "local_creator",
+        dry_run: bool = False,
+    ) -> BobaApprovalRejectionLearningSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        artifacts = self._creator_learning_artifacts(project_id)
+        creator_memory = self.store.load_creator_memory(creator_id)
+        project_memory = self.store.load_project_memory(project_id)
+        learning = self.approval_rejection_learning.analyze(
+            project_id,
+            self.store.list_creator_feedback_events(project_id),
+            source_id=project.id,
+            creator_learning=self.store.load_creator_learning(project_id),
+            boba_memory=creator_memory or project_memory,
+            clip_ranking=artifacts["clip_ranking"],
+            editorial_decision=artifacts["editorial_decision"],
+            explanation=artifacts["explanation"],
+            creative_direction=artifacts["creative_direction"],
+            clip_briefs=artifacts["clip_briefs"],
+            hook_retention=artifacts["hook_retention"],
+            caption_motion=artifacts["caption_motion"],
+            music_mood=artifacts["music_mood"],
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return learning
+        return self.store.save_approval_rejection_learning(learning)
+
+    def load_approval_rejection_learning(
+        self,
+        project_id: str,
+    ) -> BobaApprovalRejectionLearningSetV1 | None:
+        return self.store.load_approval_rejection_learning(project_id)
+
+    def export_approval_rejection_learning(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_approval_rejection_learning(project_id)
+
+    def reset_approval_rejection_learning(self, project_id: str) -> bool:
+        return self.store.reset_approval_rejection_learning(project_id)
+
+    async def apply_approval_rejection_guidance_dry_run(
+        self,
+        project_id: str,
+        *,
+        creator_id: str = "local_creator",
+    ) -> BobaApprovalRejectionModuleGuidanceV1:
+        learning = await self.generate_approval_rejection_learning(
+            project_id,
+            creator_id=creator_id,
+            dry_run=True,
+        )
+        return learning.module_guidance
 
     async def _json(self, key: str) -> dict[str, Any]:
         if not await self.storage.exists(key):

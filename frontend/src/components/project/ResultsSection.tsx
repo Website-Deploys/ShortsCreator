@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { mediaUrls } from "@/lib/apiClient";
 import {
   useActivateCreatorProfile,
+  useBobaApprovalRejectionLearning,
   useBobaBrain,
   useBobaCaptionMotion,
   useBobaCandidateClipDiscovery,
@@ -33,16 +34,19 @@ import {
   useCreateBobaMusicMood,
   useCreatorProfiles,
   useExportCreatorProfile,
+  useExportBobaApprovalRejectionLearning,
   useExportBobaCreatorLearning,
   useDecideBobaCandidate,
   useDecideBobaCreativeBrief,
   useDiscoverBobaCandidateClips,
   useGenerateBobaCreativeBriefs,
+  useGenerateBobaApprovalRejectionLearning,
   useGenerateBobaCreatorLearning,
   useGenerateBobaWholeVideoUnderstanding,
   usePlans,
   useRenderManifest,
   useResetCreatorProfile,
+  useResetBobaApprovalRejectionLearning,
   useRankBobaCandidateClips,
   useRecordBobaCreatorLearningEvent,
   useResetBobaCreatorLearning,
@@ -2855,6 +2859,232 @@ function BobaCreatorLearningPanel({
   );
 }
 
+function BobaApprovalRejectionLearningPanel({
+  projectId,
+  creatorId,
+}: {
+  projectId: string;
+  creatorId?: string;
+}) {
+  const learningQuery = useBobaApprovalRejectionLearning(projectId);
+  const generateLearning = useGenerateBobaApprovalRejectionLearning(projectId);
+  const exportLearning = useExportBobaApprovalRejectionLearning(projectId);
+  const resetLearning = useResetBobaApprovalRejectionLearning(projectId);
+  const [status, setStatus] = useState("");
+  const learning = learningQuery.data;
+  const busy =
+    generateLearning.isPending ||
+    exportLearning.isPending ||
+    resetLearning.isPending;
+
+  function generate(dryRun: boolean) {
+    setStatus("");
+    generateLearning.mutate(
+      {
+        creator_id: creatorId ?? "local_creator",
+        dry_run: dryRun,
+      },
+      {
+        onSuccess: (result) =>
+          setStatus(
+            dryRun
+              ? `Dry run analyzed ${result.audit_summary.total_feedback_events_used} explicit event(s); nothing was saved.`
+              : `Decision learning updated with ${result.approval_cases.length} approval and ${result.rejection_cases.length} rejection case(s).`,
+          ),
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function downloadExport() {
+    setStatus("");
+    exportLearning.mutate(undefined, {
+      onSuccess: (payload) => {
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {
+          type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `boba_approval_rejection_learning_${projectId}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        setStatus("Safe approval/rejection learning export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset approval/rejection analysis only? Creator Learning events, profiles, and BOBA Memory are preserved.",
+      )
+    ) {
+      return;
+    }
+    setStatus("");
+    resetLearning.mutate(undefined, {
+      onSuccess: () =>
+        setStatus(
+          "Approval/rejection analysis reset; Creator Learning and Memory remain.",
+        ),
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  const moduleGuidance = learning
+    ? [
+        ...learning.module_guidance.ranking_guidance,
+        ...learning.module_guidance.editorial_guidance,
+        ...learning.module_guidance.creative_director_guidance,
+        ...learning.module_guidance.clip_brief_guidance,
+        ...learning.module_guidance.hook_retention_guidance,
+        ...learning.module_guidance.caption_motion_guidance,
+        ...learning.module_guidance.music_mood_guidance,
+        ...learning.module_guidance.explanation_guidance,
+        ...learning.module_guidance.general_guidance,
+      ]
+    : [];
+
+  return (
+    <div className="mt-4 border-t border-cyan-300/15 pt-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            Approval / Rejection Learning
+          </p>
+          <p className="text-xs text-cyan-100">
+            BOBA learns only from feedback you submit. Guidance is advisory unless
+            you approve applying it.
+          </p>
+          <p className="text-[11px] text-muted">
+            This analyzes saved explicit events; it does not collect hidden behavior.
+          </p>
+        </div>
+        <span className="rounded bg-white/5 px-2 py-1 text-[11px] text-muted">
+          {learning
+            ? `${learning.approval_cases.length} approved · ${learning.rejection_cases.length} rejected`
+            : "Not generated"}
+        </span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => generate(false)}
+          className="rounded bg-cyan-300/15 px-2.5 py-1.5 text-[11px] text-cyan-100 disabled:opacity-50"
+        >
+          Analyze decisions
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => generate(true)}
+          className="rounded border border-white/10 px-2.5 py-1.5 text-[11px] text-muted disabled:opacity-50"
+        >
+          Dry run
+        </button>
+        <button
+          type="button"
+          disabled={busy || !learning}
+          onClick={downloadExport}
+          className="rounded border border-white/10 px-2.5 py-1.5 text-[11px] text-muted disabled:opacity-50"
+        >
+          Export
+        </button>
+        <button
+          type="button"
+          disabled={busy || !learning}
+          onClick={reset}
+          className="rounded border border-rose-300/20 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+        >
+          Reset analysis
+        </button>
+      </div>
+
+      {learning && (
+        <details className="mt-3 rounded-lg border border-white/10 bg-black/10 p-3 text-xs text-muted">
+          <summary className="cursor-pointer font-semibold text-white">
+            Decision cases, patterns, and advisory guidance
+          </summary>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <p>
+              What BOBA got right:{" "}
+              {learning.approval_cases
+                .flatMap((item) => item.what_boba_got_right)
+                .slice(0, 3)
+                .join("; ") || "Not enough evidence"}
+            </p>
+            <p>
+              What BOBA got wrong:{" "}
+              {learning.rejection_cases
+                .flatMap((item) => item.what_boba_got_wrong)
+                .slice(0, 3)
+                .join("; ") || "Not enough evidence"}
+            </p>
+            <p>
+              Attribution:{" "}
+              {learning.decision_attributions
+                .slice(0, 4)
+                .map(
+                  (item) =>
+                    `${item.primary_module.replace(/_/g, " ")} (${formatPercent(item.confidence)})`,
+                )
+                .join("; ") || "Not available"}
+            </p>
+            <p>
+              Corrections:{" "}
+              {learning.rejection_cases
+                .flatMap((item) => item.correction_mapping)
+                .slice(0, 3)
+                .map((item) => item.suggested_correction)
+                .join("; ") || "None"}
+            </p>
+            <p className="sm:col-span-2">
+              Patterns:{" "}
+              {learning.pattern_scores
+                .slice(0, 5)
+                .map(
+                  (item) =>
+                    `${item.pattern_type.replace(/_/g, " ")}: ${item.summary}`,
+                )
+                .join("; ") || "Not enough repeated evidence"}
+            </p>
+            <p className="sm:col-span-2">
+              Module guidance: {moduleGuidance.slice(0, 5).join("; ") || "None yet"}
+            </p>
+            <p>
+              Attributed / unknown: {learning.audit_summary.attributed_cases} /{" "}
+              {learning.audit_summary.unattributed_cases}
+            </p>
+            <p>
+              Automatic application:{" "}
+              {learning.module_guidance.apply_automatically
+                ? "Enabled"
+                : "Disabled"}
+            </p>
+            {(learning.warnings.length > 0 ||
+              learning.audit_summary.warnings.length > 0) && (
+              <p className="sm:col-span-2 text-amber-100">
+                Review:{" "}
+                {[
+                  ...learning.warnings,
+                  ...learning.audit_summary.warnings,
+                ]
+                  .slice(0, 4)
+                  .join("; ")}
+              </p>
+            )}
+          </div>
+        </details>
+      )}
+      {status && <p className="mt-2 text-[11px] text-cyan-100">{status}</p>}
+    </div>
+  );
+}
+
 function BobaMemoryPanel({
   projectId,
   creatorId,
@@ -2916,6 +3146,10 @@ function BobaMemoryPanel({
         )}
       </div>
       <BobaCreatorLearningPanel projectId={projectId} creatorId={creatorId} />
+      <BobaApprovalRejectionLearningPanel
+        projectId={projectId}
+        creatorId={creatorId}
+      />
     </section>
   );
 }

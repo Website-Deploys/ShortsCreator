@@ -68,6 +68,7 @@ import type {
   AdminSnapshot,
   AlertsResponse,
   AuditResponse,
+  BobaApprovalRejectionLearningSetV1,
   BobaBrainStateV1,
   BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
@@ -310,6 +311,32 @@ export const api = {
       creator_learning_removed: boolean;
       unrelated_memory_removed: boolean;
     }>(`/boba/projects/${projectId}/creator-learning`, { method: "DELETE" }),
+  getBobaApprovalRejectionLearning: (projectId: string) =>
+    request<BobaApprovalRejectionLearningSetV1>(
+      `/boba/projects/${projectId}/approval-rejection-learning`,
+    ),
+  generateBobaApprovalRejectionLearning: (
+    projectId: string,
+    input: { creator_id?: string; dry_run?: boolean } = {},
+  ) =>
+    request<BobaApprovalRejectionLearningSetV1>(
+      `/boba/projects/${projectId}/approval-rejection-learning`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  exportBobaApprovalRejectionLearning: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/approval-rejection-learning/export`,
+    ),
+  resetBobaApprovalRejectionLearning: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      approval_rejection_learning_removed: boolean;
+      creator_learning_removed: boolean;
+      unrelated_memory_removed: boolean;
+    }>(`/boba/projects/${projectId}/approval-rejection-learning`, {
+      method: "DELETE",
+    }),
   decideBobaCreativeBrief: (
     projectId: string,
     clipId: string,
