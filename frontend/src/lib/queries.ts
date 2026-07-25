@@ -47,6 +47,7 @@ import type {
   AdminSnapshot,
   AlertsResponse,
   AuditResponse,
+  BobaApprovalRejectionLearningSetV1,
   BobaBrainStateV1,
   BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
@@ -84,6 +85,8 @@ export const queryKeys = {
   bobaCreatorMemory: (id: string) => ["boba", "memory", "creators", id] as const,
   bobaCreatorLearning: (id: string) =>
     ["boba", "projects", id, "creator-learning"] as const,
+  bobaApprovalRejectionLearning: (id: string) =>
+    ["boba", "projects", id, "approval-rejection-learning"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -228,6 +231,21 @@ export function useBobaCreatorLearning(projectId: string) {
     queryFn: async () => {
       try {
         return await api.getBobaCreatorLearning(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useBobaApprovalRejectionLearning(projectId: string) {
+  return useQuery<BobaApprovalRejectionLearningSetV1 | null>({
+    queryKey: queryKeys.bobaApprovalRejectionLearning(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaApprovalRejectionLearning(projectId);
       } catch (error) {
         if (error instanceof ApiClientError && error.status === 404) return null;
         throw error;
@@ -535,6 +553,41 @@ export function useResetBobaCreatorLearning(projectId: string) {
     mutationFn: () => api.resetBobaCreatorLearning(projectId),
     onSuccess: () => {
       queryClient.setQueryData(queryKeys.bobaCreatorLearning(projectId), null);
+    },
+  });
+}
+
+export function useGenerateBobaApprovalRejectionLearning(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { creator_id?: string; dry_run?: boolean } = {}) =>
+      api.generateBobaApprovalRejectionLearning(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(
+          queryKeys.bobaApprovalRejectionLearning(projectId),
+          result,
+        );
+      }
+    },
+  });
+}
+
+export function useExportBobaApprovalRejectionLearning(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaApprovalRejectionLearning(projectId),
+  });
+}
+
+export function useResetBobaApprovalRejectionLearning(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaApprovalRejectionLearning(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(
+        queryKeys.bobaApprovalRejectionLearning(projectId),
+        null,
+      );
     },
   });
 }

@@ -2539,6 +2539,189 @@ export interface BobaCreatorLearningSetV1 {
   limitations: string[];
 }
 
+export type BobaFeedbackFactorCategory =
+  | "clip_type"
+  | "hook"
+  | "retention"
+  | "pacing"
+  | "context"
+  | "payoff"
+  | "caption"
+  | "motion"
+  | "music_mood"
+  | "sfx"
+  | "speech_clarity"
+  | "editorial_selection"
+  | "ranking"
+  | "explanation_quality"
+  | "rights_risk"
+  | "render_readiness"
+  | "general";
+
+export type BobaDecisionAttributionModule =
+  | "candidate_discovery"
+  | "clip_ranking"
+  | "editorial_decision"
+  | "creative_director"
+  | "clip_brief"
+  | "hook_retention"
+  | "caption_motion"
+  | "music_mood"
+  | "explanation"
+  | "creator_learning"
+  | "unknown";
+
+export interface BobaFeedbackFactorV1 {
+  factor_id: string;
+  category: BobaFeedbackFactorCategory;
+  polarity: "positive" | "negative" | "neutral" | "uncertain";
+  summary: string;
+  source_artifact: string;
+  source_field: string;
+  confidence: number;
+  evidence_snippet: string;
+}
+
+export interface BobaCorrectionMappingV1 {
+  mapping_id: string;
+  feedback_event_id: string;
+  candidate_id: string;
+  problem_category: BobaFeedbackFactorCategory;
+  affected_module: BobaDecisionAttributionModule;
+  suggested_correction: string;
+  future_rule_hint: string;
+  strength: number;
+  confidence: number;
+  apply_automatically: false;
+}
+
+export interface BobaApprovalLearningCaseV1 {
+  case_id: string;
+  project_id: string;
+  feedback_event_id: string;
+  target_type: string;
+  target_id: string;
+  candidate_id: string;
+  approved_reason_summary: string;
+  what_boba_got_right: string[];
+  approval_factors: BobaFeedbackFactorV1[];
+  supporting_evidence: string[];
+  reusable_pattern: string;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRejectionLearningCaseV1 {
+  case_id: string;
+  project_id: string;
+  feedback_event_id: string;
+  target_type: string;
+  target_id: string;
+  candidate_id: string;
+  rejected_reason_summary: string;
+  likely_rejection_causes: BobaFeedbackFactorV1[];
+  what_boba_got_wrong: string[];
+  supporting_evidence: string[];
+  correction_mapping: BobaCorrectionMappingV1[];
+  future_avoidance_guidance: string[];
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaDecisionAttributionV1 {
+  attribution_id: string;
+  project_id: string;
+  feedback_event_id: string;
+  candidate_id: string;
+  primary_module: BobaDecisionAttributionModule;
+  secondary_modules: BobaDecisionAttributionModule[];
+  attribution_reason: string;
+  evidence: string[];
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaApprovalRejectionPatternScoreV1 {
+  pattern_id: string;
+  pattern_type:
+    | "repeated_approval"
+    | "repeated_rejection"
+    | "contradiction"
+    | "weak_signal"
+    | "strong_signal";
+  category: BobaFeedbackFactorCategory;
+  summary: string;
+  approval_count: number;
+  rejection_count: number;
+  contradiction_count: number;
+  confidence: number;
+  strength: number;
+  affected_modules: BobaDecisionAttributionModule[];
+  guidance: string;
+}
+
+export interface BobaApprovalRejectionModuleGuidanceV1 {
+  ranking_guidance: string[];
+  editorial_guidance: string[];
+  creative_director_guidance: string[];
+  clip_brief_guidance: string[];
+  hook_retention_guidance: string[];
+  caption_motion_guidance: string[];
+  music_mood_guidance: string[];
+  explanation_guidance: string[];
+  general_guidance: string[];
+  apply_automatically: false;
+}
+
+export interface BobaApprovalRejectionAuditSummaryV1 {
+  total_feedback_events_used: number;
+  approval_events_used: number;
+  rejection_events_used: number;
+  ambiguous_events: number;
+  attributed_cases: number;
+  unattributed_cases: number;
+  reversible: boolean;
+  dry_run: boolean;
+  export_available: boolean;
+  reset_available: boolean;
+  warnings: string[];
+}
+
+export interface BobaApprovalRejectionSignalUsageV1 {
+  creator_learning_used: boolean;
+  feedback_events_used: number;
+  memory_used: boolean;
+  clip_ranking_used: boolean;
+  editorial_decision_used: boolean;
+  explanation_used: boolean;
+  creative_direction_used: boolean;
+  clip_briefs_used: boolean;
+  hook_retention_used: boolean;
+  caption_motion_used: boolean;
+  music_mood_used: boolean;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaApprovalRejectionLearningSetV1 {
+  schema_version: "boba_approval_rejection_learning_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  approval_cases: BobaApprovalLearningCaseV1[];
+  rejection_cases: BobaRejectionLearningCaseV1[];
+  decision_attributions: BobaDecisionAttributionV1[];
+  pattern_scores: BobaApprovalRejectionPatternScoreV1[];
+  module_guidance: BobaApprovalRejectionModuleGuidanceV1;
+  audit_summary: BobaApprovalRejectionAuditSummaryV1;
+  signal_usage: BobaApprovalRejectionSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

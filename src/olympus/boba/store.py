@@ -14,6 +14,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from olympus.boba.approval_rejection_learning import (
+    BobaApprovalRejectionLearningSetV1,
+)
 from olympus.boba.approvals import BobaApprovalEventV1, BobaApprovalTargetType
 from olympus.boba.caption_motion import BobaCaptionMotionRecommendationSetV1
 from olympus.boba.clip_brief import BobaClipBriefSetV1
@@ -574,6 +577,97 @@ class BobaMemoryStore:
             if isinstance(raw, dict)
             else None
         )
+
+    def approval_rejection_learning_path(self, project_id: str) -> Path:
+        return self._path(project_id, "approval_rejection_learning/index.json")
+
+    def save_approval_rejection_learning(
+        self,
+        learning: BobaApprovalRejectionLearningSetV1,
+    ) -> BobaApprovalRejectionLearningSetV1:
+        with self._lock:
+            self._write(
+                self.approval_rejection_learning_path(learning.project_id),
+                {
+                    "schema_version": "boba_approval_rejection_learning_v1",
+                    "approval_rejection_learning": learning.model_dump(mode="json"),
+                },
+            )
+        return learning
+
+    def load_approval_rejection_learning(
+        self,
+        project_id: str,
+    ) -> BobaApprovalRejectionLearningSetV1 | None:
+        raw = self._read(self.approval_rejection_learning_path(project_id), None)
+        if not isinstance(raw, dict):
+            return None
+        value = raw.get("approval_rejection_learning", raw)
+        return (
+            BobaApprovalRejectionLearningSetV1.model_validate(value)
+            if isinstance(value, dict)
+            else None
+        )
+
+    def export_approval_rejection_learning(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        learning = self.load_approval_rejection_learning(project_id)
+        if learning is None:
+            raise ValidationError(
+                "BOBA approval/rejection learning is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = learning.model_dump(mode="json")
+        for case in payload.get("approval_cases", []):
+            if isinstance(case, dict):
+                case.pop("supporting_evidence", None)
+                for factor in case.get("approval_factors", []):
+                    if isinstance(factor, dict):
+                        factor.pop("evidence_snippet", None)
+        for case in payload.get("rejection_cases", []):
+            if isinstance(case, dict):
+                case.pop("supporting_evidence", None)
+                for factor in case.get("likely_rejection_causes", []):
+                    if isinstance(factor, dict):
+                        factor.pop("evidence_snippet", None)
+        for attribution in payload.get("decision_attributions", []):
+            if isinstance(attribution, dict):
+                attribution.pop("evidence", None)
+        export = {
+            "schema_version": "boba_approval_rejection_learning_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "approval_rejection_learning": payload,
+            "privacy": {
+                "explicit_feedback_only": True,
+                "compact_decision_learning_only": True,
+                "raw_feedback_notes_excluded": True,
+                "media_excluded": True,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=self.max_excerpt_chars,
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError(
+                "BOBA approval/rejection learning export is invalid."
+            )
+        return safe
+
+    def reset_approval_rejection_learning(self, project_id: str) -> bool:
+        path = self.approval_rejection_learning_path(project_id)
+        removed = False
+        with self._lock:
+            if path.exists():
+                path.unlink()
+                removed = True
+            directory = path.parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
 
     def creator_learning_path(self, project_id: str) -> Path:
         return self._path(project_id, "creator_learning/index.json")

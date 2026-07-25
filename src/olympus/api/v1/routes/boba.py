@@ -90,6 +90,18 @@ class CreatorLearningGenerateRequest(BaseModel):
     dry_run: bool = False
 
 
+class ApprovalRejectionLearningGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    creator_id: str = Field(
+        default="local_creator",
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    dry_run: bool = False
+
+
 class ScoutScoreRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -629,6 +641,76 @@ async def reset_creator_learning(
         "reset": True,
         "project_id": project_id,
         "creator_learning_removed": removed,
+        "unrelated_memory_removed": False,
+    }
+
+
+@router.post("/projects/{project_id}/approval-rejection-learning")
+async def generate_approval_rejection_learning(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    body: ApprovalRejectionLearningGenerateRequest | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    request = body or ApprovalRejectionLearningGenerateRequest()
+    learning = await boba.generate_approval_rejection_learning(
+        project_id,
+        creator_id=request.creator_id,
+        dry_run=dry_run or request.dry_run,
+    )
+    return learning.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/approval-rejection-learning")
+async def get_approval_rejection_learning(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    learning = boba.load_approval_rejection_learning(project_id)
+    if learning is None:
+        raise NotFoundError(
+            "BOBA approval/rejection learning is not available.",
+            details={"project_id": project_id},
+        )
+    return learning.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/approval-rejection-learning/export")
+async def export_approval_rejection_learning(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_approval_rejection_learning(project_id) is None:
+        raise NotFoundError(
+            "BOBA approval/rejection learning is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_approval_rejection_learning(project_id)
+
+
+@router.delete("/projects/{project_id}/approval-rejection-learning")
+async def reset_approval_rejection_learning(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_memory_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_approval_rejection_learning(project_id)
+    return {
+        "reset": True,
+        "project_id": project_id,
+        "approval_rejection_learning_removed": removed,
+        "creator_learning_removed": False,
         "unrelated_memory_removed": False,
     }
 
