@@ -20,6 +20,7 @@ import {
   useBobaCreativeBriefs,
   useBobaEditorialDecisions,
   useBobaExplanations,
+  useBobaExperimentation,
   useBobaHookRetention,
   useBobaMusicMood,
   useBobaProjectMemory,
@@ -36,17 +37,20 @@ import {
   useExportCreatorProfile,
   useExportBobaApprovalRejectionLearning,
   useExportBobaCreatorLearning,
+  useExportBobaExperimentation,
   useDecideBobaCandidate,
   useDecideBobaCreativeBrief,
   useDiscoverBobaCandidateClips,
   useGenerateBobaCreativeBriefs,
   useGenerateBobaApprovalRejectionLearning,
   useGenerateBobaCreatorLearning,
+  useGenerateBobaExperimentation,
   useGenerateBobaWholeVideoUnderstanding,
   usePlans,
   useRenderManifest,
   useResetCreatorProfile,
   useResetBobaApprovalRejectionLearning,
+  useResetBobaExperimentation,
   useRankBobaCandidateClips,
   useRecordBobaCreatorLearningEvent,
   useResetBobaCreatorLearning,
@@ -68,6 +72,7 @@ import type {
   BobaCreatorMemoryV1,
   BobaEditorialDecisionSetV1,
   BobaExplanationSetV1,
+  BobaExperimentationSetV1,
   BobaHookRetentionSetV1,
   BobaMusicMoodRecommendationSetV1,
   BobaProjectMemoryV1,
@@ -2564,6 +2569,277 @@ function BobaMusicMoodPanel({
   );
 }
 
+function BobaExperimentationPanel({
+  projectId,
+  canGenerate,
+}: {
+  projectId: string;
+  canGenerate: boolean;
+}) {
+  const experimentationQuery = useBobaExperimentation(projectId);
+  const generateExperimentation = useGenerateBobaExperimentation(projectId);
+  const exportExperimentation = useExportBobaExperimentation(projectId);
+  const resetExperimentation = useResetBobaExperimentation(projectId);
+  const [status, setStatus] = useState("");
+  const experimentation: BobaExperimentationSetV1 | null | undefined =
+    experimentationQuery.data;
+  const busy =
+    generateExperimentation.isPending ||
+    exportExperimentation.isPending ||
+    resetExperimentation.isPending;
+
+  function generate() {
+    setStatus("");
+    generateExperimentation.mutate(
+      { dry_run: false },
+      {
+        onSuccess: (result) => {
+          setStatus(
+            `Generated ${result.experiment_plans.length} advisory experiment plan(s).`,
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportPlan() {
+    exportExperimentation.mutate(undefined, {
+      onSuccess: (payload) => {
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {
+          type: "application/json",
+        });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `boba_experimentation_${projectId}.json`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+        setStatus("Safe experimentation export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's experiment plans and manual results only?",
+      )
+    ) {
+      return;
+    }
+    resetExperimentation.mutate(undefined, {
+      onSuccess: () => setStatus("Experimentation reset; other BOBA artifacts remain."),
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-fuchsia-300/20 bg-fuchsia-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            BOBA Experimentation System V1
+          </p>
+          <p className="text-xs text-muted">
+            Experiments are plans only. BOBA does not upload, render, or collect
+            analytics.
+          </p>
+          <p className="text-xs text-amber-100">
+            Creator approval is required before treating any experiment as active.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={!canGenerate || busy}
+            onClick={generate}
+            className="rounded border border-fuchsia-200/30 px-2 py-1 text-[11px] text-fuchsia-100 hover:border-fuchsia-100 disabled:opacity-50"
+          >
+            {generateExperimentation.isPending
+              ? "Planning..."
+              : experimentation
+                ? "Refresh experiments"
+                : "Plan experiments"}
+          </button>
+          <button
+            type="button"
+            disabled={!experimentation || busy}
+            onClick={exportPlan}
+            className="rounded border border-white/20 px-2 py-1 text-[11px] text-white disabled:opacity-50"
+          >
+            Export
+          </button>
+          <button
+            type="button"
+            disabled={!experimentation || busy}
+            onClick={reset}
+            className="rounded border border-rose-300/20 px-2 py-1 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset
+          </button>
+        </div>
+      </div>
+
+      {status && <p className="mt-2 text-xs text-muted">{status}</p>}
+
+      {experimentation ? (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <div className="rounded border border-white/10 p-3">
+            <p className="font-semibold text-white">Experiment summary</p>
+            <p className="mt-1">{experimentation.experiment_summary}</p>
+            <p className="mt-1">
+              {experimentation.experiment_plans.length} plan(s) ·{" "}
+              {experimentation.rejected_experiment_ideas.length} rejected idea(s) ·{" "}
+              {experimentation.approval_requirements.length} approval requirement(s)
+            </p>
+          </div>
+
+          {experimentation.experiment_plans.map((plan) => {
+            const riskLabels = Object.entries(plan.risk_review)
+              .filter(([, value]) => value === true)
+              .map(([name]) => name.replace(/_/g, " "));
+            const approvals = experimentation.approval_requirements.filter(
+              (item) => item.experiment_id === plan.experiment_id,
+            );
+            return (
+              <article
+                key={plan.experiment_id}
+                className="rounded border border-white/10 p-3"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-white">{plan.title}</p>
+                    <p>
+                      {plan.experiment_type.replace(/_/g, " ")} · Target{" "}
+                      {plan.target_id}
+                    </p>
+                  </div>
+                  <span className="rounded bg-fuchsia-200/10 px-2 py-1 text-fuchsia-100">
+                    {plan.status.replace(/_/g, " ")} ·{" "}
+                    {formatPercent(plan.confidence)}
+                  </span>
+                </div>
+
+                <div className="mt-2 rounded border border-fuchsia-200/10 p-2">
+                  <p className="font-semibold text-fuchsia-100">Baseline</p>
+                  <p>{plan.baseline.summary}</p>
+                  <p>{plan.baseline.current_instruction}</p>
+                  <p>
+                    Source: {plan.baseline.source_artifact}.
+                    {plan.baseline.source_field}
+                  </p>
+                </div>
+
+                <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                  {plan.variants.map((variant) => (
+                    <div
+                      key={variant.variant_id}
+                      className="rounded border border-white/10 p-2"
+                    >
+                      <p className="font-semibold text-white">{variant.label}</p>
+                      <p>{variant.instruction}</p>
+                      <p>Changed variable: {variant.changed_variable}</p>
+                      <p>Expected: {variant.expected_effect}</p>
+                      <p className={variant.should_test ? "" : "text-amber-100"}>
+                        {variant.should_test ? "Eligible for review" : "Do not test"}:{" "}
+                        {variant.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                  <div className="rounded border border-white/10 p-2">
+                    <p className="font-semibold text-white">Hypothesis</p>
+                    <p>{plan.hypothesis.statement}</p>
+                    <p>Manual metric: {plan.metric_plan.primary_metric}</p>
+                    <p>
+                      Future analytics required:{" "}
+                      {plan.metric_plan.analytics_required_later ? "Yes, later" : "No"}
+                    </p>
+                  </div>
+                  <div className="rounded border border-white/10 p-2">
+                    <p className="font-semibold text-white">Success + risk</p>
+                    <p>{plan.success_criteria.success_definition}</p>
+                    <p>
+                      Risks: {riskLabels.join(", ") || "No elevated flag reported"}
+                    </p>
+                    <p>
+                      Approval:{" "}
+                      {approvals.map((item) => item.approval_type).join(", ") ||
+                        "Creator approval"}
+                    </p>
+                  </div>
+                </div>
+
+                <details className="mt-2 rounded border border-white/10 p-2">
+                  <summary className="cursor-pointer font-semibold text-white">
+                    Learning handoff and limitations
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    <p>{plan.learning_handoff.expected_learning_update}</p>
+                    <p>
+                      Automatic application:{" "}
+                      {plan.learning_handoff.apply_automatically ? "Yes" : "No"}
+                    </p>
+                    <p>
+                      Warnings:{" "}
+                      {[...plan.warnings, ...plan.risk_review.warnings].join("; ") ||
+                        "None reported"}
+                    </p>
+                    <p>Limitations: {plan.limitations.join("; ")}</p>
+                  </div>
+                </details>
+              </article>
+            );
+          })}
+
+          {experimentation.rejected_experiment_ideas.length > 0 && (
+            <details className="rounded border border-rose-300/20 p-3">
+              <summary className="cursor-pointer font-semibold text-rose-100">
+                Rejected unsafe or unsupported ideas
+              </summary>
+              <div className="mt-2 space-y-2">
+                {experimentation.rejected_experiment_ideas.map((idea) => (
+                  <div key={idea.idea_id}>
+                    <p className="font-semibold text-white">
+                      {idea.experiment_type.replace(/_/g, " ")} · {idea.target_id}
+                    </p>
+                    <p>{idea.reason_rejected}</p>
+                    <p>Risk: {idea.risk}</p>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
+          <details className="rounded border border-white/10 p-3">
+            <summary className="cursor-pointer font-semibold text-white">
+              Signal usage and system limits
+            </summary>
+            <div className="mt-2 space-y-1">
+              <p>
+                Missing:{" "}
+                {experimentation.signal_usage.unavailable_signals.join(", ") ||
+                  "None reported"}
+              </p>
+              <p>Warnings: {experimentation.warnings.join("; ")}</p>
+              <p>Limitations: {experimentation.limitations.join("; ")}</p>
+            </div>
+          </details>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted">
+          {canGenerate
+            ? "No saved experimentation artifact. Generate advisory plans from existing BOBA recommendations."
+            : "Create clip briefs or downstream BOBA recommendations before planning experiments."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 const creatorLearningTargetTypes: BobaCreatorFeedbackTargetType[] = [
   "project",
   "clip",
@@ -4109,6 +4385,17 @@ export function ResultsSection({
       onGenerate={() => createMusicMood.mutate()}
     />
   );
+  const experimentationPanel = (
+    <BobaExperimentationPanel
+      projectId={projectId}
+      canGenerate={Boolean(
+        clipBriefsQuery.data ||
+          hookRetentionQuery.data ||
+          captionMotionQuery.data ||
+          musicMoodQuery.data,
+      )}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -4126,6 +4413,7 @@ export function ResultsSection({
         {hookRetentionPanel}
         {captionMotionPanel}
         {musicMoodPanel}
+        {experimentationPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -4156,6 +4444,7 @@ export function ResultsSection({
         {hookRetentionPanel}
         {captionMotionPanel}
         {musicMoodPanel}
+        {experimentationPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -4182,6 +4471,7 @@ export function ResultsSection({
         {hookRetentionPanel}
         {captionMotionPanel}
         {musicMoodPanel}
+        {experimentationPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -4208,6 +4498,7 @@ export function ResultsSection({
       {hookRetentionPanel}
       {captionMotionPanel}
       {musicMoodPanel}
+      {experimentationPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState
