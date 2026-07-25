@@ -67,6 +67,7 @@ from olympus.boba.performance_feedback import (
 )
 from olympus.boba.research_brain import BobaResearchBrainSetV1
 from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
+from olympus.boba.trend_topic_watcher import BobaTrendTopicWatcherSetV1
 from olympus.boba.whole_video import BobaWholeVideoUnderstandingV1
 from olympus.platform.errors import ValidationError
 
@@ -1053,6 +1054,96 @@ class BobaMemoryStore:
 
     def reset_research_brain(self, project_id: str) -> bool:
         path = self.research_brain_path(project_id)
+        removed = False
+        with self._lock:
+            if path.exists():
+                path.unlink()
+                removed = True
+            directory = path.parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
+
+    def trend_topic_watcher_path(self, project_id: str) -> Path:
+        return self._path(project_id, "trend_topic_watcher/index.json")
+
+    def save_trend_topic_watcher(
+        self,
+        watcher: BobaTrendTopicWatcherSetV1,
+    ) -> BobaTrendTopicWatcherSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                watcher.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            )
+            self._atomic_write(
+                self.trend_topic_watcher_path(watcher.project_id),
+                safe,
+            )
+        return watcher
+
+    def load_trend_topic_watcher(
+        self,
+        project_id: str,
+    ) -> BobaTrendTopicWatcherSetV1 | None:
+        raw = self._read(self.trend_topic_watcher_path(project_id), None)
+        return (
+            BobaTrendTopicWatcherSetV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def export_trend_topic_watcher(self, project_id: str) -> dict[str, Any]:
+        watcher = self.load_trend_topic_watcher(project_id)
+        if watcher is None:
+            raise ValidationError(
+                "BOBA Trend / Topic Watcher V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = watcher.model_dump(mode="json")
+        for source in payload.get("imported_sources", []):
+            if isinstance(source, dict):
+                source.pop("source_path", None)
+        for snapshot in payload.get("topic_snapshots", []):
+            if not isinstance(snapshot, dict):
+                continue
+            snapshot.pop("source_notes", None)
+            for entry in snapshot.get("topics", []):
+                if isinstance(entry, dict):
+                    entry.pop("evidence_note", None)
+                    entry.pop("rights_safety_note", None)
+        export = {
+            "schema_version": "boba_trend_topic_watcher_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "trend_topic_watcher": payload,
+            "privacy": {
+                "local_paths_excluded": True,
+                "private_notes_excluded": True,
+                "raw_source_content_excluded": True,
+                "full_transcripts_excluded": True,
+                "media_files_excluded": True,
+                "credentials_excluded": True,
+                "external_api_used": False,
+                "url_fetching_used": False,
+                "scraping_used": False,
+                "platform_monitoring_used": False,
+                "downloading_used": False,
+                "not_real_time_verified": True,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError(
+                "BOBA Trend / Topic Watcher V1 export is invalid."
+            )
+        return safe
+
+    def reset_trend_topic_watcher(self, project_id: str) -> bool:
+        path = self.trend_topic_watcher_path(project_id)
         removed = False
         with self._lock:
             if path.exists():

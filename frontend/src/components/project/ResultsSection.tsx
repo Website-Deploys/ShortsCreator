@@ -27,6 +27,7 @@ import {
   useBobaPerformanceFeedback,
   useBobaProjectMemory,
   useBobaResearchBrain,
+  useBobaTrendTopicWatcher,
   useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
   useCreateBobaEditorialDecisions,
@@ -44,6 +45,7 @@ import {
   useExportBobaExperimentation,
   useExportBobaPerformanceFeedback,
   useExportBobaResearchBrain,
+  useExportBobaTrendTopicWatcher,
   useDecideBobaCandidate,
   useDecideBobaCreativeBrief,
   useDiscoverBobaCandidateClips,
@@ -54,6 +56,7 @@ import {
   useGenerateBobaExperimentation,
   useGenerateBobaPerformanceFeedback,
   useGenerateBobaResearchBrain,
+  useGenerateBobaTrendTopicWatcher,
   useGenerateBobaWholeVideoUnderstanding,
   usePlans,
   useRenderManifest,
@@ -63,6 +66,7 @@ import {
   useResetBobaExperimentation,
   useResetBobaPerformanceFeedback,
   useResetBobaResearchBrain,
+  useResetBobaTrendTopicWatcher,
   useRankBobaCandidateClips,
   useRecordBobaCreatorLearningEvent,
   useRecordBobaPerformanceFeedbackEvent,
@@ -4987,6 +4991,439 @@ function BobaResearchBrainPanel({ projectId }: { projectId: string }) {
   );
 }
 
+function BobaTrendTopicWatcherPanel({ projectId }: { projectId: string }) {
+  const watcherQuery = useBobaTrendTopicWatcher(projectId);
+  const generateWatcher = useGenerateBobaTrendTopicWatcher(projectId);
+  const exportWatcher = useExportBobaTrendTopicWatcher(projectId);
+  const resetWatcher = useResetBobaTrendTopicWatcher(projectId);
+  const [manualJson, setManualJson] = useState("");
+  const [pastedTopics, setPastedTopics] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("manual");
+  const [status, setStatus] = useState("");
+  const watcher = watcherQuery.data;
+  const busy =
+    generateWatcher.isPending ||
+    exportWatcher.isPending ||
+    resetWatcher.isPending;
+  const movementGroups = watcher
+    ? [
+        {
+          label: "Repeated topics",
+          items: watcher.movement_analysis.repeated_topics,
+        },
+        {
+          label: "New topics",
+          items: watcher.movement_analysis.newly_appearing_topics,
+        },
+        {
+          label: "Rising within provided data",
+          items:
+            watcher.movement_analysis.rising_topics_within_provided_data,
+        },
+        {
+          label: "Fading within provided data",
+          items:
+            watcher.movement_analysis.fading_topics_within_provided_data,
+        },
+        {
+          label: "Stable topics",
+          items: watcher.movement_analysis.stable_topics,
+        },
+        {
+          label: "Uncertain topics",
+          items: watcher.movement_analysis.uncertain_topics,
+        },
+      ]
+    : [];
+
+  function generate() {
+    let manualSnapshots: Record<string, unknown>[] = [];
+    if (manualJson.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(manualJson);
+        if (
+          !Array.isArray(parsed) ||
+          parsed.some(
+            (item) =>
+              !item || typeof item !== "object" || Array.isArray(item),
+          )
+        ) {
+          setStatus("Manual snapshots must be a JSON array of objects.");
+          return;
+        }
+        manualSnapshots = parsed as Record<string, unknown>[];
+      } catch {
+        setStatus("Manual topic snapshots are not valid JSON.");
+        return;
+      }
+    }
+    setStatus("");
+    generateWatcher.mutate(
+      {
+        manual_snapshots: manualSnapshots,
+        pasted_topic_lists: pastedTopics.trim()
+          ? [pastedTopics.trim()]
+          : [],
+        source_label: sourceLabel.trim() || "manual",
+      },
+      {
+        onSuccess: (result) => {
+          setStatus(
+            `Watcher saved ${result.watcher_summary.total_snapshots} snapshot(s) and ${result.watcher_summary.watched_topic_count} watched topic(s).`,
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportWatcher.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(`boba-trend-topic-watcher-v1-${projectId}.json`, payload);
+        setStatus("Safe compact topic watcher export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's Trend / Topic Watcher V1 artifact only? Research Brain, Content Scout, learning, performance feedback, and memory remain.",
+      )
+    ) {
+      return;
+    }
+    resetWatcher.mutate(undefined, {
+      onSuccess: () => {
+        setStatus(
+          "Trend / Topic Watcher V1 reset; other BOBA artifacts remain.",
+        );
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-sky-300/20 bg-sky-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            BOBA Trend / Topic Watcher V1
+          </p>
+          <p className="text-xs text-muted">
+            Trend / Topic Watcher V1 uses local/user-provided topic data only.
+          </p>
+          <p className="text-xs text-muted">
+            Movement is measured only within provided data.
+          </p>
+          <p className="text-xs text-muted">
+            BOBA does not scrape platforms, fetch URLs, call external APIs, or verify real-time trends.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !watcher}
+            onClick={exportArtifact}
+            className="rounded border border-sky-200/30 px-2.5 py-1.5 text-[11px] text-sky-100 disabled:opacity-50"
+          >
+            Export safe watcher
+          </button>
+          <button
+            type="button"
+            disabled={busy || !watcher}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Watcher V1
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[10rem_1fr_1fr_auto]">
+        <label className="text-xs text-muted">
+          Source label
+          <input
+            value={sourceLabel}
+            onChange={(event) => setSourceLabel(event.target.value)}
+            maxLength={160}
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Manual snapshot JSON array
+          <textarea
+            value={manualJson}
+            onChange={(event) => setManualJson(event.target.value)}
+            rows={5}
+            placeholder='[{"source_label":"January","captured_at":"2026-01-01","topics":[{"topic":"creator workflow","frequency":10}]},{"source_label":"February","captured_at":"2026-02-01","topics":[{"topic":"creator workflow","frequency":18},{"topic":"story hooks"}]}]'
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Pasted compact topic list
+          <textarea
+            value={pastedTopics}
+            onChange={(event) => setPastedTopics(event.target.value)}
+            rows={5}
+            placeholder="creator workflow, story hooks, editing tutorial"
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={generate}
+          className="self-end rounded border border-sky-200/30 px-3 py-2 text-xs text-sky-100 disabled:opacity-50"
+        >
+          {generateWatcher.isPending
+            ? "Comparing snapshots…"
+            : "Build topic watchlist"}
+        </button>
+      </div>
+
+      {status && <p className="mt-2 text-xs text-sky-100">{status}</p>}
+      {watcherQuery.isError && (
+        <p className="mt-2 text-xs text-amber-100">
+          Trend / Topic Watcher V1 could not be loaded.
+        </p>
+      )}
+
+      {!watcher ? (
+        <p className="mt-4 text-xs text-muted">
+          No saved Trend / Topic Watcher V1 artifact is available. Add dated
+          local snapshots or a compact topic list to build one.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-2 text-xs text-muted sm:grid-cols-2 lg:grid-cols-5">
+            <p className="rounded border border-white/10 p-2">
+              Snapshots: {watcher.watcher_summary.total_snapshots}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Topics: {watcher.watcher_summary.total_topics}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Watched: {watcher.watcher_summary.watched_topic_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Rising: {watcher.watcher_summary.rising_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Confidence:{" "}
+              {formatPercent(watcher.confidence_review.overall_confidence)}
+            </p>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-sky-100">
+              Imported source summary
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {watcher.imported_sources.map((source) => (
+                <span
+                  key={source.import_id}
+                  className="rounded bg-white/5 px-2 py-1 text-[11px] text-muted"
+                >
+                  {source.source_label} · {readableName(source.source_type)} ·{" "}
+                  {source.accepted_count} accepted / {source.rejected_count}{" "}
+                  rejected
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-sky-100">
+                Topic snapshots
+              </p>
+              <div className="mt-2 space-y-2">
+                {watcher.topic_snapshots.slice(0, 12).map((snapshot) => (
+                  <article
+                    key={snapshot.snapshot_id}
+                    className="rounded border border-white/10 p-3 text-xs text-muted"
+                  >
+                    <p className="font-semibold text-white">
+                      {snapshot.source_label} · {snapshot.captured_at}
+                    </p>
+                    {snapshot.platform_label && (
+                      <p>Provided platform label: {snapshot.platform_label}</p>
+                    )}
+                    <p className="mt-1">
+                      {snapshot.topics
+                        .slice(0, 12)
+                        .map((topic) => topic.topic)
+                        .join(", ") || "No accepted topics"}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-sky-100">
+                Topic watchlist
+              </p>
+              <div className="mt-2 space-y-2">
+                {watcher.watched_topics.slice(0, 12).map((topic) => (
+                  <article
+                    key={topic.watched_topic_id}
+                    className="rounded border border-white/10 p-3 text-xs text-muted"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-semibold text-white">{topic.topic}</p>
+                      <span>{formatPercent(topic.confidence)}</span>
+                    </div>
+                    <p className="mt-1">{topic.reason_for_watch}</p>
+                    <p className="mt-1">
+                      Creator {formatPercent(topic.creator_fit)} · Research{" "}
+                      {formatPercent(topic.research_fit)} · Scout{" "}
+                      {formatPercent(topic.scout_fit)}
+                    </p>
+                    {topic.suggested_angles.slice(0, 2).map((angle) => (
+                      <p key={angle} className="mt-1">
+                        Angle: {angle}
+                      </p>
+                    ))}
+                  </article>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            {movementGroups.map((group) => (
+              <div key={group.label}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-sky-100">
+                  {group.label}
+                </p>
+                {group.items.length === 0 ? (
+                  <p className="mt-2 text-xs text-muted">No topics.</p>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    {group.items.slice(0, 8).map((item) => (
+                      <article
+                        key={`${group.label}-${item.normalized_topic}`}
+                        className="rounded border border-white/10 p-2 text-xs text-muted"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="font-semibold text-white">{item.topic}</p>
+                          <span>{formatPercent(item.confidence)}</span>
+                        </div>
+                        <p className="mt-1">{item.reason}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-sky-100">
+              Topic opportunity scores
+            </p>
+            <div className="mt-2 grid gap-2 lg:grid-cols-2">
+              {watcher.opportunity_scores.slice(0, 12).map((score) => (
+                <article
+                  key={score.normalized_topic}
+                  className="rounded border border-white/10 p-3 text-xs text-muted"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-semibold text-white">{score.topic}</p>
+                    <span>
+                      {formatPercent(score.overall_topic_priority_score)}
+                    </span>
+                  </div>
+                  <p className="mt-1">
+                    Creator {formatPercent(score.creator_fit_score)} · Research{" "}
+                    {formatPercent(score.research_support_score)} · Scout{" "}
+                    {formatPercent(score.scout_support_score)}
+                  </p>
+                  <p className="mt-1">
+                    Shortability {formatPercent(score.shortability_score)} · Hook{" "}
+                    {formatPercent(score.hook_potential_score)} · Risk{" "}
+                    {formatPercent(score.risk_score)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-sky-100">
+                Confidence review
+              </p>
+              <p className="mt-2 text-xs text-muted">
+                Not real-time verified:{" "}
+                {watcher.confidence_review.not_real_time_verified
+                  ? "Yes"
+                  : "No"}
+              </p>
+              {watcher.confidence_review.weak_data_warnings
+                .slice(0, 6)
+                .map((warning) => (
+                  <p key={warning} className="mt-1 text-xs text-amber-100">
+                    {warning}
+                  </p>
+                ))}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-sky-100">
+                Content Scout handoff
+              </p>
+              <p className="mt-2 text-xs text-muted">
+                Topics:{" "}
+                {watcher.content_scout_handoff.recommended_scout_topics.join(
+                  ", ",
+                ) || "Not available"}
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Auto-apply:{" "}
+                {watcher.content_scout_handoff.apply_automatically
+                  ? "Enabled"
+                  : "No"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-sky-100">
+                Research Brain handoff
+              </p>
+              <p className="mt-2 text-xs text-muted">
+                Topics:{" "}
+                {watcher.research_brain_handoff.recommended_research_topics.join(
+                  ", ",
+                ) || "Not available"}
+              </p>
+              {watcher.research_brain_handoff.claims_to_verify
+                .slice(0, 4)
+                .map((claim) => (
+                  <p key={claim} className="mt-1 text-xs text-muted">
+                    Verify: {claim}
+                  </p>
+                ))}
+            </div>
+          </div>
+
+          {(watcher.warnings.length > 0 ||
+            watcher.limitations.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Watcher notes:{" "}
+              {[...watcher.warnings, ...watcher.limitations]
+                .slice(0, 6)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -5811,6 +6248,9 @@ export function ResultsSection({
   const researchBrainPanel = (
     <BobaResearchBrainPanel projectId={projectId} />
   );
+  const trendTopicWatcherPanel = (
+    <BobaTrendTopicWatcherPanel projectId={projectId} />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -5833,6 +6273,7 @@ export function ResultsSection({
         {memoryPanel}
         {contentScoutV2Panel}
         {researchBrainPanel}
+        {trendTopicWatcherPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -5867,6 +6308,7 @@ export function ResultsSection({
         {memoryPanel}
         {contentScoutV2Panel}
         {researchBrainPanel}
+        {trendTopicWatcherPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -5897,6 +6339,7 @@ export function ResultsSection({
         {memoryPanel}
         {contentScoutV2Panel}
         {researchBrainPanel}
+        {trendTopicWatcherPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -5927,6 +6370,7 @@ export function ResultsSection({
       {memoryPanel}
       {contentScoutV2Panel}
       {researchBrainPanel}
+      {trendTopicWatcherPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

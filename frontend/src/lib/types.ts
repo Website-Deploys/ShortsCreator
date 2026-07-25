@@ -1448,6 +1448,208 @@ export interface BobaResearchBrainGenerateInputV1 {
   dry_run?: boolean;
 }
 
+export type BobaTrendTopicSourceTypeV1 =
+  | "csv"
+  | "json"
+  | "manual"
+  | "pasted_text"
+  | "research_brain"
+  | "content_scout"
+  | "test_synthetic";
+
+export type BobaTopicMovementTypeV1 =
+  | "repeated"
+  | "new"
+  | "rising_within_provided_data"
+  | "fading_within_provided_data"
+  | "stable"
+  | "duplicate_or_similar"
+  | "uncertain";
+
+export interface BobaTrendTopicImportSourceV1 {
+  import_id: string;
+  source_type: BobaTrendTopicSourceTypeV1;
+  source_label: string;
+  source_path: string;
+  imported_at: string;
+  item_count: number;
+  accepted_count: number;
+  rejected_count: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaTopicEntryV1 {
+  topic_id: string;
+  topic: string;
+  normalized_topic: string;
+  description: string;
+  tags: string[];
+  categories: string[];
+  user_rank: number | null;
+  user_frequency: number | null;
+  user_score: number | null;
+  source_label: string;
+  evidence_note: string;
+  rights_safety_note: string;
+  warnings: string[];
+}
+
+export interface BobaTopicSnapshotV1 {
+  snapshot_id: string;
+  source_label: string;
+  captured_at: string;
+  platform_label: string;
+  topics: BobaTopicEntryV1[];
+  source_notes: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaTopicMovementItemV1 {
+  topic: string;
+  normalized_topic: string;
+  movement_type: BobaTopicMovementTypeV1;
+  snapshot_count: number;
+  previous_score: number | null;
+  latest_score: number | null;
+  delta: number | null;
+  evidence_sources: string[];
+  reason: string;
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaTopicMovementAnalysisV1 {
+  repeated_topics: BobaTopicMovementItemV1[];
+  newly_appearing_topics: BobaTopicMovementItemV1[];
+  rising_topics_within_provided_data: BobaTopicMovementItemV1[];
+  fading_topics_within_provided_data: BobaTopicMovementItemV1[];
+  stable_topics: BobaTopicMovementItemV1[];
+  duplicate_or_similar_topics: BobaTopicMovementItemV1[];
+  uncertain_topics: BobaTopicMovementItemV1[];
+  analysis_notes: string[];
+  warnings: string[];
+}
+
+export interface BobaTopicOpportunityScoreV1 {
+  topic: string;
+  normalized_topic: string;
+  creator_fit_score: number;
+  research_support_score: number;
+  scout_support_score: number;
+  shortability_score: number;
+  hook_potential_score: number;
+  freshness_within_user_data_score: number;
+  risk_score: number;
+  overall_topic_priority_score: number;
+  confidence: number;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaWatchedTopicV1 {
+  watched_topic_id: string;
+  topic: string;
+  normalized_topic: string;
+  reason_for_watch: string;
+  creator_fit: number;
+  research_fit: number;
+  scout_fit: number;
+  content_angle_potential: number;
+  suggested_angles: string[];
+  human_review_notes: string[];
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaTrendConfidenceReviewV1 {
+  overall_confidence: number;
+  snapshot_count: number;
+  source_count: number;
+  strongest_evidence: string[];
+  weakest_evidence: string[];
+  not_real_time_verified: true;
+  weak_data_warnings: string[];
+  human_verification_notes: string[];
+  warnings: string[];
+}
+
+export interface BobaTrendContentScoutHandoffV1 {
+  recommended_scout_topics: string[];
+  recommended_keywords: string[];
+  recommended_categories: string[];
+  topics_to_avoid: string[];
+  rights_review_reminders: string[];
+  scout_review_questions: string[];
+  apply_automatically: false;
+}
+
+export interface BobaTrendResearchBrainHandoffV1 {
+  recommended_research_topics: string[];
+  claims_to_verify: string[];
+  audience_questions_to_research: string[];
+  sources_needed: string[];
+  apply_automatically: false;
+}
+
+export interface BobaTrendWatcherSummaryV1 {
+  total_snapshots: number;
+  total_topics: number;
+  watched_topic_count: number;
+  rising_count: number;
+  repeated_count: number;
+  fading_count: number;
+  strongest_topics: string[];
+  riskiest_topics: string[];
+  human_review_notes: string[];
+}
+
+export interface BobaTrendTopicSignalUsageV1 {
+  research_brain_used: boolean;
+  content_scout_used: boolean;
+  creator_learning_used: boolean;
+  performance_feedback_used: boolean;
+  memory_used: boolean;
+  local_import_used: boolean;
+  manual_input_used: boolean;
+  external_api_used: false;
+  url_fetching_used: false;
+  scraping_used: false;
+  platform_monitoring_used: false;
+  downloading_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaTrendTopicWatcherSetV1 {
+  schema_version: "boba_trend_topic_watcher_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  imported_sources: BobaTrendTopicImportSourceV1[];
+  topic_snapshots: BobaTopicSnapshotV1[];
+  watched_topics: BobaWatchedTopicV1[];
+  movement_analysis: BobaTopicMovementAnalysisV1;
+  opportunity_scores: BobaTopicOpportunityScoreV1[];
+  confidence_review: BobaTrendConfidenceReviewV1;
+  content_scout_handoff: BobaTrendContentScoutHandoffV1;
+  research_brain_handoff: BobaTrendResearchBrainHandoffV1;
+  watcher_summary: BobaTrendWatcherSummaryV1;
+  signal_usage: BobaTrendTopicSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaTrendTopicWatcherGenerateInputV1 {
+  manual_snapshots?: Record<string, unknown>[];
+  pasted_topic_lists?: (string | Record<string, unknown>)[];
+  import_paths?: string[];
+  source_label?: string;
+  dry_run?: boolean;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;
