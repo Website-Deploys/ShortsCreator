@@ -95,7 +95,8 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).toContain("Copy hashtags");
     expect(resultsSection).toContain("Manual review required");
     expect(resultsSection).toContain("Upload metadata is not available for this older render.");
-    expect(resultsSection.toLowerCase()).not.toContain("copyright safe");
+    expect(resultsSection.toLowerCase()).not.toContain("is copyright safe");
+    expect(resultsSection.toLowerCase()).not.toContain("copyright-safe");
     expect(resultsSection.toLowerCase()).not.toContain("guaranteed viral");
     expect(resultsSection).not.toContain("Content ID safe");
     expect(resultsSection).not.toContain("Your Shorts will appear here");
@@ -259,5 +260,24 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).toContain("Advisory learning handoff");
     expect(resultsSection).not.toContain("collectPlatformAnalytics");
     expect(resultsSection).not.toContain("autoApplyPerformanceWinner");
+  });
+
+  it("shows metadata-only BOBA Content Scout V2 truth and controls", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Content Scout V2");
+    expect(resultsSection).toContain(
+      "Content Scout V2 uses local/user-provided metadata only.",
+    );
+    expect(resultsSection).toContain(
+      "BOBA does not fetch URLs, scrape platforms, download videos, or",
+    );
+    expect(resultsSection).toContain("Build review queue");
+    expect(resultsSection).toContain("Possible short angles");
+    expect(resultsSection).toContain("Export safe metadata");
+    expect(resultsSection).toContain("Reset Scout V2");
+    expect(resultsSection).not.toContain("fetchScoutSourceUrl");
+    expect(resultsSection).not.toContain("downloadScoutVideo");
+    expect(resultsSection).not.toContain("autoIngestScoutItem");
   });
 });

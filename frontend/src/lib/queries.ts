@@ -54,6 +54,8 @@ import type {
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
   BobaClipRankingV1,
+  BobaContentScoutGenerateInputV2,
+  BobaContentScoutSetV2,
   BobaCreativeBriefsResponse,
   BobaCreativeDirectionSetV2,
   BobaCreatorFeedbackEventInput,
@@ -90,6 +92,8 @@ export const queryKeys = {
     ["boba", "projects", id, "creator-learning"] as const,
   bobaApprovalRejectionLearning: (id: string) =>
     ["boba", "projects", id, "approval-rejection-learning"] as const,
+  bobaContentScoutV2: (id: string) =>
+    ["boba", "projects", id, "content-scout-v2"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -267,6 +271,50 @@ export function useBobaCandidates() {
     queryKey: queryKeys.bobaCandidates,
     queryFn: api.getBobaCandidates,
     staleTime: 15_000,
+  });
+}
+
+export function useBobaContentScoutV2(projectId: string) {
+  return useQuery<BobaContentScoutSetV2 | null>({
+    queryKey: queryKeys.bobaContentScoutV2(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaContentScoutV2(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useGenerateBobaContentScoutV2(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaContentScoutGenerateInputV2 = {}) =>
+      api.generateBobaContentScoutV2(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(queryKeys.bobaContentScoutV2(projectId), result);
+      }
+    },
+  });
+}
+
+export function useExportBobaContentScoutV2(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaContentScoutV2(projectId),
+  });
+}
+
+export function useResetBobaContentScoutV2(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaContentScoutV2(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(queryKeys.bobaContentScoutV2(projectId), null);
+    },
   });
 }
 

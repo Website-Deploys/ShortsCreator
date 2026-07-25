@@ -27,6 +27,10 @@ from olympus.boba.clip_ranking import (
 from olympus.boba.clip_ranking import (
     BobaClipRankingV1 as BobaDiscoveryClipRankingV1,
 )
+from olympus.boba.content_scout import (
+    BobaContentScoutSetV2,
+    BobaContentScoutV2,
+)
 from olympus.boba.contracts import (
     BobaBrainStateV1,
     BobaClipRankingV1,
@@ -137,6 +141,7 @@ class BobaIntegration:
         self.brain = BobaBrain(store, mode=mode)  # type: ignore[arg-type]
         self.bus = BobaDecisionBus(store)
         self.scout = BobaScout(store)
+        self.content_scout_v2 = BobaContentScoutV2()
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1370,6 +1375,53 @@ class BobaIntegration:
         saved_event = self.store.record_performance_feedback_event(event)
         feedback = await self.generate_performance_feedback(project_id)
         return saved_event, feedback
+
+    async def generate_content_scout_v2(
+        self,
+        project_id: str,
+        *,
+        manual_items: list[dict[str, Any]] | None = None,
+        import_paths: list[str] | None = None,
+        source_label: str = "manual",
+        dry_run: bool = False,
+    ) -> BobaContentScoutSetV2:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        scout = self.content_scout_v2.analyze(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+            manual_items=manual_items or [],
+            import_paths=import_paths or [],
+            source_label=source_label,
+            creator_learning=self.store.load_creator_learning(project_id),
+            approval_rejection_learning=(
+                self.store.load_approval_rejection_learning(project_id)
+            ),
+            performance_feedback=self.store.load_performance_feedback(project_id),
+            boba_memory=(
+                self.store.load_project_memory(project_id)
+                if self.memory_enabled
+                else None
+            ),
+            scout_v1=self.scout.list_candidates(),
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return scout
+        return self.store.save_content_scout_v2(scout)
+
+    def load_content_scout_v2(
+        self,
+        project_id: str,
+    ) -> BobaContentScoutSetV2 | None:
+        return self.store.load_content_scout_v2(project_id)
+
+    def export_content_scout_v2(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_content_scout_v2(project_id)
+
+    def reset_content_scout_v2(self, project_id: str) -> bool:
+        return self.store.reset_content_scout_v2(project_id)
 
     async def generate_performance_feedback(
         self,

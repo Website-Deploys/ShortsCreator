@@ -76,6 +76,8 @@ import type {
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
   BobaClipRankingV1,
+  BobaContentScoutGenerateInputV2,
+  BobaContentScoutSetV2,
   BobaCreativeBriefsResponse,
   BobaCreativeDirectionSetV2,
   BobaCreatorFeedbackEventInput,
@@ -179,6 +181,34 @@ export const api = {
     request<BobaCreatorMemoryV1>(`/boba/memory/creators/${profileId}`),
   getBobaGlobalMemory: () => request<BobaGlobalMemoryV1>("/boba/memory/global"),
   getBobaCandidates: () => request<BobaCandidatesResponse>("/boba/candidates"),
+  getBobaContentScoutV2: (projectId: string) =>
+    request<BobaContentScoutSetV2>(
+      `/boba/projects/${projectId}/content-scout-v2`,
+    ),
+  generateBobaContentScoutV2: (
+    projectId: string,
+    input: BobaContentScoutGenerateInputV2 = {},
+  ) =>
+    request<BobaContentScoutSetV2>(
+      `/boba/projects/${projectId}/content-scout-v2`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  exportBobaContentScoutV2: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/content-scout-v2/export`,
+    ),
+  resetBobaContentScoutV2: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      content_scout_v2_removed: boolean;
+      scout_v1_removed: false;
+      creator_learning_removed: false;
+      performance_feedback_removed: false;
+      memory_removed: false;
+    }>(`/boba/projects/${projectId}/content-scout-v2`, {
+      method: "DELETE",
+    }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>
     request<BobaCandidateV1>("/boba/candidates", {
       method: "POST",
