@@ -24,6 +24,7 @@ from olympus.boba.clip_discovery import BobaCandidateClipDiscoveryV1
 from olympus.boba.clip_ranking import (
     BobaClipRankingV1 as BobaDiscoveryClipRankingV1,
 )
+from olympus.boba.content_scout import BobaContentScoutSetV2
 from olympus.boba.contracts import (
     BobaBrainStateV1,
     BobaClipRankingV1,
@@ -882,6 +883,101 @@ class BobaMemoryStore:
                     path.unlink()
                     removed = True
             directory = self.performance_feedback_path(project_id).parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
+
+    def content_scout_v2_path(self, project_id: str) -> Path:
+        return self._path(project_id, "content_scout_v2/index.json")
+
+    def save_content_scout_v2(
+        self,
+        scout: BobaContentScoutSetV2,
+    ) -> BobaContentScoutSetV2:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                scout.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+            )
+            self._atomic_write(self.content_scout_v2_path(scout.project_id), safe)
+        return scout
+
+    def load_content_scout_v2(
+        self,
+        project_id: str,
+    ) -> BobaContentScoutSetV2 | None:
+        raw = self._read(self.content_scout_v2_path(project_id), None)
+        return (
+            BobaContentScoutSetV2.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def export_content_scout_v2(self, project_id: str) -> dict[str, Any]:
+        scout = self.load_content_scout_v2(project_id)
+        if scout is None:
+            raise ValidationError(
+                "BOBA Content Scout V2 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = scout.model_dump(mode="json")
+        for source in payload.get("imported_sources", []):
+            if isinstance(source, dict):
+                source.pop("source_path", None)
+        for item in payload.get("scout_items", []):
+            if isinstance(item, dict):
+                item.pop("source_url", None)
+                item.pop("permission_notes", None)
+                item.pop("user_notes", None)
+                item.pop("raw_metadata_summary", None)
+        for recommendation_group in (
+            "top_items",
+            "backup_items",
+            "permission_needed_items",
+            "blocked_items",
+            "duplicate_or_similar_items",
+        ):
+            values = payload.get("review_queue", {}).get(
+                recommendation_group,
+                [],
+            )
+            for recommendation in values:
+                if isinstance(recommendation, dict):
+                    recommendation["suggested_review_questions"] = []
+        export = {
+            "schema_version": "boba_content_scout_export_v2",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "content_scout_v2": payload,
+            "privacy": {
+                "metadata_only": True,
+                "local_paths_excluded": True,
+                "source_urls_excluded": True,
+                "user_notes_excluded": True,
+                "media_files_excluded": True,
+                "source_text_excluded": True,
+                "credentials_excluded": True,
+                "external_api_used": False,
+                "url_fetching_used": False,
+                "downloading_used": False,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Content Scout V2 export is invalid.")
+        return safe
+
+    def reset_content_scout_v2(self, project_id: str) -> bool:
+        path = self.content_scout_v2_path(project_id)
+        removed = False
+        with self._lock:
+            if path.exists():
+                path.unlink()
+                removed = True
+            directory = path.parent
             if directory.exists() and not any(directory.iterdir()):
                 directory.rmdir()
         return removed

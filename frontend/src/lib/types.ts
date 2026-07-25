@@ -1109,6 +1109,167 @@ export interface BobaCandidatesResponse {
   external_calls_made: false;
 }
 
+export type BobaScoutImportSourceTypeV2 =
+  | "csv"
+  | "json"
+  | "manual"
+  | "test_synthetic";
+
+export type BobaScoutRightsStatusV2 =
+  | "owned"
+  | "licensed"
+  | "permission_granted"
+  | "permission_needed"
+  | "unknown"
+  | "blocked";
+
+export type BobaScoutRecommendationTypeV2 =
+  | "review_now"
+  | "save_for_later"
+  | "seek_permission"
+  | "reject"
+  | "blocked";
+
+export type BobaScoutPriorityV2 = "low" | "medium" | "high" | "urgent";
+
+export interface BobaScoutImportSourceV2 {
+  import_id: string;
+  source_type: BobaScoutImportSourceTypeV2;
+  source_label: string;
+  source_path: string;
+  imported_at: string;
+  item_count: number;
+  accepted_count: number;
+  rejected_count: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaScoutItemV2 {
+  item_id: string;
+  title: string;
+  description: string;
+  source_label: string;
+  source_reference: string;
+  source_url: string | null;
+  duration_seconds: number | null;
+  tags: string[];
+  categories: string[];
+  creator_or_channel: string;
+  published_at: string;
+  rights_status: BobaScoutRightsStatusV2;
+  permission_notes: string;
+  user_notes: string;
+  raw_metadata_summary: Record<string, unknown>;
+  warnings: string[];
+}
+
+export interface BobaScoutScoreV2 {
+  item_id: string;
+  creator_fit_score: number;
+  topic_fit_score: number;
+  shortability_score: number;
+  hook_potential_score: number;
+  emotional_story_score: number;
+  trend_context_score: number;
+  novelty_score: number;
+  rights_readiness_score: number;
+  review_priority_score: number;
+  confidence: number;
+  score_reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaSuggestedShortAngleV2 {
+  angle_id: string;
+  title: string;
+  hook_direction: string;
+  why_it_might_work: string;
+  risk: string;
+  confidence: number;
+}
+
+export interface BobaScoutRecommendationV2 {
+  item_id: string;
+  recommendation: BobaScoutRecommendationTypeV2;
+  priority: BobaScoutPriorityV2;
+  reason: string;
+  suggested_short_angles: BobaSuggestedShortAngleV2[];
+  suggested_review_questions: string[];
+  rights_review_required: boolean;
+  human_review_required: boolean;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaScoutReviewQueueV2 {
+  top_items: BobaScoutRecommendationV2[];
+  backup_items: BobaScoutRecommendationV2[];
+  permission_needed_items: BobaScoutRecommendationV2[];
+  blocked_items: BobaScoutRecommendationV2[];
+  duplicate_or_similar_items: BobaScoutRecommendationV2[];
+  queue_summary: string;
+  warnings: string[];
+}
+
+export interface BobaScoutRejectedItemV2 {
+  item_id: string;
+  reason_rejected: string;
+  risk: string;
+  warnings: string[];
+}
+
+export interface BobaContentScoutSummaryV2 {
+  total_items: number;
+  review_now_count: number;
+  save_for_later_count: number;
+  permission_needed_count: number;
+  blocked_count: number;
+  strongest_topics: string[];
+  weakest_topics: string[];
+  repeated_themes: string[];
+  rights_summary: string[];
+  human_review_notes: string[];
+}
+
+export interface BobaContentScoutSignalUsageV2 {
+  scout_v1_used: boolean;
+  creator_learning_used: boolean;
+  approval_rejection_learning_used: boolean;
+  performance_feedback_used: boolean;
+  memory_used: boolean;
+  local_import_used: boolean;
+  external_api_used: false;
+  url_fetching_used: false;
+  downloading_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaContentScoutSetV2 {
+  schema_version: "boba_content_scout_v2";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  imported_sources: BobaScoutImportSourceV2[];
+  scout_items: BobaScoutItemV2[];
+  scored_items: BobaScoutScoreV2[];
+  review_queue: BobaScoutReviewQueueV2;
+  rejected_items: BobaScoutRejectedItemV2[];
+  scout_summary: BobaContentScoutSummaryV2;
+  signal_usage: BobaContentScoutSignalUsageV2;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaContentScoutGenerateInputV2 {
+  manual_items?: Record<string, unknown>[];
+  import_paths?: string[];
+  source_label?: string;
+  dry_run?: boolean;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;

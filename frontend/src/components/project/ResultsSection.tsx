@@ -14,6 +14,7 @@ import {
   useBobaCandidates,
   useBobaClipBriefs,
   useBobaClipRanking,
+  useBobaContentScoutV2,
   useBobaCreativeDirectionV2,
   useBobaCreatorLearning,
   useBobaCreatorMemory,
@@ -37,6 +38,7 @@ import {
   useCreatorProfiles,
   useExportCreatorProfile,
   useExportBobaApprovalRejectionLearning,
+  useExportBobaContentScoutV2,
   useExportBobaCreatorLearning,
   useExportBobaExperimentation,
   useExportBobaPerformanceFeedback,
@@ -45,6 +47,7 @@ import {
   useDiscoverBobaCandidateClips,
   useGenerateBobaCreativeBriefs,
   useGenerateBobaApprovalRejectionLearning,
+  useGenerateBobaContentScoutV2,
   useGenerateBobaCreatorLearning,
   useGenerateBobaExperimentation,
   useGenerateBobaPerformanceFeedback,
@@ -53,6 +56,7 @@ import {
   useRenderManifest,
   useResetCreatorProfile,
   useResetBobaApprovalRejectionLearning,
+  useResetBobaContentScoutV2,
   useResetBobaExperimentation,
   useResetBobaPerformanceFeedback,
   useRankBobaCandidateClips,
@@ -71,6 +75,7 @@ import type {
   BobaCandidateClipDiscoveryV1,
   BobaClipBriefSetV1,
   BobaClipRankingV1,
+  BobaScoutRecommendationV2,
   BobaCreativeDirectionSetV2,
   BobaCreatorFeedbackEventInput,
   BobaCreatorFeedbackTargetType,
@@ -4299,6 +4304,315 @@ function BobaScoutCreativePanel({ projectId }: { projectId: string }) {
   );
 }
 
+function BobaContentScoutV2Panel({ projectId }: { projectId: string }) {
+  const scoutQuery = useBobaContentScoutV2(projectId);
+  const generateScout = useGenerateBobaContentScoutV2(projectId);
+  const exportScout = useExportBobaContentScoutV2(projectId);
+  const resetScout = useResetBobaContentScoutV2(projectId);
+  const [manualJson, setManualJson] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("manual");
+  const [status, setStatus] = useState("");
+  const scout = scoutQuery.data;
+  const busy =
+    generateScout.isPending || exportScout.isPending || resetScout.isPending;
+  const itemById = new Map(
+    (scout?.scout_items ?? []).map((item) => [item.item_id, item]),
+  );
+  const scoreById = new Map(
+    (scout?.scored_items ?? []).map((score) => [score.item_id, score]),
+  );
+  const queueGroups: {
+    label: string;
+    items: BobaScoutRecommendationV2[];
+  }[] = scout
+    ? [
+        { label: "Review now", items: scout.review_queue.top_items },
+        { label: "Backups", items: scout.review_queue.backup_items },
+        {
+          label: "Permission review",
+          items: scout.review_queue.permission_needed_items,
+        },
+        { label: "Blocked", items: scout.review_queue.blocked_items },
+        {
+          label: "Duplicate or similar",
+          items: scout.review_queue.duplicate_or_similar_items,
+        },
+      ]
+    : [];
+
+  function generate() {
+    let manualItems: Record<string, unknown>[] = [];
+    if (manualJson.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(manualJson);
+        if (
+          !Array.isArray(parsed) ||
+          parsed.some(
+            (item) =>
+              !item || typeof item !== "object" || Array.isArray(item),
+          )
+        ) {
+          setStatus("Manual metadata must be a JSON array of objects.");
+          return;
+        }
+        manualItems = parsed as Record<string, unknown>[];
+      } catch {
+        setStatus("Manual metadata is not valid JSON.");
+        return;
+      }
+    }
+    setStatus("");
+    generateScout.mutate(
+      {
+        manual_items: manualItems,
+        source_label: sourceLabel.trim() || "manual",
+      },
+      {
+        onSuccess: (result) => {
+          setStatus(
+            `Scout review saved for ${result.scout_summary.total_items} metadata item(s).`,
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportScout.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(`boba-content-scout-v2-${projectId}.json`, payload);
+        setStatus("Safe metadata-only scout export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's Content Scout V2 artifact only? Scout V1, learning, performance feedback, and memory remain.",
+      )
+    ) {
+      return;
+    }
+    resetScout.mutate(undefined, {
+      onSuccess: () => {
+        setStatus("Content Scout V2 reset; other BOBA artifacts remain.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            BOBA Content Scout V2
+          </p>
+          <p className="text-xs text-muted">
+            Content Scout V2 uses local/user-provided metadata only.
+          </p>
+          <p className="text-xs text-muted">
+            BOBA does not fetch URLs, scrape platforms, download videos, or
+            confirm copyright safety.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !scout}
+            onClick={exportArtifact}
+            className="rounded border border-cyan-200/30 px-2.5 py-1.5 text-[11px] text-cyan-100 disabled:opacity-50"
+          >
+            Export safe metadata
+          </button>
+          <button
+            type="button"
+            disabled={busy || !scout}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Scout V2
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[12rem_1fr_auto]">
+        <label className="text-xs text-muted">
+          Source label
+          <input
+            value={sourceLabel}
+            onChange={(event) => setSourceLabel(event.target.value)}
+            maxLength={160}
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Manual metadata JSON array
+          <textarea
+            value={manualJson}
+            onChange={(event) => setManualJson(event.target.value)}
+            rows={3}
+            placeholder='[{"title":"Possible story","description":"User-provided summary","rights_status":"unknown"}]'
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={generate}
+          className="self-end rounded border border-cyan-200/30 px-3 py-2 text-xs text-cyan-100 disabled:opacity-50"
+        >
+          {generateScout.isPending ? "Scoring metadata…" : "Build review queue"}
+        </button>
+      </div>
+
+      {status && <p className="mt-2 text-xs text-cyan-100">{status}</p>}
+      {scoutQuery.isError && (
+        <p className="mt-2 text-xs text-amber-100">
+          Content Scout V2 could not be loaded.
+        </p>
+      )}
+
+      {!scout ? (
+        <p className="mt-4 text-xs text-muted">
+          No saved Content Scout V2 review is available. Add manual metadata or
+          build from compatible local Scout V1 records.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-2 text-xs text-muted sm:grid-cols-2 lg:grid-cols-4">
+            <p className="rounded border border-white/10 p-2">
+              Imported: {scout.scout_summary.total_items}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Review now: {scout.scout_summary.review_now_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Permission review: {scout.scout_summary.permission_needed_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Blocked: {scout.scout_summary.blocked_count}
+            </p>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-100">
+              Imported sources
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {scout.imported_sources.map((source) => (
+                <span
+                  key={source.import_id}
+                  className="rounded bg-white/5 px-2 py-1 text-[11px] text-muted"
+                >
+                  {source.source_label} · {readableName(source.source_type)} ·{" "}
+                  {source.accepted_count} accepted / {source.rejected_count} rejected
+                </span>
+              ))}
+              {scout.imported_sources.length === 0 && (
+                <span className="text-xs text-muted">
+                  No local metadata source was imported.
+                </span>
+              )}
+            </div>
+          </div>
+
+          <p className="mt-4 text-xs text-muted">
+            {scout.review_queue.queue_summary}
+          </p>
+          <div className="mt-3 grid gap-4 lg:grid-cols-2">
+            {queueGroups.map((group) => (
+              <div key={group.label}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-100">
+                  {group.label}
+                </p>
+                {group.items.length === 0 ? (
+                  <p className="mt-2 text-xs text-muted">No items.</p>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    {group.items.slice(0, 8).map((recommendation) => {
+                      const item = itemById.get(recommendation.item_id);
+                      const score = scoreById.get(recommendation.item_id);
+                      return (
+                        <article
+                          key={`${group.label}-${recommendation.item_id}`}
+                          className="rounded border border-white/10 p-3 text-xs text-muted"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="font-semibold text-white">
+                                {item?.title ||
+                                  item?.description ||
+                                  recommendation.item_id}
+                              </p>
+                              <p>
+                                Rights:{" "}
+                                {readableName(item?.rights_status ?? "unknown")} ·{" "}
+                                {readableName(recommendation.recommendation)} ·{" "}
+                                {recommendation.priority}
+                              </p>
+                            </div>
+                            <span className="rounded bg-white/5 px-2 py-1 text-white">
+                              {formatPercent(
+                                score?.review_priority_score ?? null,
+                              )}
+                            </span>
+                          </div>
+                          <p className="mt-1">{recommendation.reason}</p>
+                          {score && (
+                            <p className="mt-1">
+                              Creator fit {formatPercent(score.creator_fit_score)} ·
+                              hook {formatPercent(score.hook_potential_score)} ·
+                              story {formatPercent(score.emotional_story_score)} ·
+                              novelty {formatPercent(score.novelty_score)}
+                            </p>
+                          )}
+                          {recommendation.suggested_short_angles.length > 0 && (
+                            <div className="mt-2">
+                              <p className="font-medium text-cyan-100">
+                                Possible short angles
+                              </p>
+                              {recommendation.suggested_short_angles.map(
+                                (angle) => (
+                                  <p key={angle.angle_id} className="mt-1">
+                                    {angle.title}: {angle.hook_direction}
+                                  </p>
+                                ),
+                              )}
+                            </div>
+                          )}
+                          {recommendation.warnings.length > 0 && (
+                            <p className="mt-2 text-amber-100">
+                              Warning:{" "}
+                              {recommendation.warnings.slice(0, 2).join("; ")}
+                            </p>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {(scout.warnings.length > 0 || scout.limitations.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Review notes:{" "}
+              {[...scout.warnings, ...scout.limitations]
+                .slice(0, 4)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -5117,6 +5431,9 @@ export function ResultsSection({
   const performanceFeedbackPanel = (
     <BobaPerformanceFeedbackPanel projectId={projectId} />
   );
+  const contentScoutV2Panel = (
+    <BobaContentScoutV2Panel projectId={projectId} />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -5137,6 +5454,7 @@ export function ResultsSection({
         {experimentationPanel}
         {performanceFeedbackPanel}
         {memoryPanel}
+        {contentScoutV2Panel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -5169,6 +5487,7 @@ export function ResultsSection({
         {experimentationPanel}
         {performanceFeedbackPanel}
         {memoryPanel}
+        {contentScoutV2Panel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -5197,6 +5516,7 @@ export function ResultsSection({
         {experimentationPanel}
         {performanceFeedbackPanel}
         {memoryPanel}
+        {contentScoutV2Panel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -5225,6 +5545,7 @@ export function ResultsSection({
       {experimentationPanel}
       {performanceFeedbackPanel}
       {memoryPanel}
+      {contentScoutV2Panel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

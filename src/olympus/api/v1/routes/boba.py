@@ -163,6 +163,15 @@ class PerformanceFeedbackGenerateRequest(BaseModel):
     dry_run: bool = False
 
 
+class ContentScoutGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    manual_items: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
+    import_paths: list[str] = Field(default_factory=list, max_length=20)
+    source_label: str = Field(default="manual", min_length=1, max_length=160)
+    dry_run: bool = False
+
+
 class ScoutScoreRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -806,6 +815,79 @@ async def reset_performance_feedback(
         "creator_learning_removed": False,
         "approval_rejection_learning_removed": False,
         "unrelated_memory_removed": False,
+    }
+
+
+@router.post("/projects/{project_id}/content-scout-v2")
+async def create_content_scout_v2(
+    project_id: str,
+    body: ContentScoutGenerateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    scout = await boba.generate_content_scout_v2(
+        project_id,
+        manual_items=body.manual_items,
+        import_paths=body.import_paths,
+        source_label=body.source_label,
+        dry_run=body.dry_run,
+    )
+    return scout.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/content-scout-v2")
+async def get_content_scout_v2(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    scout = boba.load_content_scout_v2(project_id)
+    if scout is None:
+        raise NotFoundError(
+            "BOBA Content Scout V2 is not available.",
+            details={"project_id": project_id},
+        )
+    return scout.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/content-scout-v2/export")
+async def export_content_scout_v2(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_content_scout_v2(project_id) is None:
+        raise NotFoundError(
+            "BOBA Content Scout V2 is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_content_scout_v2(project_id)
+
+
+@router.delete("/projects/{project_id}/content-scout-v2")
+async def reset_content_scout_v2(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_content_scout_v2(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "content_scout_v2_removed": removed,
+        "scout_v1_removed": False,
+        "creator_learning_removed": False,
+        "approval_rejection_learning_removed": False,
+        "performance_feedback_removed": False,
+        "memory_removed": False,
     }
 
 
