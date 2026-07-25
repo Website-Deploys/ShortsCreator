@@ -188,6 +188,22 @@ class ResearchBrainGenerateRequest(BaseModel):
     dry_run: bool = False
 
 
+class TrendTopicWatcherGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    manual_snapshots: list[dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=500,
+    )
+    pasted_topic_lists: list[str | dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+    import_paths: list[str] = Field(default_factory=list, max_length=20)
+    source_label: str = Field(default="manual", min_length=1, max_length=160)
+    dry_run: bool = False
+
+
 class ScoutScoreRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -976,6 +992,80 @@ async def reset_research_brain(
         "content_scout_removed": False,
         "creator_learning_removed": False,
         "approval_rejection_learning_removed": False,
+        "performance_feedback_removed": False,
+        "memory_removed": False,
+    }
+
+
+@router.post("/projects/{project_id}/trend-topic-watcher")
+async def create_trend_topic_watcher(
+    project_id: str,
+    body: TrendTopicWatcherGenerateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    watcher = await boba.generate_trend_topic_watcher(
+        project_id,
+        manual_snapshots=body.manual_snapshots,
+        pasted_topic_lists=body.pasted_topic_lists,
+        import_paths=body.import_paths,
+        source_label=body.source_label,
+        dry_run=body.dry_run,
+    )
+    return watcher.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/trend-topic-watcher")
+async def get_trend_topic_watcher(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    watcher = boba.load_trend_topic_watcher(project_id)
+    if watcher is None:
+        raise NotFoundError(
+            "BOBA Trend / Topic Watcher V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return watcher.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/trend-topic-watcher/export")
+async def export_trend_topic_watcher(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_trend_topic_watcher(project_id) is None:
+        raise NotFoundError(
+            "BOBA Trend / Topic Watcher V1 is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_trend_topic_watcher(project_id)
+
+
+@router.delete("/projects/{project_id}/trend-topic-watcher")
+async def reset_trend_topic_watcher(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_trend_topic_watcher(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "trend_topic_watcher_removed": removed,
+        "research_brain_removed": False,
+        "content_scout_removed": False,
+        "creator_learning_removed": False,
         "performance_feedback_removed": False,
         "memory_removed": False,
     }

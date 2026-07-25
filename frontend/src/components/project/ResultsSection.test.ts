@@ -303,4 +303,28 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("verifyRealtimeResearchTrends");
     expect(resultsSection).not.toContain("autoApplyResearchHandoff");
   });
+
+  it("shows local-only BOBA Trend / Topic Watcher V1 truth and controls", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Trend / Topic Watcher V1");
+    expect(resultsSection).toContain(
+      "Trend / Topic Watcher V1 uses local/user-provided topic data only.",
+    );
+    expect(resultsSection).toContain(
+      "Movement is measured only within provided data.",
+    );
+    expect(resultsSection).toContain(
+      "BOBA does not scrape platforms, fetch URLs, call external APIs, or verify real-time trends.",
+    );
+    expect(resultsSection).toContain("Build topic watchlist");
+    expect(resultsSection).toContain("Content Scout handoff");
+    expect(resultsSection).toContain("Research Brain handoff");
+    expect(resultsSection).toContain("Export safe watcher");
+    expect(resultsSection).toContain("Reset Watcher V1");
+    expect(resultsSection).not.toContain("fetchTrendTopicUrl");
+    expect(resultsSection).not.toContain("scrapeTrendPlatform");
+    expect(resultsSection).not.toContain("monitorRealtimeTrends");
+    expect(resultsSection).not.toContain("autoApplyTrendTopicHandoff");
+  });
 });

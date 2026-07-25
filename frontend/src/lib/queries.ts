@@ -71,6 +71,8 @@ import type {
   BobaProjectMemoryV1,
   BobaResearchBrainGenerateInputV1,
   BobaResearchBrainSetV1,
+  BobaTrendTopicWatcherGenerateInputV1,
+  BobaTrendTopicWatcherSetV1,
   BobaWholeVideoUnderstandingV1,
   CostEstimate,
   EnginesResponse,
@@ -98,6 +100,8 @@ export const queryKeys = {
     ["boba", "projects", id, "content-scout-v2"] as const,
   bobaResearchBrain: (id: string) =>
     ["boba", "projects", id, "research-brain"] as const,
+  bobaTrendTopicWatcher: (id: string) =>
+    ["boba", "projects", id, "trend-topic-watcher"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -362,6 +366,56 @@ export function useResetBobaResearchBrain(projectId: string) {
     mutationFn: () => api.resetBobaResearchBrain(projectId),
     onSuccess: () => {
       queryClient.setQueryData(queryKeys.bobaResearchBrain(projectId), null);
+    },
+  });
+}
+
+export function useBobaTrendTopicWatcher(projectId: string) {
+  return useQuery<BobaTrendTopicWatcherSetV1 | null>({
+    queryKey: queryKeys.bobaTrendTopicWatcher(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaTrendTopicWatcher(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useGenerateBobaTrendTopicWatcher(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaTrendTopicWatcherGenerateInputV1 = {}) =>
+      api.generateBobaTrendTopicWatcher(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(
+          queryKeys.bobaTrendTopicWatcher(projectId),
+          result,
+        );
+      }
+    },
+  });
+}
+
+export function useExportBobaTrendTopicWatcher(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaTrendTopicWatcher(projectId),
+  });
+}
+
+export function useResetBobaTrendTopicWatcher(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaTrendTopicWatcher(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(
+        queryKeys.bobaTrendTopicWatcher(projectId),
+        null,
+      );
     },
   });
 }

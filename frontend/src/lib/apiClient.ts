@@ -98,6 +98,8 @@ import type {
   BobaResearchBrainGenerateInputV1,
   BobaResearchBrainSetV1,
   BobaScoutScoreV1,
+  BobaTrendTopicWatcherGenerateInputV1,
+  BobaTrendTopicWatcherSetV1,
   BobaWholeVideoUnderstandingV1,
   CostEstimate,
   EnginesResponse,
@@ -238,6 +240,35 @@ export const api = {
       performance_feedback_removed: false;
       memory_removed: false;
     }>(`/boba/projects/${projectId}/research-brain`, {
+      method: "DELETE",
+    }),
+  getBobaTrendTopicWatcher: (projectId: string) =>
+    request<BobaTrendTopicWatcherSetV1>(
+      `/boba/projects/${projectId}/trend-topic-watcher`,
+    ),
+  generateBobaTrendTopicWatcher: (
+    projectId: string,
+    input: BobaTrendTopicWatcherGenerateInputV1 = {},
+  ) =>
+    request<BobaTrendTopicWatcherSetV1>(
+      `/boba/projects/${projectId}/trend-topic-watcher`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  exportBobaTrendTopicWatcher: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/trend-topic-watcher/export`,
+    ),
+  resetBobaTrendTopicWatcher: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      trend_topic_watcher_removed: boolean;
+      research_brain_removed: false;
+      content_scout_removed: false;
+      creator_learning_removed: false;
+      performance_feedback_removed: false;
+      memory_removed: false;
+    }>(`/boba/projects/${projectId}/trend-topic-watcher`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>

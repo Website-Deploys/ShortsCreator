@@ -101,6 +101,10 @@ from olympus.boba.research_brain import (
 )
 from olympus.boba.scout import BobaScout
 from olympus.boba.store import BobaMemoryStore
+from olympus.boba.trend_topic_watcher import (
+    BobaTrendTopicWatcherSetV1,
+    BobaTrendTopicWatcherV1,
+)
 from olympus.boba.validation import compact_boba_summary
 from olympus.boba.whole_video import (
     BobaWholeVideoUnderstandingEngine,
@@ -147,6 +151,7 @@ class BobaIntegration:
         self.scout = BobaScout(store)
         self.content_scout_v2 = BobaContentScoutV2()
         self.research_brain = BobaResearchBrainV1()
+        self.trend_topic_watcher = BobaTrendTopicWatcherV1()
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1476,6 +1481,53 @@ class BobaIntegration:
 
     def reset_research_brain(self, project_id: str) -> bool:
         return self.store.reset_research_brain(project_id)
+
+    async def generate_trend_topic_watcher(
+        self,
+        project_id: str,
+        *,
+        manual_snapshots: list[dict[str, Any]] | None = None,
+        pasted_topic_lists: list[str | dict[str, Any]] | None = None,
+        import_paths: list[str] | None = None,
+        source_label: str = "manual",
+        dry_run: bool = False,
+    ) -> BobaTrendTopicWatcherSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        watcher = self.trend_topic_watcher.analyze(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+            manual_snapshots=manual_snapshots or [],
+            pasted_topic_lists=pasted_topic_lists or [],
+            import_paths=import_paths or [],
+            source_label=source_label,
+            research_brain=self.store.load_research_brain(project_id),
+            content_scout=self.store.load_content_scout_v2(project_id),
+            creator_learning=self.store.load_creator_learning(project_id),
+            performance_feedback=self.store.load_performance_feedback(project_id),
+            boba_memory=(
+                self.store.load_project_memory(project_id)
+                if self.memory_enabled
+                else None
+            ),
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return watcher
+        return self.store.save_trend_topic_watcher(watcher)
+
+    def load_trend_topic_watcher(
+        self,
+        project_id: str,
+    ) -> BobaTrendTopicWatcherSetV1 | None:
+        return self.store.load_trend_topic_watcher(project_id)
+
+    def export_trend_topic_watcher(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_trend_topic_watcher(project_id)
+
+    def reset_trend_topic_watcher(self, project_id: str) -> bool:
+        return self.store.reset_trend_topic_watcher(project_id)
 
     async def generate_performance_feedback(
         self,
