@@ -95,6 +95,8 @@ import type {
   BobaPerformanceFeedbackEventResponse,
   BobaPerformanceFeedbackSetV1,
   BobaProjectMemoryV1,
+  BobaResearchBrainGenerateInputV1,
+  BobaResearchBrainSetV1,
   BobaScoutScoreV1,
   BobaWholeVideoUnderstandingV1,
   CostEstimate,
@@ -207,6 +209,35 @@ export const api = {
       performance_feedback_removed: false;
       memory_removed: false;
     }>(`/boba/projects/${projectId}/content-scout-v2`, {
+      method: "DELETE",
+    }),
+  getBobaResearchBrain: (projectId: string) =>
+    request<BobaResearchBrainSetV1>(
+      `/boba/projects/${projectId}/research-brain`,
+    ),
+  generateBobaResearchBrain: (
+    projectId: string,
+    input: BobaResearchBrainGenerateInputV1 = {},
+  ) =>
+    request<BobaResearchBrainSetV1>(
+      `/boba/projects/${projectId}/research-brain`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  exportBobaResearchBrain: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/research-brain/export`,
+    ),
+  resetBobaResearchBrain: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      research_brain_removed: boolean;
+      content_scout_removed: false;
+      creator_learning_removed: false;
+      approval_rejection_learning_removed: false;
+      performance_feedback_removed: false;
+      memory_removed: false;
+    }>(`/boba/projects/${projectId}/research-brain`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>

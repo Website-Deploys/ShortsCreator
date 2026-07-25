@@ -26,6 +26,7 @@ import {
   useBobaMusicMood,
   useBobaPerformanceFeedback,
   useBobaProjectMemory,
+  useBobaResearchBrain,
   useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
   useCreateBobaEditorialDecisions,
@@ -42,6 +43,7 @@ import {
   useExportBobaCreatorLearning,
   useExportBobaExperimentation,
   useExportBobaPerformanceFeedback,
+  useExportBobaResearchBrain,
   useDecideBobaCandidate,
   useDecideBobaCreativeBrief,
   useDiscoverBobaCandidateClips,
@@ -51,6 +53,7 @@ import {
   useGenerateBobaCreatorLearning,
   useGenerateBobaExperimentation,
   useGenerateBobaPerformanceFeedback,
+  useGenerateBobaResearchBrain,
   useGenerateBobaWholeVideoUnderstanding,
   usePlans,
   useRenderManifest,
@@ -59,6 +62,7 @@ import {
   useResetBobaContentScoutV2,
   useResetBobaExperimentation,
   useResetBobaPerformanceFeedback,
+  useResetBobaResearchBrain,
   useRankBobaCandidateClips,
   useRecordBobaCreatorLearningEvent,
   useRecordBobaPerformanceFeedbackEvent,
@@ -4613,6 +4617,376 @@ function BobaContentScoutV2Panel({ projectId }: { projectId: string }) {
   );
 }
 
+function BobaResearchBrainPanel({ projectId }: { projectId: string }) {
+  const researchQuery = useBobaResearchBrain(projectId);
+  const generateResearch = useGenerateBobaResearchBrain(projectId);
+  const exportResearch = useExportBobaResearchBrain(projectId);
+  const resetResearch = useResetBobaResearchBrain(projectId);
+  const [manualJson, setManualJson] = useState("");
+  const [pastedText, setPastedText] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("manual");
+  const [status, setStatus] = useState("");
+  const research = researchQuery.data;
+  const busy =
+    generateResearch.isPending ||
+    exportResearch.isPending ||
+    resetResearch.isPending;
+  const safetyNotes = research
+    ? [
+        ...research.safety_review.weak_evidence_warnings,
+        ...research.safety_review.unverifiable_claim_warnings,
+        ...research.safety_review.copyrighted_content_warnings,
+        ...research.safety_review.sensitive_topic_warnings,
+        ...research.safety_review.rights_usage_warnings,
+        ...research.safety_review.blockers,
+      ]
+    : [];
+
+  function generate() {
+    let manualSources: Record<string, unknown>[] = [];
+    if (manualJson.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(manualJson);
+        if (
+          !Array.isArray(parsed) ||
+          parsed.some(
+            (item) =>
+              !item || typeof item !== "object" || Array.isArray(item),
+          )
+        ) {
+          setStatus("Manual research must be a JSON array of objects.");
+          return;
+        }
+        manualSources = parsed as Record<string, unknown>[];
+      } catch {
+        setStatus("Manual research is not valid JSON.");
+        return;
+      }
+    }
+    setStatus("");
+    generateResearch.mutate(
+      {
+        manual_sources: manualSources,
+        pasted_text_entries: pastedText.trim() ? [pastedText.trim()] : [],
+        source_label: sourceLabel.trim() || "manual",
+      },
+      {
+        onSuccess: (result) => {
+          setStatus(
+            `Research saved from ${result.research_summary.total_sources} accepted source(s).`,
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportResearch.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(`boba-research-brain-v1-${projectId}.json`, payload);
+        setStatus("Safe compact research export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's Research Brain V1 artifact only? Content Scout, learning, performance feedback, and memory remain.",
+      )
+    ) {
+      return;
+    }
+    resetResearch.mutate(undefined, {
+      onSuccess: () => {
+        setStatus("Research Brain V1 reset; other BOBA artifacts remain.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-violet-300/20 bg-violet-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            BOBA Research Brain V1
+          </p>
+          <p className="text-xs text-muted">
+            Research Brain V1 uses local/user-provided material only.
+          </p>
+          <p className="text-xs text-muted">
+            BOBA does not fetch URLs, scrape websites, call external APIs, or
+            verify real-time trends.
+          </p>
+          <p className="text-xs text-muted">
+            Evidence snippets are bounded; human verification may still be
+            required.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !research}
+            onClick={exportArtifact}
+            className="rounded border border-violet-200/30 px-2.5 py-1.5 text-[11px] text-violet-100 disabled:opacity-50"
+          >
+            Export safe research
+          </button>
+          <button
+            type="button"
+            disabled={busy || !research}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Research V1
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[10rem_1fr_1fr_auto]">
+        <label className="text-xs text-muted">
+          Source label
+          <input
+            value={sourceLabel}
+            onChange={(event) => setSourceLabel(event.target.value)}
+            maxLength={160}
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Manual research JSON array
+          <textarea
+            value={manualJson}
+            onChange={(event) => setManualJson(event.target.value)}
+            rows={4}
+            placeholder='[{"title":"Audience notes","text":"Users struggle with consistency and want a practical routine.","rights_usage_notes":"Owned notes"}]'
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Pasted research text
+          <textarea
+            value={pastedText}
+            onChange={(event) => setPastedText(event.target.value)}
+            rows={4}
+            placeholder="Paste user-provided notes or a compact research summary."
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={generate}
+          className="self-end rounded border border-violet-200/30 px-3 py-2 text-xs text-violet-100 disabled:opacity-50"
+        >
+          {generateResearch.isPending
+            ? "Analyzing research…"
+            : "Build research brief"}
+        </button>
+      </div>
+
+      {status && <p className="mt-2 text-xs text-violet-100">{status}</p>}
+      {researchQuery.isError && (
+        <p className="mt-2 text-xs text-amber-100">
+          Research Brain V1 could not be loaded.
+        </p>
+      )}
+
+      {!research ? (
+        <p className="mt-4 text-xs text-muted">
+          No saved Research Brain V1 artifact is available. Add local or
+          user-provided research material to build one.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-2 text-xs text-muted sm:grid-cols-2 lg:grid-cols-4">
+            <p className="rounded border border-white/10 p-2">
+              Sources: {research.research_summary.total_sources}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Insights: {research.research_summary.total_insights}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Shorts ideas: {research.research_summary.total_shorts_ideas}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Scout auto-apply:{" "}
+              {research.content_scout_handoff.apply_automatically
+                ? "Enabled"
+                : "No"}
+            </p>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-100">
+              Imported source summary
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {research.imported_sources.map((source) => (
+                <span
+                  key={source.import_id}
+                  className="rounded bg-white/5 px-2 py-1 text-[11px] text-muted"
+                >
+                  {source.source_label} · {readableName(source.source_type)} ·{" "}
+                  {source.accepted_count} accepted / {source.rejected_count}{" "}
+                  rejected
+                </span>
+              ))}
+              {research.imported_sources.length === 0 && (
+                <span className="text-xs text-muted">
+                  No source was accepted.
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-violet-100">
+                Research sources and bounded evidence
+              </p>
+              <div className="mt-2 space-y-2">
+                {research.research_sources.slice(0, 10).map((source) => (
+                  <article
+                    key={source.research_source_id}
+                    className="rounded border border-white/10 p-3 text-xs text-muted"
+                  >
+                    <p className="font-semibold text-white">{source.title}</p>
+                    <p className="mt-1">{source.content_summary}</p>
+                    {source.topic_tags.length > 0 && (
+                      <p className="mt-1">
+                        Topics: {source.topic_tags.slice(0, 6).join(", ")}
+                      </p>
+                    )}
+                    {source.evidence_snippets.slice(0, 2).map((evidence) => (
+                      <p
+                        key={evidence.snippet_id}
+                        className="mt-2 rounded bg-white/[0.04] p-2"
+                      >
+                        Evidence: {evidence.snippet}
+                      </p>
+                    ))}
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-violet-100">
+                Key insights
+              </p>
+              <div className="mt-2 space-y-2">
+                {research.research_insights.slice(0, 12).map((insight) => (
+                  <article
+                    key={insight.insight_id}
+                    className="rounded border border-white/10 p-3 text-xs text-muted"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-semibold text-white">
+                        {readableName(insight.insight_type)}
+                      </p>
+                      <span>{formatPercent(insight.confidence)}</span>
+                    </div>
+                    <p className="mt-1">{insight.summary}</p>
+                    <p className="mt-1">
+                      Opportunity: {insight.content_opportunity}
+                    </p>
+                    {insight.human_verification_required && (
+                      <p className="mt-1 text-amber-100">
+                        Human verification required.
+                      </p>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-100">
+              Possible Shorts ideas
+            </p>
+            <div className="mt-2 grid gap-2 lg:grid-cols-2">
+              {research.shorts_ideas.slice(0, 12).map((idea) => (
+                <article
+                  key={idea.idea_id}
+                  className="rounded border border-white/10 p-3 text-xs text-muted"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-semibold text-white">{idea.title}</p>
+                    <span>{formatPercent(idea.confidence)}</span>
+                  </div>
+                  <p className="mt-1">
+                    {readableName(idea.format_style)} · {idea.target_viewer}
+                  </p>
+                  <p className="mt-1">Hook: {idea.hook_direction}</p>
+                  <p className="mt-1">Why: {idea.why_it_might_work}</p>
+                  <p className="mt-1 text-amber-100">Risk: {idea.risk}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-violet-100">
+                Safety review
+              </p>
+              {safetyNotes.length > 0 ? (
+                <ul className="mt-2 space-y-1 text-xs text-amber-100">
+                  {safetyNotes.slice(0, 12).map((note) => (
+                    <li key={note}>• {note}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs text-muted">
+                  No specific warning was detected; human review still applies.
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-violet-100">
+                Content Scout handoff
+              </p>
+              <p className="mt-2 text-xs text-muted">
+                Topics:{" "}
+                {research.content_scout_handoff.recommended_topics.join(", ") ||
+                  "Not available"}
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Keywords:{" "}
+                {research.content_scout_handoff.recommended_keywords.join(
+                  ", ",
+                ) || "Not available"}
+              </p>
+              {research.content_scout_handoff.suggested_review_questions
+                .slice(0, 4)
+                .map((question) => (
+                  <p key={question} className="mt-1 text-xs text-muted">
+                    Review: {question}
+                  </p>
+                ))}
+            </div>
+          </div>
+
+          {(research.warnings.length > 0 ||
+            research.limitations.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Research notes:{" "}
+              {[...research.warnings, ...research.limitations]
+                .slice(0, 6)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -5434,6 +5808,9 @@ export function ResultsSection({
   const contentScoutV2Panel = (
     <BobaContentScoutV2Panel projectId={projectId} />
   );
+  const researchBrainPanel = (
+    <BobaResearchBrainPanel projectId={projectId} />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -5455,6 +5832,7 @@ export function ResultsSection({
         {performanceFeedbackPanel}
         {memoryPanel}
         {contentScoutV2Panel}
+        {researchBrainPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -5488,6 +5866,7 @@ export function ResultsSection({
         {performanceFeedbackPanel}
         {memoryPanel}
         {contentScoutV2Panel}
+        {researchBrainPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -5517,6 +5896,7 @@ export function ResultsSection({
         {performanceFeedbackPanel}
         {memoryPanel}
         {contentScoutV2Panel}
+        {researchBrainPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -5546,6 +5926,7 @@ export function ResultsSection({
       {performanceFeedbackPanel}
       {memoryPanel}
       {contentScoutV2Panel}
+      {researchBrainPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

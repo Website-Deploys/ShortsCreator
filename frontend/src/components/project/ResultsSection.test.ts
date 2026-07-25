@@ -280,4 +280,27 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("downloadScoutVideo");
     expect(resultsSection).not.toContain("autoIngestScoutItem");
   });
+
+  it("shows local-only BOBA Research Brain V1 truth and controls", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Research Brain V1");
+    expect(resultsSection).toContain(
+      "Research Brain V1 uses local/user-provided material only.",
+    );
+    expect(resultsSection).toContain(
+      "BOBA does not fetch URLs, scrape websites, call external APIs, or",
+    );
+    expect(resultsSection).toContain(
+      "Evidence snippets are bounded; human verification may still be",
+    );
+    expect(resultsSection).toContain("Build research brief");
+    expect(resultsSection).toContain("Content Scout handoff");
+    expect(resultsSection).toContain("Export safe research");
+    expect(resultsSection).toContain("Reset Research V1");
+    expect(resultsSection).not.toContain("fetchResearchSourceUrl");
+    expect(resultsSection).not.toContain("scrapeResearchWebsite");
+    expect(resultsSection).not.toContain("verifyRealtimeResearchTrends");
+    expect(resultsSection).not.toContain("autoApplyResearchHandoff");
+  });
 });
