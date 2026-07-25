@@ -79,6 +79,15 @@ from olympus.boba.music_mood import (
     BobaMusicMoodRecommendationSetV1,
     music_manifest_awareness,
 )
+from olympus.boba.performance_feedback import (
+    BobaManualPerformanceMetricsV1,
+    BobaPerformanceEventType,
+    BobaPerformanceFeedbackBrainV1,
+    BobaPerformanceFeedbackEventV1,
+    BobaPerformanceFeedbackSetV1,
+    BobaPerformanceOutcomeLabel,
+    BobaPerformanceTargetType,
+)
 from olympus.boba.project_memory import build_and_save_project_memory
 from olympus.boba.ranking import rank_candidates
 from olympus.boba.reasoning import explain_clip_selection, summarize_project_understanding
@@ -135,6 +144,7 @@ class BobaIntegration:
         self.caption_motion_brain = BobaCaptionMotionRecommendationBrainV1()
         self.music_mood_brain = BobaMusicMoodBrainV1()
         self.experimentation_system = BobaExperimentationSystemV1()
+        self.performance_feedback_brain = BobaPerformanceFeedbackBrainV1()
         self.creator_learning_loop = BobaCreatorLearningLoopV1()
         self.approval_rejection_learning = BobaApprovalRejectionLearningV1()
         self.whole_video = BobaWholeVideoUnderstandingEngine()
@@ -1271,6 +1281,152 @@ class BobaIntegration:
         return await self.generate_experimentation_plan(
             project_id,
             creator_id=creator_id,
+            dry_run=True,
+        )
+
+    async def record_performance_feedback_event(
+        self,
+        project_id: str,
+        *,
+        event_type: BobaPerformanceEventType,
+        target_type: BobaPerformanceTargetType,
+        target_id: str,
+        candidate_id: str = "",
+        brief_id: str = "",
+        experiment_id: str = "",
+        variant_id: str = "",
+        manual_rating: float | None = None,
+        creator_note: str = "",
+        platform: str = "",
+        source_label: str = "manual_entry",
+        metrics: BobaManualPerformanceMetricsV1 | None = None,
+        retention_notes: str = "",
+        creator_interpretation: str = "",
+        outcome_label: BobaPerformanceOutcomeLabel | None = None,
+        baseline_id: str = "",
+        selected_variant_id: str = "",
+        should_feed_learning: bool = False,
+    ) -> tuple[BobaPerformanceFeedbackEventV1, BobaPerformanceFeedbackSetV1]:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        experimentation = self.store.load_experimentation_plan(project_id)
+        if event_type == "manual_experiment_result":
+            if experimentation is None:
+                raise ValidationError(
+                    "BOBA experimentation plan is required for experiment results.",
+                    details={"project_id": project_id},
+                )
+            experiment = next(
+                (
+                    item
+                    for item in experimentation.experiment_plans
+                    if item.experiment_id == experiment_id
+                ),
+                None,
+            )
+            if experiment is None:
+                raise ValidationError(
+                    "BOBA experiment was not found.",
+                    details={
+                        "project_id": project_id,
+                        "experiment_id": experiment_id,
+                    },
+                )
+            valid_targets = {
+                experiment.baseline.baseline_id,
+                *(variant.variant_id for variant in experiment.variants),
+            }
+            chosen_id = selected_variant_id or variant_id
+            if chosen_id and chosen_id not in valid_targets:
+                raise ValidationError(
+                    "Selected experiment baseline or variant was not found.",
+                    details={"selected_variant_id": chosen_id},
+                )
+            candidate_id = candidate_id or experiment.candidate_id
+            brief_id = brief_id or experiment.brief_id
+            baseline_id = baseline_id or experiment.baseline.baseline_id
+        event = self.performance_feedback_brain.create_event(
+            project_id,
+            event_type=event_type,
+            target_type=target_type,
+            target_id=target_id,
+            candidate_id=candidate_id,
+            brief_id=brief_id,
+            experiment_id=experiment_id,
+            variant_id=variant_id,
+            manual_rating=manual_rating,
+            creator_note=creator_note,
+            platform=platform,
+            source_label=source_label,
+            metrics=metrics,
+            retention_notes=retention_notes,
+            creator_interpretation=creator_interpretation,
+            outcome_label=outcome_label,
+            baseline_id=baseline_id,
+            selected_variant_id=selected_variant_id,
+            should_feed_learning=should_feed_learning,
+        )
+        saved_event = self.store.record_performance_feedback_event(event)
+        feedback = await self.generate_performance_feedback(project_id)
+        return saved_event, feedback
+
+    async def generate_performance_feedback(
+        self,
+        project_id: str,
+        *,
+        dry_run: bool = False,
+    ) -> BobaPerformanceFeedbackSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        feedback = self.performance_feedback_brain.analyze(
+            project_id,
+            self.store.list_performance_feedback_events(project_id),
+            source_id=project.link_ingestion_id or project_id,
+            experimentation=self.store.load_experimentation_plan(project_id),
+            experiment_manual_results=(
+                self.store.list_manual_experiment_results(project_id)
+            ),
+            creator_learning=self.store.load_creator_learning(project_id),
+            approval_rejection_learning=(
+                self.store.load_approval_rejection_learning(project_id)
+            ),
+            clip_briefs=self.store.load_clip_briefs(project_id),
+            hook_retention=self.store.load_hook_retention(project_id),
+            caption_motion=self.store.load_caption_motion(project_id),
+            music_mood=self.store.load_music_mood(project_id),
+            clip_ranking=self.store.load_clip_ranking(project_id),
+            editorial_decision=self.store.load_editorial_decisions(project_id),
+            boba_memory=(
+                self.store.load_project_memory(project_id)
+                if self.memory_enabled
+                else None
+            ),
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return feedback
+        return self.store.save_performance_feedback(feedback)
+
+    def load_performance_feedback(
+        self,
+        project_id: str,
+    ) -> BobaPerformanceFeedbackSetV1 | None:
+        return self.store.load_performance_feedback(project_id)
+
+    def export_performance_feedback(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_performance_feedback(project_id)
+
+    def reset_performance_feedback(self, project_id: str) -> bool:
+        return self.store.reset_performance_feedback(project_id)
+
+    async def apply_performance_guidance_dry_run(
+        self,
+        project_id: str,
+    ) -> BobaPerformanceFeedbackSetV1:
+        return await self.generate_performance_feedback(
+            project_id,
             dry_run=True,
         )
 
