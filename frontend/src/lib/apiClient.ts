@@ -89,6 +89,9 @@ import type {
   BobaGlobalMemoryV1,
   BobaHookRetentionSetV1,
   BobaMusicMoodRecommendationSetV1,
+  BobaPerformanceFeedbackEventInput,
+  BobaPerformanceFeedbackEventResponse,
+  BobaPerformanceFeedbackSetV1,
   BobaProjectMemoryV1,
   BobaScoutScoreV1,
   BobaWholeVideoUnderstandingV1,
@@ -313,6 +316,42 @@ export const api = {
       `/boba/projects/${projectId}/experimentation/results`,
       { method: "POST", body: JSON.stringify(input) },
     ),
+  getBobaPerformanceFeedback: (projectId: string) =>
+    request<BobaPerformanceFeedbackSetV1>(
+      `/boba/projects/${projectId}/performance-feedback`,
+    ),
+  recordBobaPerformanceFeedbackEvent: (
+    projectId: string,
+    input: BobaPerformanceFeedbackEventInput,
+  ) =>
+    request<BobaPerformanceFeedbackEventResponse>(
+      `/boba/projects/${projectId}/performance-feedback/events`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  generateBobaPerformanceFeedback: (
+    projectId: string,
+    input: { dry_run?: boolean } = {},
+  ) =>
+    request<BobaPerformanceFeedbackSetV1>(
+      `/boba/projects/${projectId}/performance-feedback`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  exportBobaPerformanceFeedback: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/performance-feedback/export`,
+    ),
+  resetBobaPerformanceFeedback: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      performance_feedback_removed: boolean;
+      experimentation_removed: false;
+      creator_learning_removed: false;
+      approval_rejection_learning_removed: false;
+      unrelated_memory_removed: false;
+    }>(`/boba/projects/${projectId}/performance-feedback`, {
+      method: "DELETE",
+    }),
   getBobaCreatorLearning: (projectId: string) =>
     request<BobaCreatorLearningSetV1>(
       `/boba/projects/${projectId}/creator-learning`,

@@ -2938,6 +2938,240 @@ export interface BobaExperimentManualResultV1 {
   warnings: string[];
 }
 
+export type BobaPerformanceEventType =
+  | "manual_clip_result"
+  | "manual_experiment_result"
+  | "manual_rating"
+  | "manual_note"
+  | "creator_interpretation"
+  | "reset"
+  | "export";
+
+export type BobaPerformanceTargetType =
+  | "clip"
+  | "candidate"
+  | "clip_brief"
+  | "experiment"
+  | "experiment_variant"
+  | "project";
+
+export type BobaPerformanceOutcomeLabel =
+  | "baseline_won"
+  | "variant_won"
+  | "no_clear_winner"
+  | "rejected_all"
+  | "inconclusive"
+  | "not_enough_data";
+
+export type BobaPerformanceFactorCategory =
+  | "clip_type"
+  | "hook"
+  | "retention"
+  | "pacing"
+  | "context"
+  | "payoff"
+  | "caption"
+  | "motion"
+  | "music_mood"
+  | "sfx"
+  | "speech_clarity"
+  | "experiment_variant"
+  | "platform_fit"
+  | "general";
+
+export type BobaPerformanceFactorPolarity =
+  | "positive"
+  | "negative"
+  | "neutral"
+  | "uncertain";
+
+export interface BobaManualPerformanceMetricsV1 {
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  saves: number | null;
+  average_watch_time_seconds: number | null;
+  average_view_duration_seconds: number | null;
+  retention_percent: number | null;
+  click_through_rate_percent: number | null;
+  completion_rate_percent: number | null;
+  follower_gain: number | null;
+  manual_rank: number | null;
+  custom_metrics: Record<string, number>;
+}
+
+export interface BobaPerformanceFeedbackEventV1 {
+  event_id: string;
+  project_id: string;
+  created_at: string;
+  event_type: BobaPerformanceEventType;
+  target_type: BobaPerformanceTargetType;
+  target_id: string;
+  candidate_id: string;
+  brief_id: string;
+  experiment_id: string;
+  variant_id: string;
+  user_entered: true;
+  manual_rating: number | null;
+  creator_note: string;
+  platform: string;
+  source_label: string;
+  metrics: BobaManualPerformanceMetricsV1;
+  retention_notes: string;
+  creator_interpretation: string;
+  outcome_label: BobaPerformanceOutcomeLabel | null;
+  baseline_id: string;
+  selected_variant_id: string;
+  should_feed_learning: boolean;
+  warnings: string[];
+}
+
+export interface BobaPerformanceSnapshotV1 {
+  snapshot_id: string;
+  source_event_id: string;
+  project_id: string;
+  target_id: string;
+  candidate_id: string;
+  brief_id: string;
+  platform: string;
+  metrics: BobaManualPerformanceMetricsV1;
+  manual_quality_rating: number | null;
+  creator_notes: string;
+  retention_notes: string;
+  data_confidence: number;
+  entered_at: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaPerformanceFactorV1 {
+  factor_id: string;
+  category: BobaPerformanceFactorCategory;
+  polarity: BobaPerformanceFactorPolarity;
+  summary: string;
+  source_artifact: string;
+  source_field: string;
+  confidence: number;
+  evidence: string[];
+}
+
+export interface BobaExperimentOutcomeReviewV1 {
+  outcome_id: string;
+  project_id: string;
+  experiment_id: string;
+  baseline_id: string;
+  selected_variant_id: string;
+  outcome_label: BobaPerformanceOutcomeLabel;
+  what_worked: string[];
+  what_failed: string[];
+  likely_success_factors: BobaPerformanceFactorV1[];
+  likely_failure_factors: BobaPerformanceFactorV1[];
+  confidence: number;
+  should_feed_learning: boolean;
+  learning_targets: string[];
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaPerformancePatternSummaryV1 {
+  strongest_positive_patterns: BobaPerformanceFactorV1[];
+  strongest_negative_patterns: BobaPerformanceFactorV1[];
+  repeated_winners: string[];
+  repeated_failures: string[];
+  contradictions: string[];
+  risky_conclusions: string[];
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaPerformanceLearningHandoffV1 {
+  creator_learning_updates: string[];
+  approval_rejection_updates: string[];
+  experimentation_updates: string[];
+  ranking_guidance: string[];
+  editorial_guidance: string[];
+  hook_retention_guidance: string[];
+  caption_motion_guidance: string[];
+  music_mood_guidance: string[];
+  apply_automatically: false;
+}
+
+export interface BobaPerformanceAuditSummaryV1 {
+  total_events: number;
+  manual_clip_results: number;
+  manual_experiment_results: number;
+  snapshots_count: number;
+  outcomes_count: number;
+  user_entered_count: number;
+  auto_collected_count: 0;
+  export_available: boolean;
+  reset_available: boolean;
+  warnings: string[];
+}
+
+export interface BobaPerformanceFeedbackSignalUsageV1 {
+  experimentation_used: boolean;
+  creator_learning_used: boolean;
+  approval_rejection_used: boolean;
+  clip_briefs_used: boolean;
+  hook_retention_used: boolean;
+  caption_motion_used: boolean;
+  music_mood_used: boolean;
+  clip_ranking_used: boolean;
+  editorial_decision_used: boolean;
+  memory_used: boolean;
+  manual_feedback_used: boolean;
+  analytics_api_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaPerformanceFeedbackSetV1 {
+  schema_version: "boba_performance_feedback_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  performance_events: BobaPerformanceFeedbackEventV1[];
+  performance_snapshots: BobaPerformanceSnapshotV1[];
+  experiment_outcomes: BobaExperimentOutcomeReviewV1[];
+  pattern_summary: BobaPerformancePatternSummaryV1;
+  learning_handoff: BobaPerformanceLearningHandoffV1;
+  audit_summary: BobaPerformanceAuditSummaryV1;
+  signal_usage: BobaPerformanceFeedbackSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaPerformanceFeedbackEventInput {
+  event_type: BobaPerformanceEventType;
+  target_type: BobaPerformanceTargetType;
+  target_id: string;
+  candidate_id?: string;
+  brief_id?: string;
+  experiment_id?: string;
+  variant_id?: string;
+  manual_rating?: number;
+  creator_note?: string;
+  platform?: string;
+  source_label?: string;
+  metrics?: Partial<BobaManualPerformanceMetricsV1>;
+  retention_notes?: string;
+  creator_interpretation?: string;
+  outcome_label?: BobaPerformanceOutcomeLabel;
+  baseline_id?: string;
+  selected_variant_id?: string;
+  should_feed_learning?: boolean;
+}
+
+export interface BobaPerformanceFeedbackEventResponse {
+  event: BobaPerformanceFeedbackEventV1;
+  performance_feedback: BobaPerformanceFeedbackSetV1;
+  analytics_collected: false;
+  automatically_applied: false;
+}
+
 /** The published render manifest (the contract the Optimization Engine consumes). */
 export interface RenderManifestResponse {
   project_id: string;

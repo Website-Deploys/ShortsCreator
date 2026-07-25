@@ -23,6 +23,7 @@ import {
   useBobaExperimentation,
   useBobaHookRetention,
   useBobaMusicMood,
+  useBobaPerformanceFeedback,
   useBobaProjectMemory,
   useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
@@ -38,6 +39,7 @@ import {
   useExportBobaApprovalRejectionLearning,
   useExportBobaCreatorLearning,
   useExportBobaExperimentation,
+  useExportBobaPerformanceFeedback,
   useDecideBobaCandidate,
   useDecideBobaCreativeBrief,
   useDiscoverBobaCandidateClips,
@@ -45,14 +47,17 @@ import {
   useGenerateBobaApprovalRejectionLearning,
   useGenerateBobaCreatorLearning,
   useGenerateBobaExperimentation,
+  useGenerateBobaPerformanceFeedback,
   useGenerateBobaWholeVideoUnderstanding,
   usePlans,
   useRenderManifest,
   useResetCreatorProfile,
   useResetBobaApprovalRejectionLearning,
   useResetBobaExperimentation,
+  useResetBobaPerformanceFeedback,
   useRankBobaCandidateClips,
   useRecordBobaCreatorLearningEvent,
+  useRecordBobaPerformanceFeedbackEvent,
   useResetBobaCreatorLearning,
   useScoreBobaCandidate,
   useSubmitClipFeedback,
@@ -75,6 +80,11 @@ import type {
   BobaExperimentationSetV1,
   BobaHookRetentionSetV1,
   BobaMusicMoodRecommendationSetV1,
+  BobaManualPerformanceMetricsV1,
+  BobaPerformanceEventType,
+  BobaPerformanceFeedbackEventInput,
+  BobaPerformanceOutcomeLabel,
+  BobaPerformanceTargetType,
   BobaProjectMemoryV1,
   BobaWholeVideoUnderstandingV1,
   ClipPlan,
@@ -2840,6 +2850,714 @@ function BobaExperimentationPanel({
   );
 }
 
+type PerformanceMetricField = Exclude<
+  keyof BobaManualPerformanceMetricsV1,
+  "custom_metrics"
+>;
+
+const performanceEventTypes: BobaPerformanceEventType[] = [
+  "manual_clip_result",
+  "manual_experiment_result",
+  "manual_rating",
+  "manual_note",
+  "creator_interpretation",
+];
+
+const performanceTargetTypes: BobaPerformanceTargetType[] = [
+  "clip",
+  "candidate",
+  "clip_brief",
+  "experiment",
+  "experiment_variant",
+  "project",
+];
+
+const performanceOutcomeLabels: BobaPerformanceOutcomeLabel[] = [
+  "variant_won",
+  "baseline_won",
+  "no_clear_winner",
+  "rejected_all",
+  "inconclusive",
+  "not_enough_data",
+];
+
+const performanceMetricFields: Array<{
+  key: PerformanceMetricField;
+  label: string;
+  maximum?: number;
+  minimum?: number;
+}> = [
+  { key: "views", label: "Views", minimum: 0 },
+  { key: "likes", label: "Likes", minimum: 0 },
+  { key: "comments", label: "Comments", minimum: 0 },
+  { key: "shares", label: "Shares", minimum: 0 },
+  { key: "saves", label: "Saves", minimum: 0 },
+  {
+    key: "average_watch_time_seconds",
+    label: "Average watch time (seconds)",
+    minimum: 0,
+  },
+  {
+    key: "average_view_duration_seconds",
+    label: "Average view duration (seconds)",
+    minimum: 0,
+  },
+  {
+    key: "retention_percent",
+    label: "Retention percent",
+    minimum: 0,
+    maximum: 100,
+  },
+  {
+    key: "click_through_rate_percent",
+    label: "Click-through rate percent",
+    minimum: 0,
+    maximum: 100,
+  },
+  {
+    key: "completion_rate_percent",
+    label: "Completion rate percent",
+    minimum: 0,
+    maximum: 100,
+  },
+  { key: "follower_gain", label: "Follower gain", minimum: 0 },
+  { key: "manual_rank", label: "Manual rank", minimum: 1 },
+];
+
+function emptyPerformanceMetrics(): Record<PerformanceMetricField, string> {
+  return {
+    views: "",
+    likes: "",
+    comments: "",
+    shares: "",
+    saves: "",
+    average_watch_time_seconds: "",
+    average_view_duration_seconds: "",
+    retention_percent: "",
+    click_through_rate_percent: "",
+    completion_rate_percent: "",
+    follower_gain: "",
+    manual_rank: "",
+  };
+}
+
+function formatPerformanceMetrics(
+  metrics: BobaManualPerformanceMetricsV1,
+): string {
+  const standard = Object.entries(metrics)
+    .filter(
+      ([key, value]) => key !== "custom_metrics" && typeof value === "number",
+    )
+    .map(([key, value]) => `${key.replace(/_/g, " ")}: ${value}`);
+  const custom = Object.entries(metrics.custom_metrics).map(
+    ([key, value]) => `${key}: ${value}`,
+  );
+  return [...standard, ...custom].join(" · ") || "No numeric metrics entered";
+}
+
+function BobaPerformanceFeedbackPanel({
+  projectId,
+}: {
+  projectId: string;
+}) {
+  const feedbackQuery = useBobaPerformanceFeedback(projectId);
+  const recordEvent = useRecordBobaPerformanceFeedbackEvent(projectId);
+  const generateFeedback = useGenerateBobaPerformanceFeedback(projectId);
+  const exportFeedback = useExportBobaPerformanceFeedback(projectId);
+  const resetFeedback = useResetBobaPerformanceFeedback(projectId);
+  const [eventType, setEventType] =
+    useState<BobaPerformanceEventType>("manual_clip_result");
+  const [targetType, setTargetType] =
+    useState<BobaPerformanceTargetType>("clip");
+  const [targetId, setTargetId] = useState(projectId);
+  const [experimentId, setExperimentId] = useState("");
+  const [selectedVariantId, setSelectedVariantId] = useState("");
+  const [outcomeLabel, setOutcomeLabel] =
+    useState<BobaPerformanceOutcomeLabel>("inconclusive");
+  const [platform, setPlatform] = useState("");
+  const [manualRating, setManualRating] = useState("");
+  const [creatorNote, setCreatorNote] = useState("");
+  const [retentionNotes, setRetentionNotes] = useState("");
+  const [metrics, setMetrics] = useState(emptyPerformanceMetrics);
+  const [shouldFeedLearning, setShouldFeedLearning] = useState(false);
+  const [status, setStatus] = useState("");
+  const feedback = feedbackQuery.data;
+  const busy =
+    recordEvent.isPending ||
+    generateFeedback.isPending ||
+    exportFeedback.isPending ||
+    resetFeedback.isPending;
+
+  function parsedMetrics(): Partial<BobaManualPerformanceMetricsV1> | null {
+    const entries: Array<[string, number]> = [];
+    for (const field of performanceMetricFields) {
+      const raw = metrics[field.key].trim();
+      if (!raw) continue;
+      const value = Number(raw);
+      if (
+        !Number.isFinite(value) ||
+        value < (field.minimum ?? 0) ||
+        (field.maximum !== undefined && value > field.maximum)
+      ) {
+        setStatus(`${field.label} is outside the supported range.`);
+        return null;
+      }
+      entries.push([field.key, value]);
+    }
+    return Object.fromEntries(entries) as Partial<BobaManualPerformanceMetricsV1>;
+  }
+
+  function submitEvent() {
+    const metricPayload = parsedMetrics();
+    if (metricPayload === null) return;
+    const rating = manualRating.trim() ? Number(manualRating) : undefined;
+    if (
+      rating !== undefined &&
+      (!Number.isFinite(rating) || rating < 0 || rating > 5)
+    ) {
+      setStatus("Manual rating must be between 0 and 5.");
+      return;
+    }
+    if (eventType === "manual_rating" && rating === undefined) {
+      setStatus("Enter a manual rating before recording this event.");
+      return;
+    }
+    if (
+      eventType === "manual_experiment_result" &&
+      !experimentId.trim()
+    ) {
+      setStatus("Choose an experiment ID before recording its outcome.");
+      return;
+    }
+    if (
+      eventType === "manual_experiment_result" &&
+      outcomeLabel === "variant_won" &&
+      !selectedVariantId.trim()
+    ) {
+      setStatus("Enter the winning variant ID.");
+      return;
+    }
+    const effectiveTargetId =
+      eventType === "manual_experiment_result"
+        ? experimentId.trim()
+        : targetId.trim();
+    if (!effectiveTargetId) {
+      setStatus("Choose a target ID before recording feedback.");
+      return;
+    }
+    if (
+      Object.keys(metricPayload).length === 0 &&
+      rating === undefined &&
+      !creatorNote.trim() &&
+      !retentionNotes.trim()
+    ) {
+      setStatus("Enter at least one metric, rating, or explicit note.");
+      return;
+    }
+
+    const input: BobaPerformanceFeedbackEventInput = {
+      event_type: eventType,
+      target_type:
+        eventType === "manual_experiment_result" ? "experiment" : targetType,
+      target_id: effectiveTargetId,
+      experiment_id:
+        eventType === "manual_experiment_result"
+          ? experimentId.trim()
+          : undefined,
+      selected_variant_id:
+        eventType === "manual_experiment_result"
+          ? selectedVariantId.trim()
+          : undefined,
+      outcome_label:
+        eventType === "manual_experiment_result" ? outcomeLabel : undefined,
+      manual_rating: rating,
+      creator_note: creatorNote.trim(),
+      creator_interpretation:
+        eventType === "creator_interpretation"
+          ? creatorNote.trim()
+          : undefined,
+      platform: platform.trim(),
+      source_label: "frontend_manual_entry",
+      metrics: metricPayload,
+      retention_notes: retentionNotes.trim(),
+      should_feed_learning: shouldFeedLearning,
+    };
+
+    setStatus("");
+    recordEvent.mutate(input, {
+      onSuccess: (result) => {
+        setStatus(
+          `Recorded ${result.event.event_type.replace(/_/g, " ")} as explicit manual data. No analytics were collected.`,
+        );
+        setCreatorNote("");
+        setRetentionNotes("");
+        setManualRating("");
+        setMetrics(emptyPerformanceMetrics());
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function generate(dryRun: boolean) {
+    setStatus("");
+    generateFeedback.mutate(
+      { dry_run: dryRun },
+      {
+        onSuccess: (result) =>
+          setStatus(
+            dryRun
+              ? `Dry run reviewed ${result.audit_summary.total_events} manual event(s); nothing was saved.`
+              : `Performance summary updated from ${result.audit_summary.total_events} manual event(s).`,
+          ),
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function downloadExport() {
+    setStatus("");
+    exportFeedback.mutate(undefined, {
+      onSuccess: (payload) => {
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {
+          type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `boba_performance_feedback_${projectId}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        setStatus("Safe performance-feedback export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's manual performance events and summary only? Experimentation, Creator Learning, Approval/Rejection Learning, and Memory remain.",
+      )
+    ) {
+      return;
+    }
+    setStatus("");
+    resetFeedback.mutate(undefined, {
+      onSuccess: () =>
+        setStatus(
+          "Performance feedback reset; Experimentation and learning artifacts remain.",
+        ),
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-emerald-300/20 bg-emerald-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            BOBA Performance Feedback Brain V1
+          </p>
+          <p className="text-xs text-emerald-100">
+            Performance data is manual in V1. BOBA does not connect to platforms
+            or collect analytics.
+          </p>
+          <p className="text-[11px] text-amber-100">
+            Learning guidance is advisory unless you explicitly approve applying
+            it.
+          </p>
+        </div>
+        <span className="rounded bg-white/5 px-2 py-1 text-[11px] text-muted">
+          {feedback
+            ? `${feedback.audit_summary.total_events} manual event(s) · ${formatPercent(feedback.pattern_summary.confidence)} pattern confidence`
+            : "No saved summary"}
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <select
+          value={eventType}
+          onChange={(event) =>
+            setEventType(event.target.value as BobaPerformanceEventType)
+          }
+          className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white"
+        >
+          {performanceEventTypes.map((value) => (
+            <option key={value} value={value}>
+              {value.replace(/_/g, " ")}
+            </option>
+          ))}
+        </select>
+        <select
+          value={targetType}
+          disabled={eventType === "manual_experiment_result"}
+          onChange={(event) =>
+            setTargetType(event.target.value as BobaPerformanceTargetType)
+          }
+          className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white disabled:opacity-50"
+        >
+          {performanceTargetTypes.map((value) => (
+            <option key={value} value={value}>
+              {value.replace(/_/g, " ")}
+            </option>
+          ))}
+        </select>
+        <input
+          value={targetId}
+          disabled={eventType === "manual_experiment_result"}
+          maxLength={180}
+          onChange={(event) => setTargetId(event.target.value)}
+          placeholder="Clip, candidate, brief, or project ID"
+          className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white placeholder:text-white/30 disabled:opacity-50"
+        />
+        <input
+          value={platform}
+          maxLength={80}
+          onChange={(event) => setPlatform(event.target.value)}
+          placeholder="Platform (optional user text)"
+          className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white placeholder:text-white/30"
+        />
+      </div>
+
+      {eventType === "manual_experiment_result" && (
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+          <input
+            value={experimentId}
+            maxLength={128}
+            onChange={(event) => setExperimentId(event.target.value)}
+            placeholder="Saved experiment ID"
+            className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white placeholder:text-white/30"
+          />
+          <input
+            value={selectedVariantId}
+            maxLength={128}
+            onChange={(event) => setSelectedVariantId(event.target.value)}
+            placeholder="Selected baseline or variant ID"
+            className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white placeholder:text-white/30"
+          />
+          <select
+            value={outcomeLabel}
+            onChange={(event) =>
+              setOutcomeLabel(
+                event.target.value as BobaPerformanceOutcomeLabel,
+              )
+            }
+            className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white"
+          >
+            {performanceOutcomeLabels.map((value) => (
+              <option key={value} value={value}>
+                {value.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <details className="mt-2 rounded border border-white/10 p-3">
+        <summary className="cursor-pointer text-xs font-semibold text-white">
+          Optional creator-entered metrics
+        </summary>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {performanceMetricFields.map((field) => (
+            <label key={field.key} className="text-[11px] text-muted">
+              {field.label}
+              <input
+                type="number"
+                min={field.minimum}
+                max={field.maximum}
+                step={field.key === "manual_rank" ? 1 : "any"}
+                value={metrics[field.key]}
+                onChange={(event) =>
+                  setMetrics((current) => ({
+                    ...current,
+                    [field.key]: event.target.value,
+                  }))
+                }
+                className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white"
+              />
+            </label>
+          ))}
+        </div>
+      </details>
+
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        <label className="text-[11px] text-muted">
+          Manual quality rating (0–5)
+          <input
+            type="number"
+            min={0}
+            max={5}
+            step="any"
+            value={manualRating}
+            onChange={(event) => setManualRating(event.target.value)}
+            className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white"
+          />
+        </label>
+        <label className="text-[11px] text-muted">
+          Creator note
+          <input
+            value={creatorNote}
+            maxLength={500}
+            onChange={(event) => setCreatorNote(event.target.value)}
+            placeholder="What worked or failed?"
+            className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white placeholder:text-white/30"
+          />
+        </label>
+        <label className="text-[11px] text-muted">
+          Retention note
+          <input
+            value={retentionNotes}
+            maxLength={500}
+            onChange={(event) => setRetentionNotes(event.target.value)}
+            placeholder="Example: people dropped before payoff"
+            className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white placeholder:text-white/30"
+          />
+        </label>
+      </div>
+
+      <label className="mt-2 flex items-center gap-2 text-[11px] text-muted">
+        <input
+          type="checkbox"
+          checked={shouldFeedLearning}
+          onChange={(event) => setShouldFeedLearning(event.target.checked)}
+        />
+        Include this result in the advisory learning handoff; never apply it
+        automatically.
+      </label>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={submitEvent}
+          className="rounded bg-emerald-300/15 px-2.5 py-1.5 text-[11px] text-emerald-100 disabled:opacity-50"
+        >
+          Record manual feedback
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => generate(false)}
+          className="rounded border border-white/10 px-2.5 py-1.5 text-[11px] text-white disabled:opacity-50"
+        >
+          Generate summary
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => generate(true)}
+          className="rounded border border-white/10 px-2.5 py-1.5 text-[11px] text-muted disabled:opacity-50"
+        >
+          Dry run
+        </button>
+        <button
+          type="button"
+          disabled={busy || !feedback}
+          onClick={downloadExport}
+          className="rounded border border-white/10 px-2.5 py-1.5 text-[11px] text-muted disabled:opacity-50"
+        >
+          Export
+        </button>
+        <button
+          type="button"
+          disabled={busy || !feedback}
+          onClick={reset}
+          className="rounded border border-rose-300/20 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+        >
+          Reset feedback
+        </button>
+      </div>
+
+      {status && <p className="mt-2 text-[11px] text-emerald-100">{status}</p>}
+
+      {feedback && (
+        <div className="mt-3 space-y-3 text-xs text-muted">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div className="rounded border border-white/10 p-2">
+              <p className="font-semibold text-white">Manual audit</p>
+              <p>{feedback.audit_summary.user_entered_count} user-entered event(s)</p>
+              <p>{feedback.audit_summary.auto_collected_count} auto-collected event(s)</p>
+              <p>
+                Analytics API used:{" "}
+                {feedback.signal_usage.analytics_api_used ? "Yes" : "No"}
+              </p>
+            </div>
+            <div className="rounded border border-white/10 p-2">
+              <p className="font-semibold text-white">Snapshots</p>
+              <p>{feedback.performance_snapshots.length} snapshot(s)</p>
+              <p>{feedback.experiment_outcomes.length} experiment review(s)</p>
+            </div>
+            <div className="rounded border border-white/10 p-2">
+              <p className="font-semibold text-white">Advisory learning</p>
+              <p>
+                Automatic application:{" "}
+                {feedback.learning_handoff.apply_automatically
+                  ? "Enabled"
+                  : "Disabled"}
+              </p>
+              <p>
+                Confidence: {formatPercent(feedback.pattern_summary.confidence)}
+              </p>
+            </div>
+          </div>
+
+          {feedback.performance_snapshots.length > 0 && (
+            <details className="rounded border border-white/10 p-3">
+              <summary className="cursor-pointer font-semibold text-white">
+                Performance snapshots
+              </summary>
+              <div className="mt-2 space-y-2">
+                {feedback.performance_snapshots.slice(-8).map((snapshot) => (
+                  <div key={snapshot.snapshot_id}>
+                    <p className="font-semibold text-emerald-100">
+                      {snapshot.target_id} ·{" "}
+                      {formatPercent(snapshot.data_confidence)} confidence
+                    </p>
+                    <p>{formatPerformanceMetrics(snapshot.metrics)}</p>
+                    <p>
+                      Rating: {snapshot.manual_quality_rating ?? "Not entered"} ·
+                      Platform: {snapshot.platform || "Not entered"}
+                    </p>
+                    {(snapshot.creator_notes || snapshot.retention_notes) && (
+                      <p>
+                        Notes:{" "}
+                        {[snapshot.creator_notes, snapshot.retention_notes]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
+          {feedback.experiment_outcomes.length > 0 && (
+            <details className="rounded border border-white/10 p-3">
+              <summary className="cursor-pointer font-semibold text-white">
+                Experiment outcome reviews
+              </summary>
+              <div className="mt-2 space-y-2">
+                {feedback.experiment_outcomes.map((outcome) => (
+                  <div key={outcome.outcome_id}>
+                    <p className="font-semibold text-emerald-100">
+                      {outcome.experiment_id} ·{" "}
+                      {outcome.outcome_label.replace(/_/g, " ")} ·{" "}
+                      {formatPercent(outcome.confidence)}
+                    </p>
+                    <p>
+                      Worked: {outcome.what_worked.join("; ") || "Not established"}
+                    </p>
+                    <p>
+                      Failed: {outcome.what_failed.join("; ") || "Not established"}
+                    </p>
+                    <p>
+                      Learning targets:{" "}
+                      {outcome.learning_targets.join(", ") || "None"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
+          <details className="rounded border border-white/10 p-3">
+            <summary className="cursor-pointer font-semibold text-white">
+              Pattern summary and uncertainty
+            </summary>
+            <div className="mt-2 space-y-1">
+              <p>
+                Repeated winners:{" "}
+                {feedback.pattern_summary.repeated_winners.join("; ") ||
+                  "Not enough repeated evidence"}
+              </p>
+              <p>
+                Repeated failures:{" "}
+                {feedback.pattern_summary.repeated_failures.join("; ") ||
+                  "Not enough repeated evidence"}
+              </p>
+              <p>
+                Positive patterns:{" "}
+                {feedback.pattern_summary.strongest_positive_patterns
+                  .map((factor) => factor.summary)
+                  .join("; ") || "Not established"}
+              </p>
+              <p>
+                Negative patterns:{" "}
+                {feedback.pattern_summary.strongest_negative_patterns
+                  .map((factor) => factor.summary)
+                  .join("; ") || "Not established"}
+              </p>
+              <p>
+                Contradictions:{" "}
+                {feedback.pattern_summary.contradictions.join("; ") || "None"}
+              </p>
+              <p>
+                Risky conclusions:{" "}
+                {feedback.pattern_summary.risky_conclusions.join("; ") || "None"}
+              </p>
+            </div>
+          </details>
+
+          <details className="rounded border border-white/10 p-3">
+            <summary className="cursor-pointer font-semibold text-white">
+              Advisory learning handoff
+            </summary>
+            <div className="mt-2 space-y-1">
+              <p>
+                Creator learning:{" "}
+                {feedback.learning_handoff.creator_learning_updates.join("; ") ||
+                  "No update proposed"}
+              </p>
+              <p>
+                Approval/rejection:{" "}
+                {feedback.learning_handoff.approval_rejection_updates.join(
+                  "; ",
+                ) || "No update proposed"}
+              </p>
+              <p>
+                Ranking:{" "}
+                {feedback.learning_handoff.ranking_guidance.join("; ") ||
+                  "No guidance proposed"}
+              </p>
+              <p>
+                Editorial:{" "}
+                {feedback.learning_handoff.editorial_guidance.join("; ") ||
+                  "No guidance proposed"}
+              </p>
+              <p>
+                Hook/retention:{" "}
+                {feedback.learning_handoff.hook_retention_guidance.join("; ") ||
+                  "No guidance proposed"}
+              </p>
+              <p>
+                Caption/motion:{" "}
+                {feedback.learning_handoff.caption_motion_guidance.join("; ") ||
+                  "No guidance proposed"}
+              </p>
+              <p>
+                Music mood:{" "}
+                {feedback.learning_handoff.music_mood_guidance.join("; ") ||
+                  "No guidance proposed"}
+              </p>
+            </div>
+          </details>
+
+          {(feedback.warnings.length > 0 ||
+            feedback.limitations.length > 0) && (
+            <p className="text-amber-100">
+              Review:{" "}
+              {[...feedback.warnings, ...feedback.limitations]
+                .slice(0, 6)
+                .join("; ")}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 const creatorLearningTargetTypes: BobaCreatorFeedbackTargetType[] = [
   "project",
   "clip",
@@ -4396,6 +5114,9 @@ export function ResultsSection({
       )}
     />
   );
+  const performanceFeedbackPanel = (
+    <BobaPerformanceFeedbackPanel projectId={projectId} />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -4414,6 +5135,7 @@ export function ResultsSection({
         {captionMotionPanel}
         {musicMoodPanel}
         {experimentationPanel}
+        {performanceFeedbackPanel}
         {memoryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -4445,6 +5167,7 @@ export function ResultsSection({
         {captionMotionPanel}
         {musicMoodPanel}
         {experimentationPanel}
+        {performanceFeedbackPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -4472,6 +5195,7 @@ export function ResultsSection({
         {captionMotionPanel}
         {musicMoodPanel}
         {experimentationPanel}
+        {performanceFeedbackPanel}
         {memoryPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -4499,6 +5223,7 @@ export function ResultsSection({
       {captionMotionPanel}
       {musicMoodPanel}
       {experimentationPanel}
+      {performanceFeedbackPanel}
       {memoryPanel}
       {scoutCreativePanel}
       <EmptyState

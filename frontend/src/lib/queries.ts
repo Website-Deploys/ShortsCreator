@@ -64,6 +64,8 @@ import type {
   BobaExperimentationSetV1,
   BobaHookRetentionSetV1,
   BobaMusicMoodRecommendationSetV1,
+  BobaPerformanceFeedbackEventInput,
+  BobaPerformanceFeedbackSetV1,
   BobaProjectMemoryV1,
   BobaWholeVideoUnderstandingV1,
   CostEstimate,
@@ -110,6 +112,8 @@ export const queryKeys = {
     ["boba", "projects", id, "music-mood"] as const,
   bobaExperimentation: (id: string) =>
     ["boba", "projects", id, "experimentation"] as const,
+  bobaPerformanceFeedback: (id: string) =>
+    ["boba", "projects", id, "performance-feedback"] as const,
   creatorProfiles: ["personalization", "profiles"] as const,
   creatorPersonalizationSummary: ["personalization", "summary"] as const,
   analysis: (id: string) => ["projects", id, "analysis"] as const,
@@ -564,6 +568,70 @@ export function useResetBobaExperimentation(projectId: string) {
     mutationFn: () => api.resetBobaExperimentation(projectId),
     onSuccess: () => {
       queryClient.setQueryData(queryKeys.bobaExperimentation(projectId), null);
+    },
+  });
+}
+
+export function useBobaPerformanceFeedback(projectId: string) {
+  return useQuery<BobaPerformanceFeedbackSetV1 | null>({
+    queryKey: queryKeys.bobaPerformanceFeedback(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaPerformanceFeedback(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useRecordBobaPerformanceFeedbackEvent(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaPerformanceFeedbackEventInput) =>
+      api.recordBobaPerformanceFeedbackEvent(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(
+        queryKeys.bobaPerformanceFeedback(projectId),
+        result.performance_feedback,
+      );
+    },
+  });
+}
+
+export function useGenerateBobaPerformanceFeedback(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { dry_run?: boolean } = {}) =>
+      api.generateBobaPerformanceFeedback(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(
+          queryKeys.bobaPerformanceFeedback(projectId),
+          result,
+        );
+      }
+    },
+  });
+}
+
+export function useExportBobaPerformanceFeedback(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaPerformanceFeedback(projectId),
+  });
+}
+
+export function useResetBobaPerformanceFeedback(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaPerformanceFeedback(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(
+        queryKeys.bobaPerformanceFeedback(projectId),
+        null,
+      );
     },
   });
 }

@@ -60,6 +60,10 @@ from olympus.boba.memory_contracts import (
 )
 from olympus.boba.memory_validation import validate_memory_export, validate_memory_record
 from olympus.boba.music_mood import BobaMusicMoodRecommendationSetV1
+from olympus.boba.performance_feedback import (
+    BobaPerformanceFeedbackEventV1,
+    BobaPerformanceFeedbackSetV1,
+)
 from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
 from olympus.boba.whole_video import BobaWholeVideoUnderstandingV1
 from olympus.platform.errors import ValidationError
@@ -718,6 +722,166 @@ class BobaMemoryStore:
                     path.unlink()
                     removed = True
             directory = self.experimentation_path(project_id).parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
+
+    def performance_feedback_path(self, project_id: str) -> Path:
+        return self._path(project_id, "performance_feedback/index.json")
+
+    def performance_feedback_events_path(self, project_id: str) -> Path:
+        return self._path(project_id, "performance_feedback/events.jsonl")
+
+    def save_performance_feedback(
+        self,
+        feedback: BobaPerformanceFeedbackSetV1,
+    ) -> BobaPerformanceFeedbackSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                feedback.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            )
+            self._atomic_write(
+                self.performance_feedback_path(feedback.project_id),
+                safe,
+            )
+        return feedback
+
+    def load_performance_feedback(
+        self,
+        project_id: str,
+    ) -> BobaPerformanceFeedbackSetV1 | None:
+        raw = self._read(self.performance_feedback_path(project_id), None)
+        return (
+            BobaPerformanceFeedbackSetV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def record_performance_feedback_event(
+        self,
+        event: BobaPerformanceFeedbackEventV1,
+    ) -> BobaPerformanceFeedbackEventV1:
+        safe_payload = sanitize_memory_payload(
+            event.model_dump(mode="json"),
+            max_excerpt_chars=max(self.max_excerpt_chars, 500),
+        )
+        safe_event = BobaPerformanceFeedbackEventV1.model_validate(safe_payload)
+        with self._lock:
+            events = self.list_performance_feedback_events(event.project_id)
+            existing = next(
+                (item for item in events if item.event_id == event.event_id),
+                None,
+            )
+            if existing is not None:
+                return existing
+            events.append(safe_event)
+            lines = [
+                json.dumps(item.model_dump(mode="json"), ensure_ascii=False)
+                for item in events[-5000:]
+            ]
+            self._atomic_write_text(
+                self.performance_feedback_events_path(event.project_id),
+                "\n".join(lines) + "\n",
+            )
+        return safe_event
+
+    def list_performance_feedback_events(
+        self,
+        project_id: str,
+    ) -> list[BobaPerformanceFeedbackEventV1]:
+        path = self.performance_feedback_events_path(project_id)
+        try:
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise ValidationError(
+                "BOBA performance feedback event storage could not be read.",
+                details={"path": path.name},
+            ) from exc
+        events: list[BobaPerformanceFeedbackEventV1] = []
+        for line_number, line in enumerate(lines, start=1):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+                events.append(BobaPerformanceFeedbackEventV1.model_validate(raw))
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise ValidationError(
+                    "BOBA performance feedback event storage is corrupt.",
+                    details={"path": path.name, "line": line_number},
+                ) from exc
+        return events
+
+    def export_performance_feedback(self, project_id: str) -> dict[str, Any]:
+        feedback = self.load_performance_feedback(project_id)
+        if feedback is None:
+            raise ValidationError(
+                "BOBA performance feedback is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = feedback.model_dump(mode="json")
+        for event in payload.get("performance_events", []):
+            if isinstance(event, dict):
+                event.pop("creator_note", None)
+                event.pop("retention_notes", None)
+                event.pop("creator_interpretation", None)
+        for snapshot in payload.get("performance_snapshots", []):
+            if isinstance(snapshot, dict):
+                snapshot.pop("creator_notes", None)
+                snapshot.pop("retention_notes", None)
+        for outcome in payload.get("experiment_outcomes", []):
+            if not isinstance(outcome, dict):
+                continue
+            for field in ("likely_success_factors", "likely_failure_factors"):
+                for factor in outcome.get(field, []):
+                    if isinstance(factor, dict):
+                        factor.pop("evidence", None)
+        pattern_summary = payload.get("pattern_summary", {})
+        if isinstance(pattern_summary, dict):
+            for field in (
+                "strongest_positive_patterns",
+                "strongest_negative_patterns",
+            ):
+                for factor in pattern_summary.get(field, []):
+                    if isinstance(factor, dict):
+                        factor.pop("evidence", None)
+        export = {
+            "schema_version": "boba_performance_feedback_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "performance_feedback": payload,
+            "privacy": {
+                "manual_input_only": True,
+                "manual_notes_excluded": True,
+                "media_files_excluded": True,
+                "source_text_excluded": True,
+                "credentials_excluded": True,
+                "platform_connections_used": False,
+                "automatic_collection_used": False,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA performance feedback export is invalid.")
+        return safe
+
+    def reset_performance_feedback(self, project_id: str) -> bool:
+        paths = (
+            self.performance_feedback_path(project_id),
+            self.performance_feedback_events_path(project_id),
+        )
+        removed = False
+        with self._lock:
+            for path in paths:
+                if path.exists():
+                    path.unlink()
+                    removed = True
+            directory = self.performance_feedback_path(project_id).parent
             if directory.exists() and not any(directory.iterdir()):
                 directory.rmdir()
         return removed

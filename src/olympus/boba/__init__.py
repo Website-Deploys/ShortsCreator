@@ -173,6 +173,19 @@ from olympus.boba.music_mood import (
     BobaSfxRecommendationV1,
     BobaSpeechClarityPlanV1,
 )
+from olympus.boba.performance_feedback import (
+    BobaExperimentOutcomeReviewV1,
+    BobaManualPerformanceMetricsV1,
+    BobaPerformanceAuditSummaryV1,
+    BobaPerformanceFactorV1,
+    BobaPerformanceFeedbackBrainV1,
+    BobaPerformanceFeedbackEventV1,
+    BobaPerformanceFeedbackSetV1,
+    BobaPerformanceFeedbackSignalUsageV1,
+    BobaPerformanceLearningHandoffV1,
+    BobaPerformancePatternSummaryV1,
+    BobaPerformanceSnapshotV1,
+)
 from olympus.boba.ranking import rank_candidates
 from olympus.boba.scout import BobaCandidateV1, BobaScout, BobaScoutScoreV1
 from olympus.boba.store import BobaMemoryStore
@@ -273,6 +286,7 @@ __all__ = [
     "BobaExperimentLearningHandoffV1",
     "BobaExperimentManualResultV1",
     "BobaExperimentMetricPlanV1",
+    "BobaExperimentOutcomeReviewV1",
     "BobaExperimentPlanV1",
     "BobaExperimentRiskReviewV1",
     "BobaExperimentSuccessCriteriaV1",
@@ -297,6 +311,7 @@ __all__ = [
     "BobaLearningAuditSummaryV1",
     "BobaLearningInsightV1",
     "BobaLearningNoteV1",
+    "BobaManualPerformanceMetricsV1",
     "BobaMemoryApplicationV1",
     "BobaMemoryQueryV1",
     "BobaMemoryRecordV1",
@@ -314,6 +329,15 @@ __all__ = [
     "BobaObservationV1",
     "BobaOpeningThreeSecondPlanV2",
     "BobaPacingMapV2",
+    "BobaPerformanceAuditSummaryV1",
+    "BobaPerformanceFactorV1",
+    "BobaPerformanceFeedbackBrainV1",
+    "BobaPerformanceFeedbackEventV1",
+    "BobaPerformanceFeedbackSetV1",
+    "BobaPerformanceFeedbackSignalUsageV1",
+    "BobaPerformanceLearningHandoffV1",
+    "BobaPerformancePatternSummaryV1",
+    "BobaPerformanceSnapshotV1",
     "BobaProjectCreativeDirectionV2",
     "BobaProjectExplanationV1",
     "BobaProjectMemoryV1",

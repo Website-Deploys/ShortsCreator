@@ -23,6 +23,12 @@ from olympus.boba.experimentation import BobaExperimentOutcomeLabel
 from olympus.boba.global_memory import build_and_save_global_memory
 from olympus.boba.memory_contracts import BobaMemoryQueryV1
 from olympus.boba.memory_learning import BobaMemoryLearner
+from olympus.boba.performance_feedback import (
+    BobaManualPerformanceMetricsV1,
+    BobaPerformanceEventType,
+    BobaPerformanceOutcomeLabel,
+    BobaPerformanceTargetType,
+)
 from olympus.boba.scout import BobaCandidateV1
 from olympus.platform.errors import NotFoundError, ValidationError
 
@@ -124,6 +130,37 @@ class ExperimentManualResultRequest(BaseModel):
     creator_note: str = Field(default="", max_length=500)
     outcome_label: BobaExperimentOutcomeLabel
     should_feed_learning: bool = False
+
+
+class PerformanceFeedbackEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_type: BobaPerformanceEventType
+    target_type: BobaPerformanceTargetType
+    target_id: str = Field(min_length=1, max_length=180)
+    candidate_id: str = Field(default="", max_length=128)
+    brief_id: str = Field(default="", max_length=160)
+    experiment_id: str = Field(default="", max_length=128)
+    variant_id: str = Field(default="", max_length=128)
+    manual_rating: float | None = Field(default=None, ge=0.0, le=5.0)
+    creator_note: str = Field(default="", max_length=500)
+    platform: str = Field(default="", max_length=80)
+    source_label: str = Field(default="manual_entry", min_length=1, max_length=120)
+    metrics: BobaManualPerformanceMetricsV1 = Field(
+        default_factory=BobaManualPerformanceMetricsV1
+    )
+    retention_notes: str = Field(default="", max_length=500)
+    creator_interpretation: str = Field(default="", max_length=500)
+    outcome_label: BobaPerformanceOutcomeLabel | None = None
+    baseline_id: str = Field(default="", max_length=128)
+    selected_variant_id: str = Field(default="", max_length=128)
+    should_feed_learning: bool = False
+
+
+class PerformanceFeedbackGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: bool = False
 
 
 class ScoutScoreRequest(BaseModel):
@@ -663,6 +700,113 @@ async def record_experimentation_result(
         should_feed_learning=body.should_feed_learning,
     )
     return result.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/performance-feedback/events")
+async def record_performance_feedback_event(
+    project_id: str,
+    body: PerformanceFeedbackEventRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    event, feedback = await boba.record_performance_feedback_event(
+        project_id,
+        event_type=body.event_type,
+        target_type=body.target_type,
+        target_id=body.target_id,
+        candidate_id=body.candidate_id,
+        brief_id=body.brief_id,
+        experiment_id=body.experiment_id,
+        variant_id=body.variant_id,
+        manual_rating=body.manual_rating,
+        creator_note=body.creator_note,
+        platform=body.platform,
+        source_label=body.source_label,
+        metrics=body.metrics,
+        retention_notes=body.retention_notes,
+        creator_interpretation=body.creator_interpretation,
+        outcome_label=body.outcome_label,
+        baseline_id=body.baseline_id,
+        selected_variant_id=body.selected_variant_id,
+        should_feed_learning=body.should_feed_learning,
+    )
+    return {
+        "event": event.model_dump(mode="json"),
+        "performance_feedback": feedback.model_dump(mode="json"),
+        "analytics_collected": False,
+        "automatically_applied": False,
+    }
+
+
+@router.post("/projects/{project_id}/performance-feedback")
+async def create_performance_feedback(
+    project_id: str,
+    body: PerformanceFeedbackGenerateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    feedback = await boba.generate_performance_feedback(
+        project_id,
+        dry_run=body.dry_run,
+    )
+    return feedback.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/performance-feedback")
+async def get_performance_feedback(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    feedback = boba.load_performance_feedback(project_id)
+    if feedback is None:
+        raise NotFoundError(
+            "BOBA performance feedback is not available.",
+            details={"project_id": project_id},
+        )
+    return feedback.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/performance-feedback/export")
+async def export_performance_feedback(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_performance_feedback(project_id) is None:
+        raise NotFoundError(
+            "BOBA performance feedback is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_performance_feedback(project_id)
+
+
+@router.delete("/projects/{project_id}/performance-feedback")
+async def reset_performance_feedback(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_performance_feedback(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "performance_feedback_removed": removed,
+        "experimentation_removed": False,
+        "creator_learning_removed": False,
+        "approval_rejection_learning_removed": False,
+        "unrelated_memory_removed": False,
+    }
 
 
 @router.post("/projects/{project_id}/creator-learning/events")

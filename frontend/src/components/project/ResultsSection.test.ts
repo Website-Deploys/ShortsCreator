@@ -241,4 +241,23 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("autoStartExperiment");
     expect(resultsSection).not.toContain("collectViewerAnalytics");
   });
+
+  it("shows manual-only BOBA performance feedback controls", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Performance Feedback Brain V1");
+    expect(resultsSection).toContain(
+      "Performance data is manual in V1. BOBA does not connect to platforms",
+    );
+    expect(resultsSection).toContain(
+      "Learning guidance is advisory unless you explicitly approve applying",
+    );
+    expect(resultsSection).toContain("Optional creator-entered metrics");
+    expect(resultsSection).toContain("Record manual feedback");
+    expect(resultsSection).toContain("Experiment outcome reviews");
+    expect(resultsSection).toContain("Pattern summary and uncertainty");
+    expect(resultsSection).toContain("Advisory learning handoff");
+    expect(resultsSection).not.toContain("collectPlatformAnalytics");
+    expect(resultsSection).not.toContain("autoApplyPerformanceWinner");
+  });
 });
