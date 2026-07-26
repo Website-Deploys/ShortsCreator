@@ -12,6 +12,10 @@ from olympus.boba.approval_rejection_learning import (
 )
 from olympus.boba.approvals import BobaApprovalService
 from olympus.boba.brain import BobaBrain
+from olympus.boba.candidate_video_scorer import (
+    BobaCandidateVideoScorerSetV1,
+    BobaCandidateVideoScorerV1,
+)
 from olympus.boba.caption_motion import (
     BobaCaptionMotionRecommendationBrainV1,
     BobaCaptionMotionRecommendationSetV1,
@@ -152,6 +156,7 @@ class BobaIntegration:
         self.content_scout_v2 = BobaContentScoutV2()
         self.research_brain = BobaResearchBrainV1()
         self.trend_topic_watcher = BobaTrendTopicWatcherV1()
+        self.candidate_video_scorer = BobaCandidateVideoScorerV1()
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1528,6 +1533,58 @@ class BobaIntegration:
 
     def reset_trend_topic_watcher(self, project_id: str) -> bool:
         return self.store.reset_trend_topic_watcher(project_id)
+
+    async def generate_candidate_video_scorer(
+        self,
+        project_id: str,
+        *,
+        manual_candidates: list[dict[str, Any]] | None = None,
+        import_paths: list[str] | None = None,
+        source_label: str = "manual",
+        dry_run: bool = False,
+    ) -> BobaCandidateVideoScorerSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError(
+                "Project was not found.",
+                details={"id": project_id},
+            )
+        scorer = self.candidate_video_scorer.analyze(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+            manual_candidates=manual_candidates or [],
+            import_paths=import_paths or [],
+            source_label=source_label,
+            content_scout=self.store.load_content_scout_v2(project_id),
+            research_brain=self.store.load_research_brain(project_id),
+            trend_topic_watcher=self.store.load_trend_topic_watcher(project_id),
+            creator_learning=self.store.load_creator_learning(project_id),
+            approval_rejection_learning=(
+                self.store.load_approval_rejection_learning(project_id)
+            ),
+            performance_feedback=self.store.load_performance_feedback(project_id),
+            boba_memory=(
+                self.store.load_project_memory(project_id)
+                if self.memory_enabled
+                else None
+            ),
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return scorer
+        return self.store.save_candidate_video_scorer(scorer)
+
+    def load_candidate_video_scorer(
+        self,
+        project_id: str,
+    ) -> BobaCandidateVideoScorerSetV1 | None:
+        return self.store.load_candidate_video_scorer(project_id)
+
+    def export_candidate_video_scorer(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_candidate_video_scorer(project_id)
+
+    def reset_candidate_video_scorer(self, project_id: str) -> bool:
+        return self.store.reset_candidate_video_scorer(project_id)
 
     async def generate_performance_feedback(
         self,

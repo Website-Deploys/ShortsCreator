@@ -11,6 +11,7 @@ import {
   useBobaBrain,
   useBobaCaptionMotion,
   useBobaCandidateClipDiscovery,
+  useBobaCandidateVideoScorer,
   useBobaCandidates,
   useBobaClipBriefs,
   useBobaClipRanking,
@@ -40,6 +41,7 @@ import {
   useCreatorProfiles,
   useExportCreatorProfile,
   useExportBobaApprovalRejectionLearning,
+  useExportBobaCandidateVideoScorer,
   useExportBobaContentScoutV2,
   useExportBobaCreatorLearning,
   useExportBobaExperimentation,
@@ -51,6 +53,7 @@ import {
   useDiscoverBobaCandidateClips,
   useGenerateBobaCreativeBriefs,
   useGenerateBobaApprovalRejectionLearning,
+  useGenerateBobaCandidateVideoScorer,
   useGenerateBobaContentScoutV2,
   useGenerateBobaCreatorLearning,
   useGenerateBobaExperimentation,
@@ -62,6 +65,7 @@ import {
   useRenderManifest,
   useResetCreatorProfile,
   useResetBobaApprovalRejectionLearning,
+  useResetBobaCandidateVideoScorer,
   useResetBobaContentScoutV2,
   useResetBobaExperimentation,
   useResetBobaPerformanceFeedback,
@@ -5424,6 +5428,487 @@ function BobaTrendTopicWatcherPanel({ projectId }: { projectId: string }) {
   );
 }
 
+function BobaCandidateVideoScorerPanel({
+  projectId,
+}: {
+  projectId: string;
+}) {
+  const scorerQuery = useBobaCandidateVideoScorer(projectId);
+  const generateScorer = useGenerateBobaCandidateVideoScorer(projectId);
+  const exportScorer = useExportBobaCandidateVideoScorer(projectId);
+  const resetScorer = useResetBobaCandidateVideoScorer(projectId);
+  const [manualJson, setManualJson] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("manual");
+  const [status, setStatus] = useState("");
+  const scorer = scorerQuery.data;
+  const busy =
+    generateScorer.isPending ||
+    exportScorer.isPending ||
+    resetScorer.isPending;
+  const queueGroups = scorer
+    ? [
+        {
+          label: "Top candidates",
+          items: scorer.review_queue.top_candidates,
+        },
+        {
+          label: "Backup candidates",
+          items: scorer.review_queue.backup_candidates,
+        },
+        {
+          label: "Permission needed",
+          items: scorer.review_queue.permission_needed_candidates,
+        },
+        {
+          label: "Blocked candidates",
+          items: scorer.review_queue.blocked_candidates,
+        },
+        {
+          label: "Duplicate / similar",
+          items: scorer.review_queue.duplicate_or_similar_candidates,
+        },
+        {
+          label: "Rejected candidates",
+          items: scorer.review_queue.rejected_candidates,
+        },
+      ]
+    : [];
+  const handoffGroups = scorer
+    ? [
+        {
+          label: "Content Scout handoff",
+          handoff: scorer.source_handoffs.content_scout_handoff,
+        },
+        {
+          label: "Research Brain handoff",
+          handoff: scorer.source_handoffs.research_brain_handoff,
+        },
+        {
+          label: "Trend Watcher handoff",
+          handoff: scorer.source_handoffs.trend_topic_handoff,
+        },
+        {
+          label: "Rights + Permission Gate handoff",
+          handoff: scorer.source_handoffs.rights_permission_gate_handoff,
+        },
+        {
+          label: "Future ingestion handoff",
+          handoff: scorer.source_handoffs.future_ingestion_handoff,
+        },
+      ]
+    : [];
+
+  function generate() {
+    let manualCandidates: Record<string, unknown>[] = [];
+    if (manualJson.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(manualJson);
+        if (
+          !Array.isArray(parsed) ||
+          parsed.some(
+            (item) =>
+              !item || typeof item !== "object" || Array.isArray(item),
+          )
+        ) {
+          setStatus("Manual candidates must be a JSON array of objects.");
+          return;
+        }
+        manualCandidates = parsed as Record<string, unknown>[];
+      } catch {
+        setStatus("Manual candidate metadata is not valid JSON.");
+        return;
+      }
+    }
+    setStatus("");
+    generateScorer.mutate(
+      {
+        manual_candidates: manualCandidates,
+        source_label: sourceLabel.trim() || "manual",
+      },
+      {
+        onSuccess: (result) => {
+          setStatus(
+            `Scorer saved ${result.scorer_summary.total_candidates} candidate(s) for human review.`,
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportScorer.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(
+          `boba-candidate-video-scorer-v1-${projectId}.json`,
+          payload,
+        );
+        setStatus("Safe compact candidate scorer export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's Candidate Video Scorer V1 artifact only? Scout, research, trend, learning, performance, memory, and media remain untouched.",
+      )
+    ) {
+      return;
+    }
+    resetScorer.mutate(undefined, {
+      onSuccess: () => {
+        setStatus(
+          "Candidate Video Scorer V1 reset; other BOBA artifacts and media remain untouched.",
+        );
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-violet-300/20 bg-violet-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            BOBA Candidate Video Scorer V1
+          </p>
+          <p className="text-xs text-muted">
+            Candidate Video Scorer V1 uses local/user-provided metadata only.
+          </p>
+          <p className="text-xs text-muted">
+            BOBA does not fetch URLs, scrape platforms, download videos, or confirm copyright safety.
+          </p>
+          <p className="text-xs text-muted">
+            Human approval and rights review are required before any future ingestion.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !scorer}
+            onClick={exportArtifact}
+            className="rounded border border-violet-200/30 px-2.5 py-1.5 text-[11px] text-violet-100 disabled:opacity-50"
+          >
+            Export safe scorer
+          </button>
+          <button
+            type="button"
+            disabled={busy || !scorer}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Scorer V1
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[10rem_1fr_auto]">
+        <label className="text-xs text-muted">
+          Source label
+          <input
+            value={sourceLabel}
+            onChange={(event) => setSourceLabel(event.target.value)}
+            maxLength={160}
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Manual candidate metadata JSON array
+          <textarea
+            value={manualJson}
+            onChange={(event) => setManualJson(event.target.value)}
+            rows={6}
+            placeholder='[{"title":"How I rebuilt after failure","description":"A story with struggle, turning point, and lesson","creator":"Example creator","duration":900,"tags":["comeback","story"],"rights_status":"owned"}]'
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={generate}
+          className="self-end rounded border border-violet-200/30 px-3 py-2 text-xs text-violet-100 disabled:opacity-50"
+        >
+          {generateScorer.isPending
+            ? "Scoring candidates..."
+            : "Build candidate review queue"}
+        </button>
+      </div>
+
+      {status && <p className="mt-2 text-xs text-violet-100">{status}</p>}
+      {scorerQuery.isError && (
+        <p className="mt-2 text-xs text-amber-100">
+          Candidate Video Scorer V1 could not be loaded.
+        </p>
+      )}
+
+      {!scorer ? (
+        <p className="mt-4 text-xs text-muted">
+          No saved Candidate Video Scorer V1 artifact is available. Add local
+          metadata, or build from available Scout, Research, and Trend artifacts.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-2 text-xs text-muted sm:grid-cols-2 lg:grid-cols-6">
+            <p className="rounded border border-white/10 p-2">
+              Candidates: {scorer.scorer_summary.total_candidates}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Review now: {scorer.scorer_summary.review_now_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Save: {scorer.scorer_summary.save_for_later_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Permission: {scorer.scorer_summary.seek_permission_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Blocked: {scorer.scorer_summary.blocked_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Rejected: {scorer.scorer_summary.rejected_count}
+            </p>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-100">
+              Imported candidate sources
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {scorer.imported_sources.map((source) => (
+                <span
+                  key={source.import_id}
+                  className="rounded bg-white/5 px-2 py-1 text-[11px] text-muted"
+                >
+                  {source.source_label} / {readableName(source.source_type)} /{" "}
+                  {source.accepted_count} accepted / {source.rejected_count}{" "}
+                  rejected
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-100">
+              Scored candidates
+            </p>
+            <div className="mt-2 grid gap-3 lg:grid-cols-2">
+              {scorer.scored_candidates.slice(0, 20).map((scored) => {
+                const candidate = scored.candidate_video;
+                const score = scored.score;
+                return (
+                  <article
+                    key={candidate.candidate_video_id}
+                    className="rounded border border-white/10 p-3 text-xs text-muted"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-white">
+                          {candidate.title || "Untitled candidate"}
+                        </p>
+                        <p className="mt-1">
+                          {candidate.creator_or_channel || candidate.source_label}
+                          {candidate.duration_seconds === null
+                            ? ""
+                            : ` / ${formatDuration(candidate.duration_seconds)}`}
+                        </p>
+                      </div>
+                      <span className="rounded bg-violet-400/10 px-2 py-1 text-violet-100">
+                        {formatPercent(score.overall_candidate_score)}
+                      </span>
+                    </div>
+                    <p className="mt-2">{candidate.description}</p>
+                    <p className="mt-2">
+                      Creator {formatPercent(score.creator_fit_score)} / Topic{" "}
+                      {formatPercent(score.topic_opportunity_score)} / Research{" "}
+                      {formatPercent(score.research_support_score)} / Trend{" "}
+                      {formatPercent(score.trend_support_score)}
+                    </p>
+                    <p className="mt-1">
+                      Shortability {formatPercent(score.shortability_score)} /
+                      Hook {formatPercent(score.hook_potential_score)} / Story{" "}
+                      {formatPercent(score.story_potential_score)} / Format{" "}
+                      {formatPercent(score.format_fit_score)}
+                    </p>
+                    <p className="mt-1">
+                      Rights {formatPercent(score.rights_readiness_score)} / Risk{" "}
+                      {formatPercent(score.risk_score)} / Review priority{" "}
+                      {formatPercent(score.review_priority_score)} / Confidence{" "}
+                      {formatPercent(score.confidence)}
+                    </p>
+                    <div className="mt-3 rounded bg-white/[0.03] p-2">
+                      <p className="font-semibold text-white">
+                        Recommendation:{" "}
+                        {readableName(scored.recommendation.recommendation)} /{" "}
+                        {readableName(scored.recommendation.priority)}
+                      </p>
+                      <p className="mt-1">{scored.recommendation.reason}</p>
+                      <p className="mt-1">
+                        Next human action:{" "}
+                        {scored.recommendation.next_human_action}
+                      </p>
+                    </div>
+                    <div className="mt-3 rounded bg-white/[0.03] p-2">
+                      <p className="font-semibold text-white">
+                        Shorts potential review
+                      </p>
+                      <p className="mt-1">
+                        Possible clip types:{" "}
+                        {scored.shorts_potential.possible_clip_types.join(", ") ||
+                          "Not available"}
+                      </p>
+                      <p className="mt-1">
+                        Possible hooks:{" "}
+                        {scored.shorts_potential.possible_hook_directions.join(
+                          ", ",
+                        ) || "Not available"}
+                      </p>
+                      <p className="mt-1">
+                        Possible story angles:{" "}
+                        {scored.shorts_potential.possible_story_angles.join(
+                          ", ",
+                        ) || "Not available"}
+                      </p>
+                      <p className="mt-1">
+                        Possible formats:{" "}
+                        {scored.shorts_potential.possible_format_styles.join(
+                          ", ",
+                        ) || "Not available"}
+                      </p>
+                      <p className="mt-1">
+                        {scored.shorts_potential.emotional_story_promise}
+                      </p>
+                    </div>
+                    <div className="mt-3 rounded bg-white/[0.03] p-2">
+                      <p className="font-semibold text-white">
+                        Rights review:{" "}
+                        {readableName(scored.rights_review.rights_readiness)}
+                      </p>
+                      <p className="mt-1">{scored.rights_review.reason}</p>
+                      <p className="mt-1">
+                        Review required:{" "}
+                        {scored.rights_review.rights_review_required
+                          ? "Yes"
+                          : "No"}{" "}
+                        / Permission required:{" "}
+                        {scored.rights_review.permission_required ? "Yes" : "No"}
+                      </p>
+                    </div>
+                    {scored.duplicate_of_candidate_video_id && (
+                      <p className="mt-2 text-amber-100">
+                        Similar to: {scored.duplicate_of_candidate_video_id}
+                      </p>
+                    )}
+                    {[
+                      ...candidate.warnings,
+                      ...score.warnings,
+                      ...scored.recommendation.warnings,
+                    ]
+                      .slice(0, 4)
+                      .map((warning) => (
+                        <p key={warning} className="mt-1 text-amber-100">
+                          {warning}
+                        </p>
+                      ))}
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-100">
+              Human review queue
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              {scorer.review_queue.queue_summary}
+            </p>
+            <div className="mt-2 grid gap-3 lg:grid-cols-3">
+              {queueGroups.map((group) => (
+                <div
+                  key={group.label}
+                  className="rounded border border-white/10 p-3"
+                >
+                  <p className="text-xs font-semibold text-white">
+                    {group.label} ({group.items.length})
+                  </p>
+                  {group.items.length === 0 ? (
+                    <p className="mt-2 text-xs text-muted">No candidates.</p>
+                  ) : (
+                    group.items.slice(0, 8).map((item) => (
+                      <div
+                        key={`${group.label}-${item.candidate_video_id}`}
+                        className="mt-2 border-t border-white/10 pt-2 text-xs text-muted"
+                      >
+                        <p className="font-semibold text-white">
+                          {item.candidate_video_id} /{" "}
+                          {readableName(item.recommendation)}
+                        </p>
+                        <p className="mt-1">{item.reason}</p>
+                        <p className="mt-1">
+                          Next: {item.next_human_action}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-100">
+              Advisory source handoffs
+            </p>
+            <div className="mt-2 grid gap-3 lg:grid-cols-3">
+              {handoffGroups.map(({ label, handoff }) => (
+                <div
+                  key={label}
+                  className="rounded border border-white/10 p-3 text-xs text-muted"
+                >
+                  <p className="font-semibold text-white">{label}</p>
+                  <p className="mt-1">
+                    Candidate IDs:{" "}
+                    {handoff.candidate_video_ids.join(", ") || "Not available"}
+                  </p>
+                  <p className="mt-1">
+                    Topics: {handoff.topics.join(", ") || "Not available"}
+                  </p>
+                  {handoff.recommended_actions.slice(0, 4).map((action) => (
+                    <p key={action} className="mt-1">
+                      Action: {action}
+                    </p>
+                  ))}
+                  {handoff.prerequisites.slice(0, 4).map((prerequisite) => (
+                    <p key={prerequisite} className="mt-1">
+                      Prerequisite: {prerequisite}
+                    </p>
+                  ))}
+                  <p className="mt-1">
+                    Auto-apply:{" "}
+                    {handoff.apply_automatically ? "Enabled" : "No"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {(scorer.warnings.length > 0 ||
+            scorer.limitations.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Scorer notes:{" "}
+              {[...scorer.warnings, ...scorer.limitations]
+                .slice(0, 8)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -6251,6 +6736,9 @@ export function ResultsSection({
   const trendTopicWatcherPanel = (
     <BobaTrendTopicWatcherPanel projectId={projectId} />
   );
+  const candidateVideoScorerPanel = (
+    <BobaCandidateVideoScorerPanel projectId={projectId} />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -6274,6 +6762,7 @@ export function ResultsSection({
         {contentScoutV2Panel}
         {researchBrainPanel}
         {trendTopicWatcherPanel}
+        {candidateVideoScorerPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -6309,6 +6798,7 @@ export function ResultsSection({
         {contentScoutV2Panel}
         {researchBrainPanel}
         {trendTopicWatcherPanel}
+        {candidateVideoScorerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -6340,6 +6830,7 @@ export function ResultsSection({
         {contentScoutV2Panel}
         {researchBrainPanel}
         {trendTopicWatcherPanel}
+        {candidateVideoScorerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -6371,6 +6862,7 @@ export function ResultsSection({
       {contentScoutV2Panel}
       {researchBrainPanel}
       {trendTopicWatcherPanel}
+      {candidateVideoScorerPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

@@ -51,6 +51,8 @@ import type {
   BobaBrainStateV1,
   BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
+  BobaCandidateVideoScorerGenerateInputV1,
+  BobaCandidateVideoScorerSetV1,
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
   BobaClipRankingV1,
@@ -102,6 +104,8 @@ export const queryKeys = {
     ["boba", "projects", id, "research-brain"] as const,
   bobaTrendTopicWatcher: (id: string) =>
     ["boba", "projects", id, "trend-topic-watcher"] as const,
+  bobaCandidateVideoScorer: (id: string) =>
+    ["boba", "projects", id, "candidate-video-scorer"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -414,6 +418,56 @@ export function useResetBobaTrendTopicWatcher(projectId: string) {
     onSuccess: () => {
       queryClient.setQueryData(
         queryKeys.bobaTrendTopicWatcher(projectId),
+        null,
+      );
+    },
+  });
+}
+
+export function useBobaCandidateVideoScorer(projectId: string) {
+  return useQuery<BobaCandidateVideoScorerSetV1 | null>({
+    queryKey: queryKeys.bobaCandidateVideoScorer(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaCandidateVideoScorer(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useGenerateBobaCandidateVideoScorer(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaCandidateVideoScorerGenerateInputV1 = {}) =>
+      api.generateBobaCandidateVideoScorer(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(
+          queryKeys.bobaCandidateVideoScorer(projectId),
+          result,
+        );
+      }
+    },
+  });
+}
+
+export function useExportBobaCandidateVideoScorer(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaCandidateVideoScorer(projectId),
+  });
+}
+
+export function useResetBobaCandidateVideoScorer(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaCandidateVideoScorer(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(
+        queryKeys.bobaCandidateVideoScorer(projectId),
         null,
       );
     },

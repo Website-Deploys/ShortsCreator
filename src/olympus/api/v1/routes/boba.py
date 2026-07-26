@@ -204,6 +204,18 @@ class TrendTopicWatcherGenerateRequest(BaseModel):
     dry_run: bool = False
 
 
+class CandidateVideoScorerGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    manual_candidates: list[dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=500,
+    )
+    import_paths: list[str] = Field(default_factory=list, max_length=20)
+    source_label: str = Field(default="manual", min_length=1, max_length=160)
+    dry_run: bool = False
+
+
 class ScoutScoreRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1068,6 +1080,82 @@ async def reset_trend_topic_watcher(
         "creator_learning_removed": False,
         "performance_feedback_removed": False,
         "memory_removed": False,
+    }
+
+
+@router.post("/projects/{project_id}/candidate-video-scorer")
+async def create_candidate_video_scorer(
+    project_id: str,
+    body: CandidateVideoScorerGenerateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    scorer = await boba.generate_candidate_video_scorer(
+        project_id,
+        manual_candidates=body.manual_candidates,
+        import_paths=body.import_paths,
+        source_label=body.source_label,
+        dry_run=body.dry_run,
+    )
+    return scorer.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/candidate-video-scorer")
+async def get_candidate_video_scorer(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    scorer = boba.load_candidate_video_scorer(project_id)
+    if scorer is None:
+        raise NotFoundError(
+            "BOBA Candidate Video Scorer V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return scorer.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/candidate-video-scorer/export")
+async def export_candidate_video_scorer(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_candidate_video_scorer(project_id) is None:
+        raise NotFoundError(
+            "BOBA Candidate Video Scorer V1 is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_candidate_video_scorer(project_id)
+
+
+@router.delete("/projects/{project_id}/candidate-video-scorer")
+async def reset_candidate_video_scorer(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_candidate_video_scorer(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "candidate_video_scorer_removed": removed,
+        "trend_topic_watcher_removed": False,
+        "research_brain_removed": False,
+        "content_scout_removed": False,
+        "creator_learning_removed": False,
+        "approval_rejection_learning_removed": False,
+        "performance_feedback_removed": False,
+        "memory_removed": False,
+        "media_ingested": False,
     }
 
 

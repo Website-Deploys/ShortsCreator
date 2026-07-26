@@ -18,6 +18,7 @@ from olympus.boba.approval_rejection_learning import (
     BobaApprovalRejectionLearningSetV1,
 )
 from olympus.boba.approvals import BobaApprovalEventV1, BobaApprovalTargetType
+from olympus.boba.candidate_video_scorer import BobaCandidateVideoScorerSetV1
 from olympus.boba.caption_motion import BobaCaptionMotionRecommendationSetV1
 from olympus.boba.clip_brief import BobaClipBriefSetV1
 from olympus.boba.clip_discovery import BobaCandidateClipDiscoveryV1
@@ -1144,6 +1145,110 @@ class BobaMemoryStore:
 
     def reset_trend_topic_watcher(self, project_id: str) -> bool:
         path = self.trend_topic_watcher_path(project_id)
+        removed = False
+        with self._lock:
+            if path.exists():
+                path.unlink()
+                removed = True
+            directory = path.parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
+
+    def candidate_video_scorer_path(self, project_id: str) -> Path:
+        return self._path(project_id, "candidate_video_scorer/index.json")
+
+    def save_candidate_video_scorer(
+        self,
+        scorer: BobaCandidateVideoScorerSetV1,
+    ) -> BobaCandidateVideoScorerSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                scorer.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+            )
+            self._atomic_write(
+                self.candidate_video_scorer_path(scorer.project_id),
+                safe,
+            )
+        return scorer
+
+    def load_candidate_video_scorer(
+        self,
+        project_id: str,
+    ) -> BobaCandidateVideoScorerSetV1 | None:
+        raw = self._read(self.candidate_video_scorer_path(project_id), None)
+        return (
+            BobaCandidateVideoScorerSetV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def export_candidate_video_scorer(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        scorer = self.load_candidate_video_scorer(project_id)
+        if scorer is None:
+            raise ValidationError(
+                "BOBA Candidate Video Scorer V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = scorer.model_dump(mode="json")
+        for source in payload.get("imported_sources", []):
+            if isinstance(source, dict):
+                source.pop("source_path", None)
+
+        def redact_candidate(candidate: Any) -> None:
+            if not isinstance(candidate, dict):
+                return
+            for field_name in (
+                "source_url",
+                "permission_notes",
+                "user_notes",
+                "raw_metadata_summary",
+            ):
+                candidate.pop(field_name, None)
+
+        for candidate in payload.get("candidate_videos", []):
+            redact_candidate(candidate)
+        for scored in payload.get("scored_candidates", []):
+            if isinstance(scored, dict):
+                redact_candidate(scored.get("candidate_video"))
+        export = {
+            "schema_version": "boba_candidate_video_scorer_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "candidate_video_scorer": payload,
+            "privacy": {
+                "local_paths_excluded": True,
+                "source_urls_excluded": True,
+                "private_notes_excluded": True,
+                "raw_metadata_excluded": True,
+                "raw_source_content_excluded": True,
+                "full_transcripts_excluded": True,
+                "media_files_excluded": True,
+                "credentials_excluded": True,
+                "external_api_used": False,
+                "url_fetching_used": False,
+                "scraping_used": False,
+                "downloading_used": False,
+                "media_ingestion_used": False,
+                "copyright_safety_confirmed": False,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError(
+                "BOBA Candidate Video Scorer V1 export is invalid."
+            )
+        return safe
+
+    def reset_candidate_video_scorer(self, project_id: str) -> bool:
+        path = self.candidate_video_scorer_path(project_id)
         removed = False
         with self._lock:
             if path.exists():
