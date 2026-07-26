@@ -438,4 +438,33 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("autoRunErrorDoctorValidator");
     expect(resultsSection).not.toContain("autoApplyErrorDoctorRepair");
   });
+
+  it("shows advisory BOBA Root Cause Analyzer V1 boundaries", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Root Cause Analyzer V1");
+    expect(resultsSection).toContain(
+      "BOBA Root Cause Analyzer V1 ranks evidence-supported causes but does not guarantee that the highest-ranked candidate is proven.",
+    );
+    expect(resultsSection).toContain(
+      "It does not repair files, edit code, run commands, run validators, or activate fallback tools.",
+    );
+    expect(resultsSection).toContain(
+      "Human approval is required before verification or repair actions.",
+    );
+    expect(resultsSection).toContain("CONFIRMED FACTS");
+    expect(resultsSection).toContain("MOST LIKELY CAUSE");
+    expect(resultsSection).toContain("COMPETING EXPLANATIONS");
+    expect(resultsSection).toContain("CONTRIBUTING FACTORS");
+    expect(resultsSection).toContain("DOWNSTREAM EFFECTS");
+    expect(resultsSection).toContain("MISSING EVIDENCE");
+    expect(resultsSection).toContain("NEXT SAFE CHECK");
+    expect(resultsSection).toContain("Analyze saved Error Doctor report");
+    expect(resultsSection).toContain("Export safe analysis");
+    expect(resultsSection).toContain("Reset Root Cause Analyzer V1");
+    expect(resultsSection).toContain("Resume authorized by this analyzer: No");
+    expect(resultsSection).not.toContain("autoRepairRootCause");
+    expect(resultsSection).not.toContain("autoRunRootCauseValidator");
+    expect(resultsSection).not.toContain("autoActivateFallbackTool");
+  });
 });

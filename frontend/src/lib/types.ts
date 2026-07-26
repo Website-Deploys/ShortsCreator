@@ -2610,6 +2610,514 @@ export interface BobaErrorDoctorGenerateInputV1 {
   dry_run?: boolean;
 }
 
+export type BobaRootCauseAnalysisStatusV1 =
+  | "root_cause_supported"
+  | "probable_root_cause"
+  | "multiple_competing_causes"
+  | "insufficient_evidence"
+  | "conflicting_evidence"
+  | "intentional_safety_block"
+  | "no_defect_detected"
+  | "unknown";
+
+export type BobaRootCauseProcessingImpactV1 =
+  | "none"
+  | "degraded"
+  | "partial_block"
+  | "full_block"
+  | "unsafe_to_continue"
+  | "unknown";
+
+export type BobaRootCauseSafetyImpactV1 =
+  | "none_known"
+  | "human_review_needed"
+  | "safety_gate_blocked"
+  | "rights_gate_blocked"
+  | "destructive_risk"
+  | "unknown";
+
+export type BobaRootCauseCategoryV1 =
+  | "missing_artifact"
+  | "corrupt_artifact"
+  | "stale_artifact"
+  | "schema_mismatch"
+  | "dependency_order"
+  | "configuration"
+  | "environment"
+  | "storage"
+  | "code_defect"
+  | "data_quality"
+  | "validation_failure"
+  | "validation_gap"
+  | "tool_unavailable"
+  | "tool_failure"
+  | "timeout"
+  | "resource_exhaustion"
+  | "checkpoint_failure"
+  | "rendering"
+  | "audio_video_sync"
+  | "media_probe"
+  | "rights_safety"
+  | "permission"
+  | "intentional_safety_block"
+  | "user_input"
+  | "external_service"
+  | "unknown";
+
+export type BobaRootCauseHandoffTargetV1 =
+  | "repair_planner"
+  | "tool_recovery_brain"
+  | "validator_runner"
+  | "artifact_inspector"
+  | "report_reader"
+  | "safety_gate"
+  | "rights_permission_gate"
+  | "workflow_controller"
+  | "code_surgeon"
+  | "human_operator"
+  | "unknown";
+
+export interface BobaRootCauseEvidenceV1 {
+  evidence_id: string;
+  source_type:
+    | "error_doctor_fact"
+    | "error_doctor_hypothesis"
+    | "observer_finding"
+    | "artifact_observation"
+    | "dependency_observation"
+    | "validation_observation"
+    | "safety_observation"
+    | "bounded_manual_context"
+    | "unknown";
+  source_id: string;
+  module_name: string;
+  artifact_id: string;
+  evidence_summary: string;
+  observed_value: string;
+  expected_value: string;
+  observed_at: string;
+  reliability: "high" | "medium" | "low" | "conflicting" | "unknown";
+  confidence: number;
+  usage_warning: string;
+}
+
+export interface BobaFailureTimelineEventV1 {
+  event_id: string;
+  event_type:
+    | "artifact_created"
+    | "artifact_updated"
+    | "artifact_missing"
+    | "artifact_corrupt"
+    | "artifact_unreadable"
+    | "dependency_missing"
+    | "dependency_stale"
+    | "module_blocked"
+    | "validation_passed"
+    | "validation_failed"
+    | "validation_missing"
+    | "tool_unavailable"
+    | "tool_failed"
+    | "timeout"
+    | "resource_exhaustion"
+    | "configuration_missing"
+    | "environment_missing"
+    | "safety_blocked"
+    | "rights_blocked"
+    | "workflow_stopped"
+    | "unknown";
+  module_name: string;
+  artifact_id: string;
+  observed_at: string;
+  source_type: string;
+  source_id: string;
+  event_summary: string;
+  status_before: string;
+  status_after: string;
+  confirmed: boolean;
+  causal_relevance:
+    | "possible_origin"
+    | "contributing_event"
+    | "downstream_effect"
+    | "unrelated"
+    | "unknown";
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaFailureTimelineV1 {
+  timeline_id: string;
+  analysis_case_id: string;
+  events: BobaFailureTimelineEventV1[];
+  earliest_event_id: string;
+  first_failure_event_id: string;
+  first_confirmed_failure_event_id: string;
+  latest_observed_event_id: string;
+  ordering_confidence: number;
+  conflicting_timestamps: boolean;
+  missing_time_information: boolean;
+  warnings: string[];
+}
+
+export interface BobaCausalNodeV1 {
+  node_id: string;
+  node_type:
+    | "observed_failure"
+    | "missing_input"
+    | "corrupt_artifact"
+    | "stale_artifact"
+    | "configuration_factor"
+    | "environment_factor"
+    | "tool_failure"
+    | "resource_factor"
+    | "validation_gap"
+    | "safety_block"
+    | "rights_block"
+    | "contributing_factor"
+    | "downstream_symptom"
+    | "root_cause_candidate"
+    | "unknown";
+  module_name: string;
+  artifact_id: string;
+  label: string;
+  description: string;
+  confirmed: boolean;
+  confidence: number;
+  evidence_ids: string[];
+  warnings: string[];
+}
+
+export interface BobaCausalEdgeV1 {
+  edge_id: string;
+  from_node_id: string;
+  to_node_id: string;
+  relationship:
+    | "caused"
+    | "probably_caused"
+    | "may_have_caused"
+    | "contributed_to"
+    | "blocked"
+    | "depended_on"
+    | "preceded"
+    | "correlated_with"
+    | "contradicted_by"
+    | "unrelated"
+    | "unknown";
+  evidence_ids: string[];
+  confidence: number;
+  confirmed: boolean;
+  verification_needed: boolean;
+  warnings: string[];
+}
+
+export interface BobaCausalGraphV1 {
+  causal_graph_id: string;
+  analysis_case_id: string;
+  nodes: BobaCausalNodeV1[];
+  edges: BobaCausalEdgeV1[];
+  root_candidate_node_ids: string[];
+  symptom_node_ids: string[];
+  contributing_node_ids: string[];
+  blocked_stage_node_ids: string[];
+  graph_confidence: number;
+  cycles_detected: boolean;
+  unresolved_links: string[];
+  warnings: string[];
+}
+
+export interface BobaRootCauseCandidateV1 {
+  root_cause_candidate_id: string;
+  analysis_case_id: string;
+  title: string;
+  category: BobaRootCauseCategoryV1;
+  candidate_summary: string;
+  earliest_failure_relationship: string;
+  supporting_evidence_ids: string[];
+  conflicting_evidence_ids: string[];
+  explains_symptom_ids: string[];
+  unexplained_symptom_ids: string[];
+  likelihood_score: number;
+  confidence: number;
+  evidence_quality:
+    | "strong"
+    | "moderate"
+    | "weak"
+    | "conflicting"
+    | "insufficient"
+    | "unknown";
+  verification_required: boolean;
+  confirmation_checks: string[];
+  rejection_checks: string[];
+  repairability:
+    | "likely_recoverable"
+    | "recoverable_with_approval"
+    | "requires_tool_fallback"
+    | "requires_code_change"
+    | "requires_configuration_change"
+    | "requires_human_decision"
+    | "not_a_defect"
+    | "blocked"
+    | "unknown";
+  safety_constraints: string[];
+  recommended_owner_module: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaContributingFactorV1 {
+  contributing_factor_id: string;
+  analysis_case_id: string;
+  factor_category:
+    | "resource_pressure"
+    | "stale_state"
+    | "incomplete_configuration"
+    | "optional_dependency_missing"
+    | "weak_input_data"
+    | "incompatible_format"
+    | "environment_difference"
+    | "retry_exhaustion"
+    | "checkpoint_gap"
+    | "validation_gap"
+    | "user_decision_required"
+    | "rights_constraint"
+    | "safety_constraint"
+    | "unknown";
+  factor_summary: string;
+  related_root_cause_candidate_ids: string[];
+  evidence_ids: string[];
+  impact: string;
+  necessary_for_failure: boolean;
+  sufficient_for_failure: boolean;
+  confidence: number;
+  verification_needed: boolean;
+  warnings: string[];
+}
+
+export interface BobaDownstreamSymptomV1 {
+  downstream_symptom_id: string;
+  analysis_case_id: string;
+  source_finding_id: string;
+  module_name: string;
+  artifact_id: string;
+  symptom_summary: string;
+  originating_candidate_ids: string[];
+  cascade_depth: number;
+  processing_impact: BobaRootCauseProcessingImpactV1;
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaEvidenceGapV1 {
+  evidence_gap_id: string;
+  analysis_case_id: string;
+  missing_information: string;
+  why_needed: string;
+  affected_candidate_ids: string[];
+  collection_method:
+    | "inspect_saved_artifact"
+    | "inspect_bounded_log"
+    | "inspect_configuration"
+    | "inspect_environment"
+    | "compare_timestamps"
+    | "compare_schema"
+    | "run_future_validator"
+    | "reproduce_manually"
+    | "check_tool_health"
+    | "collect_user_input"
+    | "human_rights_review"
+    | "unavailable"
+    | "unknown";
+  requires_command_execution: boolean;
+  requires_validator: boolean;
+  requires_external_access: boolean;
+  requires_human_review: boolean;
+  safe_to_collect: boolean;
+  priority: "low" | "medium" | "high" | "urgent";
+  warnings: string[];
+}
+
+export interface BobaRootCauseVerificationCheckV1 {
+  check_id: string;
+  order: number;
+  check_type:
+    | "inspect_artifact"
+    | "inspect_dependency"
+    | "inspect_timestamp"
+    | "inspect_schema"
+    | "inspect_configuration"
+    | "inspect_environment"
+    | "inspect_validation_report"
+    | "check_tool_availability"
+    | "check_resource_history"
+    | "reproduce_failure"
+    | "compare_successful_run"
+    | "verify_rights_state"
+    | "stop_processing"
+    | "unknown";
+  description: string;
+  prerequisite: string;
+  expected_information_gain: string;
+  safe: boolean;
+  read_only: boolean;
+  requires_human_review: boolean;
+  warnings: string[];
+}
+
+export interface BobaRootCauseVerificationPlanV1 {
+  verification_plan_id: string;
+  analysis_case_id: string;
+  root_cause_candidate_id: string;
+  objective: string;
+  checks: BobaRootCauseVerificationCheckV1[];
+  expected_confirmation_evidence: string[];
+  expected_rejection_evidence: string[];
+  safe: boolean;
+  read_only: boolean;
+  requires_command_execution: boolean;
+  requires_validator_execution: boolean;
+  requires_code_modification: false;
+  requires_external_access: boolean;
+  requires_human_approval: true;
+  stop_conditions: string[];
+  rollback_requirement: string;
+  suggested_owner_module: string;
+  priority: "low" | "medium" | "high" | "urgent";
+  warnings: string[];
+}
+
+export interface BobaWorkflowImpactAnalysisV1 {
+  workflow_impact_id: string;
+  analysis_case_id: string;
+  originating_module: string;
+  impacted_modules: string[];
+  impacted_artifacts: string[];
+  blocked_stages: string[];
+  degraded_stages: string[];
+  safe_stages: string[];
+  unsafe_next_actions: string[];
+  conditionally_safe_actions: string[];
+  resume_requirements: string[];
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaRootCauseEscalationHandoffV1 {
+  handoff_id: string;
+  analysis_case_id: string;
+  root_cause_candidate_ids: string[];
+  target_module: BobaRootCauseHandoffTargetV1;
+  reason: string;
+  evidence_ids: string[];
+  unresolved_questions: string[];
+  required_inputs: string[];
+  blocked_actions: string[];
+  allowed_advisory_actions: string[];
+  apply_automatically: false;
+  human_approval_required: true;
+  priority: "low" | "medium" | "high" | "urgent";
+  warnings: string[];
+}
+
+export interface BobaRootCauseAnalysisCaseV1 {
+  analysis_case_id: string;
+  source_diagnostic_case_id: string;
+  title: string;
+  primary_module: string;
+  primary_artifact: string;
+  workflow_stage: string;
+  analysis_status: BobaRootCauseAnalysisStatusV1;
+  earliest_known_failure: string;
+  most_likely_root_cause: string;
+  root_cause_confidence: number;
+  confirmed_facts: string[];
+  probable_inferences: string[];
+  unresolved_hypotheses: string[];
+  contributing_factor_ids: string[];
+  downstream_symptom_ids: string[];
+  affected_modules: string[];
+  affected_artifacts: string[];
+  failure_timeline_id: string;
+  causal_graph_id: string;
+  evidence_gap_ids: string[];
+  verification_plan_ids: string[];
+  processing_impact: BobaRootCauseProcessingImpactV1;
+  safety_impact: BobaRootCauseSafetyImpactV1;
+  recommended_handoff: BobaRootCauseHandoffTargetV1;
+  human_review_required: true;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRootCauseAnalyzerSummaryV1 {
+  total_diagnostic_cases: number;
+  total_analysis_cases: number;
+  supported_root_cause_count: number;
+  probable_root_cause_count: number;
+  competing_cause_count: number;
+  insufficient_evidence_count: number;
+  intentional_safety_block_count: number;
+  critical_case_count: number;
+  blocked_workflow_count: number;
+  strongest_root_cause_candidate: string;
+  weakest_evidence_area: string;
+  safest_next_verification: string;
+  highest_priority_handoff: string;
+  unresolved_questions: string[];
+  human_review_notes: string[];
+}
+
+export interface BobaRootCauseSignalUsageV1 {
+  error_doctor_used: boolean;
+  error_doctor_artifact_read: boolean;
+  observer_references_used: boolean;
+  validation_evidence_used: boolean;
+  dependency_evidence_used: boolean;
+  safety_evidence_used: boolean;
+  bounded_manual_context_used: boolean;
+  raw_logs_read: boolean;
+  external_api_used: false;
+  url_fetching_used: false;
+  scraping_used: false;
+  downloading_used: false;
+  command_execution_used: false;
+  validator_execution_used: false;
+  code_modification_used: false;
+  artifact_modification_used: false;
+  repair_execution_used: false;
+  tool_fallback_execution_used: false;
+  destructive_action_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaRootCauseAnalyzerSetV1 {
+  schema_version: "boba_root_cause_analyzer_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  error_doctor_source: string;
+  analysis_cases: BobaRootCauseAnalysisCaseV1[];
+  failure_timelines: BobaFailureTimelineV1[];
+  causal_graphs: BobaCausalGraphV1[];
+  root_cause_candidates: BobaRootCauseCandidateV1[];
+  contributing_factors: BobaContributingFactorV1[];
+  downstream_symptoms: BobaDownstreamSymptomV1[];
+  evidence: BobaRootCauseEvidenceV1[];
+  evidence_gaps: BobaEvidenceGapV1[];
+  verification_plans: BobaRootCauseVerificationPlanV1[];
+  workflow_impacts: BobaWorkflowImpactAnalysisV1[];
+  escalation_handoffs: BobaRootCauseEscalationHandoffV1[];
+  analyzer_summary: BobaRootCauseAnalyzerSummaryV1;
+  signal_usage: BobaRootCauseSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRootCauseAnalyzerGenerateInputV1 {
+  diagnostic_context?: Record<string, unknown>;
+  dry_run?: boolean;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;

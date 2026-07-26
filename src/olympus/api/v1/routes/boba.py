@@ -245,6 +245,13 @@ class ErrorDoctorGenerateRequest(BaseModel):
     dry_run: bool = False
 
 
+class RootCauseAnalyzerGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    diagnostic_context: dict[str, Any] = Field(default_factory=dict, max_length=64)
+    dry_run: bool = False
+
+
 class ScoutScoreRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1413,6 +1420,86 @@ async def reset_error_doctor_report(
         "media_ingested": False,
         "rendering_triggered": False,
         "repairs_applied": False,
+    }
+
+
+@router.post("/projects/{project_id}/root-cause-analyzer")
+async def create_root_cause_analyzer_report(
+    project_id: str,
+    body: RootCauseAnalyzerGenerateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.generate_boba_root_cause_analyzer(
+        project_id,
+        diagnostic_context=body.diagnostic_context,
+        dry_run=body.dry_run,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/root-cause-analyzer")
+async def get_root_cause_analyzer_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = boba.load_boba_root_cause_analyzer(project_id)
+    if report is None:
+        raise NotFoundError(
+            "BOBA Root Cause Analyzer V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/root-cause-analyzer/export")
+async def export_root_cause_analyzer_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_boba_root_cause_analyzer(project_id) is None:
+        raise NotFoundError(
+            "BOBA Root Cause Analyzer V1 is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_boba_root_cause_analyzer(project_id)
+
+
+@router.delete("/projects/{project_id}/root-cause-analyzer")
+async def reset_root_cause_analyzer_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_boba_root_cause_analyzer(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "root_cause_analyzer_removed": removed,
+        "error_doctor_removed": False,
+        "observer_removed": False,
+        "other_boba_artifacts_removed": False,
+        "unrelated_files_deleted": False,
+        "validators_executed": False,
+        "commands_executed": False,
+        "code_modified": False,
+        "artifacts_modified": False,
+        "media_downloaded": False,
+        "media_ingested": False,
+        "rendering_triggered": False,
+        "repairs_applied": False,
+        "fallback_tools_executed": False,
+        "workflow_resume_authorized": False,
     }
 
 

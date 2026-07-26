@@ -57,6 +57,8 @@ import type {
   BobaErrorDoctorSetV1,
   BobaObserverGenerateInputV1,
   BobaObserverSetV1,
+  BobaRootCauseAnalyzerGenerateInputV1,
+  BobaRootCauseAnalyzerSetV1,
   BobaRightsPermissionGateGenerateInputV1,
   BobaRightsPermissionGateSetV1,
   BobaCandidatesResponse,
@@ -118,6 +120,8 @@ export const queryKeys = {
     ["boba", "projects", id, "observer"] as const,
   bobaErrorDoctor: (id: string) =>
     ["boba", "projects", id, "error-doctor"] as const,
+  bobaRootCauseAnalyzer: (id: string) =>
+    ["boba", "projects", id, "root-cause-analyzer"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -620,6 +624,56 @@ export function useResetBobaErrorDoctor(projectId: string) {
     mutationFn: () => api.resetBobaErrorDoctor(projectId),
     onSuccess: () => {
       queryClient.setQueryData(queryKeys.bobaErrorDoctor(projectId), null);
+    },
+  });
+}
+
+export function useBobaRootCauseAnalyzer(projectId: string) {
+  return useQuery<BobaRootCauseAnalyzerSetV1 | null>({
+    queryKey: queryKeys.bobaRootCauseAnalyzer(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaRootCauseAnalyzer(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useGenerateBobaRootCauseAnalyzer(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaRootCauseAnalyzerGenerateInputV1 = {}) =>
+      api.generateBobaRootCauseAnalyzer(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(
+          queryKeys.bobaRootCauseAnalyzer(projectId),
+          result,
+        );
+      }
+    },
+  });
+}
+
+export function useExportBobaRootCauseAnalyzer(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaRootCauseAnalyzer(projectId),
+  });
+}
+
+export function useResetBobaRootCauseAnalyzer(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaRootCauseAnalyzer(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(
+        queryKeys.bobaRootCauseAnalyzer(projectId),
+        null,
+      );
     },
   });
 }

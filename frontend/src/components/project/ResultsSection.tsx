@@ -14,6 +14,7 @@ import {
   useBobaCandidateVideoScorer,
   useBobaErrorDoctor,
   useBobaObserver,
+  useBobaRootCauseAnalyzer,
   useBobaRightsPermissionGate,
   useBobaCandidates,
   useBobaClipBriefs,
@@ -47,6 +48,7 @@ import {
   useExportBobaCandidateVideoScorer,
   useExportBobaErrorDoctor,
   useExportBobaObserver,
+  useExportBobaRootCauseAnalyzer,
   useExportBobaRightsPermissionGate,
   useExportBobaContentScoutV2,
   useExportBobaCreatorLearning,
@@ -62,6 +64,7 @@ import {
   useGenerateBobaCandidateVideoScorer,
   useGenerateBobaErrorDoctor,
   useGenerateBobaObserver,
+  useGenerateBobaRootCauseAnalyzer,
   useGenerateBobaRightsPermissionGate,
   useGenerateBobaContentScoutV2,
   useGenerateBobaCreatorLearning,
@@ -77,6 +80,7 @@ import {
   useResetBobaCandidateVideoScorer,
   useResetBobaErrorDoctor,
   useResetBobaObserver,
+  useResetBobaRootCauseAnalyzer,
   useResetBobaRightsPermissionGate,
   useResetBobaContentScoutV2,
   useResetBobaExperimentation,
@@ -7386,6 +7390,599 @@ function BobaErrorDoctorPanel({ projectId }: { projectId: string }) {
   );
 }
 
+function BobaRootCauseAnalyzerPanel({ projectId }: { projectId: string }) {
+  const analyzerQuery = useBobaRootCauseAnalyzer(projectId);
+  const generateAnalyzer = useGenerateBobaRootCauseAnalyzer(projectId);
+  const exportAnalyzer = useExportBobaRootCauseAnalyzer(projectId);
+  const resetAnalyzer = useResetBobaRootCauseAnalyzer(projectId);
+  const [diagnosticContextJson, setDiagnosticContextJson] = useState("");
+  const [status, setStatus] = useState("");
+  const analyzer = analyzerQuery.data;
+  const busy =
+    generateAnalyzer.isPending ||
+    exportAnalyzer.isPending ||
+    resetAnalyzer.isPending;
+
+  function generate() {
+    let diagnosticContext: Record<string, unknown> = {};
+    if (diagnosticContextJson.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(diagnosticContextJson);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          setStatus("Diagnostic context must be a JSON object.");
+          return;
+        }
+        diagnosticContext = parsed as Record<string, unknown>;
+      } catch {
+        setStatus("Diagnostic context is not valid JSON.");
+        return;
+      }
+    }
+    setStatus("");
+    generateAnalyzer.mutate(
+      { diagnostic_context: diagnosticContext },
+      {
+        onSuccess: (result) => {
+          setStatus(
+            `Root Cause Analyzer saved ${result.analyzer_summary.total_analysis_cases} analysis case(s).`,
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportAnalyzer.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(`boba-root-cause-analyzer-v1-${projectId}.json`, payload);
+        setStatus("Safe compact Root Cause Analyzer export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's BOBA Root Cause Analyzer V1 artifact only? Error Doctor, Observer, and all other BOBA artifacts remain untouched.",
+      )
+    ) {
+      return;
+    }
+    resetAnalyzer.mutate(undefined, {
+      onSuccess: () => {
+        setStatus(
+          "BOBA Root Cause Analyzer V1 reset; Error Doctor, Observer, and all other BOBA artifacts remain untouched.",
+        );
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-4xl">
+          <p className="text-sm font-semibold text-white">
+            BOBA Root Cause Analyzer V1
+          </p>
+          <p className="text-xs text-muted">
+            {
+              "BOBA Root Cause Analyzer V1 ranks evidence-supported causes but does not guarantee that the highest-ranked candidate is proven."
+            }
+          </p>
+          <p className="text-xs text-amber-100">
+            {
+              "It does not repair files, edit code, run commands, run validators, or activate fallback tools."
+            }
+          </p>
+          <p className="text-xs text-amber-100">
+            {
+              "Human approval is required before verification or repair actions."
+            }
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !analyzer}
+            onClick={exportArtifact}
+            className="rounded border border-cyan-200/30 px-2.5 py-1.5 text-[11px] text-cyan-100 disabled:opacity-50"
+          >
+            Export safe analysis
+          </button>
+          <button
+            type="button"
+            disabled={busy || !analyzer}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Root Cause Analyzer V1
+          </button>
+        </div>
+      </div>
+
+      <details className="mt-4 rounded border border-white/10 p-3">
+        <summary className="cursor-pointer text-xs font-semibold text-white">
+          Optional bounded diagnostic context
+        </summary>
+        <label className="mt-3 block text-xs text-muted">
+          Diagnostic context JSON
+          <textarea
+            value={diagnosticContextJson}
+            onChange={(event) =>
+              setDiagnosticContextJson(event.target.value)
+            }
+            rows={3}
+            placeholder='{"conflicting_timestamps":true,"environment_issue":"Bounded local summary"}'
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+      </details>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={generate}
+          className="rounded border border-cyan-200/30 px-3 py-2 text-xs text-cyan-100 disabled:opacity-50"
+        >
+          {generateAnalyzer.isPending
+            ? "Analyzing saved diagnoses..."
+            : "Analyze saved Error Doctor report"}
+        </button>
+        <p className="text-[11px] text-muted">
+          This reads the saved Error Doctor artifact only. It does not regenerate
+          Error Doctor or Observer and does not execute verification.
+        </p>
+      </div>
+
+      {status && <p className="mt-3 text-xs text-cyan-100">{status}</p>}
+      {analyzerQuery.isError && (
+        <p className="mt-3 text-xs text-rose-100">
+          Root Cause Analyzer report could not be loaded.
+        </p>
+      )}
+
+      {!analyzer ? (
+        <p className="mt-4 text-xs text-muted">
+          Root Cause Analyzer report is not available. Generate one from a saved
+          Error Doctor report; missing Error Doctor evidence produces an honest
+          insufficient-evidence result.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ["Cases", analyzer.analyzer_summary.total_analysis_cases],
+              [
+                "Supported",
+                analyzer.analyzer_summary.supported_root_cause_count,
+              ],
+              [
+                "Probable",
+                analyzer.analyzer_summary.probable_root_cause_count,
+              ],
+              [
+                "Competing",
+                analyzer.analyzer_summary.competing_cause_count,
+              ],
+              [
+                "Safety blocks",
+                analyzer.analyzer_summary.intentional_safety_block_count,
+              ],
+              [
+                "Blocked workflows",
+                analyzer.analyzer_summary.blocked_workflow_count,
+              ],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="rounded border border-white/10 p-2 text-xs text-muted"
+              >
+                <p className="font-semibold text-white">{value}</p>
+                <p>{label}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-3">
+            <div className="rounded border border-cyan-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">
+                Strongest ranked candidate
+              </p>
+              <p className="mt-1">
+                {analyzer.analyzer_summary.strongest_root_cause_candidate ||
+                  "Not available"}
+              </p>
+            </div>
+            <div className="rounded border border-amber-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">Weakest evidence area</p>
+              <p className="mt-1">
+                {analyzer.analyzer_summary.weakest_evidence_area ||
+                  "Not available"}
+              </p>
+            </div>
+            <div className="rounded border border-emerald-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">
+                Safest next verification
+              </p>
+              <p className="mt-1">
+                {analyzer.analyzer_summary.safest_next_verification ||
+                  "Not available"}
+              </p>
+            </div>
+          </div>
+
+          <details className="mt-4 rounded border border-white/10 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              Root-cause analysis cases ({analyzer.analysis_cases.length})
+            </summary>
+            <div className="mt-3 space-y-3">
+              {analyzer.analysis_cases.map((analysisCase) => {
+                const candidates = analyzer.root_cause_candidates.filter(
+                  (item) =>
+                    item.analysis_case_id === analysisCase.analysis_case_id,
+                );
+                const strongest = candidates[0];
+                const factors = analyzer.contributing_factors.filter(
+                  (item) =>
+                    item.analysis_case_id === analysisCase.analysis_case_id,
+                );
+                const symptoms = analyzer.downstream_symptoms.filter(
+                  (item) =>
+                    item.analysis_case_id === analysisCase.analysis_case_id,
+                );
+                const gaps = analyzer.evidence_gaps.filter(
+                  (item) =>
+                    item.analysis_case_id === analysisCase.analysis_case_id,
+                );
+                const plans = analyzer.verification_plans.filter(
+                  (item) =>
+                    item.analysis_case_id === analysisCase.analysis_case_id,
+                );
+                const timeline = analyzer.failure_timelines.find(
+                  (item) =>
+                    item.timeline_id === analysisCase.failure_timeline_id,
+                );
+                const graph = analyzer.causal_graphs.find(
+                  (item) => item.causal_graph_id === analysisCase.causal_graph_id,
+                );
+                const impact = analyzer.workflow_impacts.find(
+                  (item) =>
+                    item.analysis_case_id === analysisCase.analysis_case_id,
+                );
+                const handoffs = analyzer.escalation_handoffs.filter(
+                  (item) =>
+                    item.analysis_case_id === analysisCase.analysis_case_id,
+                );
+                const nextCheck = plans
+                  .flatMap((plan) => plan.checks)
+                  .find((check) => check.safe && check.read_only);
+                const nodeLabels = new Map(
+                  (graph?.nodes || []).map((node) => [
+                    node.node_id,
+                    node.label,
+                  ]),
+                );
+                return (
+                  <article
+                    key={analysisCase.analysis_case_id}
+                    className="rounded border border-white/10 bg-black/10 p-3 text-xs text-muted"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-white">
+                          {analysisCase.title}
+                        </p>
+                        <p className="mt-1">
+                          {analysisCase.primary_module || "unknown module"} ·{" "}
+                          {analysisCase.workflow_stage}
+                        </p>
+                      </div>
+                      <span className="rounded border border-cyan-200/30 px-2 py-1 text-[10px] uppercase text-cyan-100">
+                        {analysisCase.analysis_status} ·{" "}
+                        {formatPercent(analysisCase.root_cause_confidence)}
+                      </span>
+                    </div>
+
+                    <p className="mt-3">
+                      Earliest known failure:{" "}
+                      <span className="text-white">
+                        {analysisCase.earliest_known_failure}
+                      </span>
+                    </p>
+                    <p className="mt-2 rounded border border-sky-300/15 p-2">
+                      Easy explanation:{" "}
+                      {strongest
+                        ? `The saved evidence points most strongly to ${strongest.title.toLowerCase()}, but BOBA still needs human-reviewed verification before treating it as proven.`
+                        : "BOBA does not have enough saved diagnostic evidence to rank a cause yet."}
+                    </p>
+
+                    <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                      <div className="rounded border border-emerald-300/15 p-2">
+                        <p className="font-semibold text-emerald-100">
+                          CONFIRMED FACTS
+                        </p>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {(analysisCase.confirmed_facts.length
+                            ? analysisCase.confirmed_facts
+                            : ["No confirmed facts available."]).map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="rounded border border-cyan-300/15 p-2">
+                        <p className="font-semibold text-cyan-100">
+                          MOST LIKELY CAUSE
+                        </p>
+                        <p className="mt-1">
+                          {strongest?.candidate_summary ||
+                            analysisCase.most_likely_root_cause}
+                        </p>
+                        {strongest && (
+                          <p className="mt-1">
+                            Likelihood {formatPercent(strongest.likelihood_score)}
+                            {" · "}confidence{" "}
+                            {formatPercent(strongest.confidence)}
+                            {" · "}evidence {strongest.evidence_quality}
+                          </p>
+                        )}
+                      </div>
+                      <div className="rounded border border-violet-300/15 p-2">
+                        <p className="font-semibold text-violet-100">
+                          COMPETING EXPLANATIONS
+                        </p>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {(candidates.length > 1
+                            ? candidates
+                                .slice(1)
+                                .map(
+                                  (item) =>
+                                    `${item.candidate_summary} (${formatPercent(item.likelihood_score)})`,
+                                )
+                            : analysisCase.unresolved_hypotheses.length
+                              ? analysisCase.unresolved_hypotheses
+                              : ["No competing explanation available."]).map(
+                            (item) => (
+                              <li key={item}>{item}</li>
+                            ),
+                          )}
+                        </ul>
+                      </div>
+                      <div className="rounded border border-indigo-300/15 p-2">
+                        <p className="font-semibold text-indigo-100">
+                          CONTRIBUTING FACTORS
+                        </p>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {(factors.length
+                            ? factors.map(
+                                (item) =>
+                                  `${item.factor_summary} Necessary: ${item.necessary_for_failure ? "Yes" : "Not established"}. Sufficient: ${item.sufficient_for_failure ? "Yes" : "Not established"}.`,
+                              )
+                            : ["No contributing factor established."]).map(
+                            (item) => (
+                              <li key={item}>{item}</li>
+                            ),
+                          )}
+                        </ul>
+                      </div>
+                      <div className="rounded border border-rose-300/15 p-2">
+                        <p className="font-semibold text-rose-100">
+                          DOWNSTREAM EFFECTS
+                        </p>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {(symptoms.length
+                            ? symptoms.map(
+                                (item) =>
+                                  `${item.symptom_summary} (depth ${item.cascade_depth})`,
+                              )
+                            : ["No downstream effect mapped."]).map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="rounded border border-amber-300/15 p-2">
+                        <p className="font-semibold text-amber-100">
+                          MISSING EVIDENCE
+                        </p>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {(gaps.length
+                            ? gaps.map(
+                                (item) =>
+                                  `${item.missing_information} — ${item.why_needed}`,
+                              )
+                            : ["No additional evidence gap stated."]).map(
+                            (item) => (
+                              <li key={item}>{item}</li>
+                            ),
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 rounded border border-emerald-300/15 p-2">
+                      <p className="font-semibold text-emerald-100">
+                        NEXT SAFE CHECK
+                      </p>
+                      <p className="mt-1">
+                        {nextCheck?.description ||
+                          "No safe read-only check is currently available."}
+                      </p>
+                      <p className="mt-1">
+                        Planned only; executed: No. Human review: Required.
+                      </p>
+                    </div>
+
+                    <details className="mt-3 rounded border border-white/10 p-2">
+                      <summary className="cursor-pointer font-semibold text-white">
+                        Failure timeline and causal chain
+                      </summary>
+                      <div className="mt-2 space-y-3">
+                        <div>
+                          <p className="font-semibold text-white">
+                            Failure timeline
+                          </p>
+                          {timeline?.events.length ? (
+                            <ol className="mt-1 list-decimal space-y-1 pl-4">
+                              {timeline.events.map((event) => (
+                                <li key={event.event_id}>
+                                  {event.observed_at || "time unavailable"} ·{" "}
+                                  {event.event_type} · {event.event_summary}
+                                  {event.confirmed ? " · confirmed" : ""}
+                                </li>
+                              ))}
+                            </ol>
+                          ) : (
+                            <p className="mt-1">
+                              No reliable failure timeline is available.
+                            </p>
+                          )}
+                          {timeline && (
+                            <p className="mt-1">
+                              Ordering confidence{" "}
+                              {formatPercent(timeline.ordering_confidence)} ·
+                              conflicting timestamps{" "}
+                              {timeline.conflicting_timestamps ? "Yes" : "No"} ·
+                              missing time information{" "}
+                              {timeline.missing_time_information ? "Yes" : "No"}
+                            </p>
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-semibold text-white">
+                            Causal chain
+                          </p>
+                          {graph?.edges.length ? (
+                            <ul className="mt-1 list-disc space-y-1 pl-4">
+                              {graph.edges.slice(0, 24).map((edge) => (
+                                <li key={edge.edge_id}>
+                                  {nodeLabels.get(edge.from_node_id) ||
+                                    edge.from_node_id}{" "}
+                                  → {edge.relationship} →{" "}
+                                  {nodeLabels.get(edge.to_node_id) ||
+                                    edge.to_node_id}
+                                  {" · "}
+                                  {formatPercent(edge.confidence)}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="mt-1">
+                              No evidence-supported causal edge is available.
+                            </p>
+                          )}
+                          {graph?.cycles_detected && (
+                            <p className="mt-1 text-rose-100">
+                              Graph cycle detected; human review is required.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </details>
+
+                    <details className="mt-3 rounded border border-white/10 p-2">
+                      <summary className="cursor-pointer font-semibold text-white">
+                        Workflow impact and handoffs
+                      </summary>
+                      <div className="mt-2 space-y-2">
+                        <p>
+                          Processing impact:{" "}
+                          <span className="text-white">
+                            {analysisCase.processing_impact}
+                          </span>
+                          {" · "}Safety impact:{" "}
+                          <span className="text-white">
+                            {analysisCase.safety_impact}
+                          </span>
+                        </p>
+                        <p>
+                          Blocked stages:{" "}
+                          {impact?.blocked_stages.join(", ") || "Not available"}.
+                        </p>
+                        <p>
+                          Unsafe next actions:{" "}
+                          {impact?.unsafe_next_actions.join("; ") ||
+                            "Not available"}
+                          .
+                        </p>
+                        <p>
+                          Safe-resume requirements:{" "}
+                          {impact?.resume_requirements.join("; ") ||
+                            "Not available"}
+                          . Resume authorized by this analyzer: No.
+                        </p>
+                        <p className="text-amber-100">
+                          Recommended handoff:{" "}
+                          {analysisCase.recommended_handoff}. Structured
+                          handoffs:{" "}
+                          {handoffs
+                            .map((handoff) => handoff.target_module)
+                            .join(", ") || "human_operator"}
+                          . Automatic application: No. Human approval: Required.
+                        </p>
+                      </div>
+                    </details>
+
+                    {(analysisCase.warnings.length > 0 ||
+                      analysisCase.limitations.length > 0) && (
+                      <p className="mt-3 text-amber-100">
+                        Case warnings and limitations:{" "}
+                        {[
+                          ...analysisCase.warnings,
+                          ...analysisCase.limitations,
+                        ].join("; ")}
+                      </p>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              Evidence and execution truth
+            </summary>
+            <div className="mt-3 space-y-2 text-xs text-muted">
+              <p>
+                Evidence records: {analyzer.evidence.length}. Error Doctor used:{" "}
+                {analyzer.signal_usage.error_doctor_used ? "Yes" : "No"}.
+                Observer references used:{" "}
+                {analyzer.signal_usage.observer_references_used ? "Yes" : "No"}.
+                Raw logs read:{" "}
+                {analyzer.signal_usage.raw_logs_read ? "Yes" : "No"}.
+              </p>
+              <p>
+                Commands, validators, code changes, source-artifact changes,
+                repairs, fallback tools, downloads, external APIs, rendering,
+                workflow resume, and destructive actions: Not performed.
+              </p>
+            </div>
+          </details>
+
+          {(analyzer.warnings.length > 0 ||
+            analyzer.limitations.length > 0 ||
+            analyzer.analyzer_summary.human_review_notes.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Root Cause Analyzer warnings and limitations:{" "}
+              {[
+                ...analyzer.warnings,
+                ...analyzer.limitations,
+                ...analyzer.analyzer_summary.human_review_notes,
+              ]
+                .filter(Boolean)
+                .slice(0, 20)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -8221,6 +8818,9 @@ export function ResultsSection({
   );
   const observerPanel = <BobaObserverPanel projectId={projectId} />;
   const errorDoctorPanel = <BobaErrorDoctorPanel projectId={projectId} />;
+  const rootCauseAnalyzerPanel = (
+    <BobaRootCauseAnalyzerPanel projectId={projectId} />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -8248,6 +8848,7 @@ export function ResultsSection({
         {rightsPermissionGatePanel}
         {observerPanel}
         {errorDoctorPanel}
+        {rootCauseAnalyzerPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -8287,6 +8888,7 @@ export function ResultsSection({
         {rightsPermissionGatePanel}
         {observerPanel}
         {errorDoctorPanel}
+        {rootCauseAnalyzerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -8322,6 +8924,7 @@ export function ResultsSection({
         {rightsPermissionGatePanel}
         {observerPanel}
         {errorDoctorPanel}
+        {rootCauseAnalyzerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -8357,6 +8960,7 @@ export function ResultsSection({
       {rightsPermissionGatePanel}
       {observerPanel}
       {errorDoctorPanel}
+      {rootCauseAnalyzerPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

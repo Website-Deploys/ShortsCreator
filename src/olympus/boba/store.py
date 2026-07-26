@@ -73,6 +73,7 @@ from olympus.boba.research_brain import BobaResearchBrainSetV1
 from olympus.boba.rights_permission_gate import (
     BobaRightsPermissionGateSetV1,
 )
+from olympus.boba.root_cause_analyzer import BobaRootCauseAnalyzerSetV1
 from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
 from olympus.boba.trend_topic_watcher import BobaTrendTopicWatcherSetV1
 from olympus.boba.whole_video import BobaWholeVideoUnderstandingV1
@@ -1556,6 +1557,114 @@ class BobaMemoryStore:
 
     def reset_boba_error_doctor(self, project_id: str) -> bool:
         path = self.error_doctor_path(project_id)
+        removed = False
+        with self._lock:
+            if path.exists():
+                path.unlink()
+                removed = True
+            directory = path.parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
+
+    def root_cause_analyzer_path(self, project_id: str) -> Path:
+        return self._path(project_id, "root_cause_analyzer/index.json")
+
+    def save_boba_root_cause_analyzer(
+        self,
+        report: BobaRootCauseAnalyzerSetV1,
+    ) -> BobaRootCauseAnalyzerSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                report.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+            )
+            self._atomic_write(
+                self.root_cause_analyzer_path(report.project_id),
+                safe,
+            )
+        return report
+
+    def load_boba_root_cause_analyzer(
+        self,
+        project_id: str,
+    ) -> BobaRootCauseAnalyzerSetV1 | None:
+        try:
+            raw = self._read(self.root_cause_analyzer_path(project_id), None)
+            return (
+                BobaRootCauseAnalyzerSetV1.model_validate(raw)
+                if isinstance(raw, dict)
+                else None
+            )
+        except (PydanticValidationError, ValidationError):
+            return None
+
+    def export_boba_root_cause_analyzer(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        report = self.load_boba_root_cause_analyzer(project_id)
+        if report is None:
+            raise ValidationError(
+                "BOBA Root Cause Analyzer V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = report.model_dump(mode="json")
+        evidence_items = payload.get("evidence", [])
+        if isinstance(evidence_items, list):
+            for evidence in evidence_items:
+                if not isinstance(evidence, dict):
+                    continue
+                evidence.pop("observed_value", None)
+                evidence.pop("expected_value", None)
+                evidence.pop("observed_at", None)
+        for timeline in payload.get("failure_timelines", []):
+            if not isinstance(timeline, dict):
+                continue
+            for event in timeline.get("events", []):
+                if isinstance(event, dict):
+                    event.pop("observed_at", None)
+        export = {
+            "schema_version": "boba_root_cause_analyzer_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "root_cause_analyzer": payload,
+            "privacy": {
+                "private_paths_excluded": True,
+                "full_evidence_values_excluded": True,
+                "raw_logs_excluded": True,
+                "error_doctor_report_excluded": True,
+                "observer_report_excluded": True,
+                "full_transcripts_excluded": True,
+                "media_files_excluded": True,
+                "credentials_excluded": True,
+                "external_api_used": False,
+                "url_fetching_used": False,
+                "scraping_used": False,
+                "downloading_used": False,
+                "command_execution_used": False,
+                "validator_execution_used": False,
+                "code_modification_used": False,
+                "artifact_modification_used": False,
+                "repair_execution_used": False,
+                "tool_fallback_execution_used": False,
+                "destructive_action_used": False,
+                "rendering_used": False,
+                "media_ingestion_used": False,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError(
+                "BOBA Root Cause Analyzer V1 export is invalid."
+            )
+        return safe
+
+    def reset_boba_root_cause_analyzer(self, project_id: str) -> bool:
+        path = self.root_cause_analyzer_path(project_id)
         removed = False
         with self._lock:
             if path.exists():

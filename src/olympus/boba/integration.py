@@ -109,6 +109,10 @@ from olympus.boba.rights_permission_gate import (
     BobaRightsPermissionGateSetV1,
     BobaRightsPermissionGateV1,
 )
+from olympus.boba.root_cause_analyzer import (
+    BobaRootCauseAnalyzerSetV1,
+    BobaRootCauseAnalyzerV1,
+)
 from olympus.boba.scout import BobaScout
 from olympus.boba.store import BobaMemoryStore
 from olympus.boba.trend_topic_watcher import (
@@ -169,6 +173,7 @@ class BobaIntegration:
             validation_report_root=store.root.parent / "validation_reports",
         )
         self.error_doctor = BobaErrorDoctorV1()
+        self.root_cause_analyzer = BobaRootCauseAnalyzerV1()
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1723,6 +1728,45 @@ class BobaIntegration:
 
     def reset_boba_error_doctor(self, project_id: str) -> bool:
         return self.store.reset_boba_error_doctor(project_id)
+
+    async def generate_boba_root_cause_analyzer(
+        self,
+        project_id: str,
+        *,
+        diagnostic_context: dict[str, Any] | None = None,
+        dry_run: bool = False,
+    ) -> BobaRootCauseAnalyzerSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError(
+                "Project was not found.",
+                details={"id": project_id},
+            )
+        report = self.root_cause_analyzer.analyze(
+            project_id,
+            self.store.load_boba_error_doctor(project_id),
+            source_id=project.link_ingestion_id or project_id,
+            manual_context=diagnostic_context,
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return report
+        return self.store.save_boba_root_cause_analyzer(report)
+
+    def load_boba_root_cause_analyzer(
+        self,
+        project_id: str,
+    ) -> BobaRootCauseAnalyzerSetV1 | None:
+        return self.store.load_boba_root_cause_analyzer(project_id)
+
+    def export_boba_root_cause_analyzer(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        return self.store.export_boba_root_cause_analyzer(project_id)
+
+    def reset_boba_root_cause_analyzer(self, project_id: str) -> bool:
+        return self.store.reset_boba_root_cause_analyzer(project_id)
 
     async def generate_performance_feedback(
         self,
