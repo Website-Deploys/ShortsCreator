@@ -53,6 +53,8 @@ import type {
   BobaCandidateClipDiscoveryV1,
   BobaCandidateVideoScorerGenerateInputV1,
   BobaCandidateVideoScorerSetV1,
+  BobaObserverGenerateInputV1,
+  BobaObserverSetV1,
   BobaRightsPermissionGateGenerateInputV1,
   BobaRightsPermissionGateSetV1,
   BobaCandidatesResponse,
@@ -110,6 +112,8 @@ export const queryKeys = {
     ["boba", "projects", id, "candidate-video-scorer"] as const,
   bobaRightsPermissionGate: (id: string) =>
     ["boba", "projects", id, "rights-permission-gate"] as const,
+  bobaObserver: (id: string) =>
+    ["boba", "projects", id, "observer"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -524,6 +528,50 @@ export function useResetBobaRightsPermissionGate(projectId: string) {
         queryKeys.bobaRightsPermissionGate(projectId),
         null,
       );
+    },
+  });
+}
+
+export function useBobaObserver(projectId: string) {
+  return useQuery<BobaObserverSetV1 | null>({
+    queryKey: queryKeys.bobaObserver(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaObserver(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useGenerateBobaObserver(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaObserverGenerateInputV1 = {}) =>
+      api.generateBobaObserver(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(queryKeys.bobaObserver(projectId), result);
+      }
+    },
+  });
+}
+
+export function useExportBobaObserver(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaObserver(projectId),
+  });
+}
+
+export function useResetBobaObserver(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaObserver(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(queryKeys.bobaObserver(projectId), null);
     },
   });
 }

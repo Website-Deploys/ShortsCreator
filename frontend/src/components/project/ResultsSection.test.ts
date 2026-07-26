@@ -385,4 +385,30 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("autoIngestRightsMedia");
     expect(resultsSection).not.toContain("validateLegalOwnership");
   });
+
+  it("shows observation-only BOBA Observer V1 truth and controls", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Observer V1");
+    expect(resultsSection).toContain(
+      "BOBA Observer V1 observes only. It does not fix, edit code, run validators, delete files, download media, or render.",
+    );
+    expect(resultsSection).toContain(
+      "Unsafe next actions require human review or future safety modules.",
+    );
+    expect(resultsSection).toContain("Observe saved project state");
+    expect(resultsSection).toContain("Workflow health");
+    expect(resultsSection).toContain("Module health");
+    expect(resultsSection).toContain("Artifact observations");
+    expect(resultsSection).toContain("Broken or stale dependencies");
+    expect(resultsSection).toContain("Validation gaps");
+    expect(resultsSection).toContain("Safety observations");
+    expect(resultsSection).toContain("Safe next actions");
+    expect(resultsSection).toContain("Unsafe next actions");
+    expect(resultsSection).toContain("Export safe Observer report");
+    expect(resultsSection).toContain("Reset Observer V1");
+    expect(resultsSection).not.toContain("autoRunObserverValidators");
+    expect(resultsSection).not.toContain("autoRepairObserverFinding");
+    expect(resultsSection).not.toContain("autoRenderObserverProject");
+  });
 });

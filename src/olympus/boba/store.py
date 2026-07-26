@@ -62,6 +62,7 @@ from olympus.boba.memory_contracts import (
 )
 from olympus.boba.memory_validation import validate_memory_export, validate_memory_record
 from olympus.boba.music_mood import BobaMusicMoodRecommendationSetV1
+from olympus.boba.observer import BobaObserverSetV1
 from olympus.boba.performance_feedback import (
     BobaPerformanceFeedbackEventV1,
     BobaPerformanceFeedbackSetV1,
@@ -1352,6 +1353,107 @@ class BobaMemoryStore:
 
     def reset_rights_permission_gate(self, project_id: str) -> bool:
         path = self.rights_permission_gate_path(project_id)
+        removed = False
+        with self._lock:
+            if path.exists():
+                path.unlink()
+                removed = True
+            directory = path.parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
+
+    def observer_path(self, project_id: str) -> Path:
+        return self._path(project_id, "observer/index.json")
+
+    def save_observer_report(
+        self,
+        report: BobaObserverSetV1,
+    ) -> BobaObserverSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                report.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+            )
+            self._atomic_write(self.observer_path(report.project_id), safe)
+        return report
+
+    def load_observer_report(
+        self,
+        project_id: str,
+    ) -> BobaObserverSetV1 | None:
+        raw = self._read(self.observer_path(project_id), None)
+        return (
+            BobaObserverSetV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def export_observer_report(self, project_id: str) -> dict[str, Any]:
+        report = self.load_observer_report(project_id)
+        if report is None:
+            raise ValidationError(
+                "BOBA Observer V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = report.model_dump(mode="json")
+        for artifact in payload.get("artifact_observations", []):
+            if not isinstance(artifact, dict):
+                continue
+            artifact.pop("expected_path", None)
+            for finding in artifact.get("findings", []):
+                if isinstance(finding, dict):
+                    finding.pop("evidence", None)
+        for module in payload.get("module_health_observations", []):
+            if not isinstance(module, dict):
+                continue
+            for finding in module.get("findings", []):
+                if isinstance(finding, dict):
+                    finding.pop("evidence", None)
+        for workflow in payload.get("workflow_observations", []):
+            if not isinstance(workflow, dict):
+                continue
+            for finding in workflow.get("findings", []):
+                if isinstance(finding, dict):
+                    finding.pop("evidence", None)
+        for validation in payload.get("validation_observations", []):
+            if isinstance(validation, dict):
+                validation.pop("report_path", None)
+        export = {
+            "schema_version": "boba_observer_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "observer": payload,
+            "privacy": {
+                "private_paths_excluded": True,
+                "finding_evidence_excluded": True,
+                "raw_artifact_content_excluded": True,
+                "full_transcripts_excluded": True,
+                "media_files_excluded": True,
+                "credentials_excluded": True,
+                "command_logs_excluded": True,
+                "external_api_used": False,
+                "url_fetching_used": False,
+                "scraping_used": False,
+                "downloading_used": False,
+                "command_execution_used": False,
+                "code_modification_used": False,
+                "destructive_action_used": False,
+                "validator_execution_used": False,
+                "rendering_used": False,
+                "media_ingestion_used": False,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Observer V1 export is invalid.")
+        return safe
+
+    def reset_observer_report(self, project_id: str) -> bool:
+        path = self.observer_path(project_id)
         removed = False
         with self._lock:
             if path.exists():
