@@ -74,6 +74,8 @@ import type {
   BobaCandidateClipDiscoveryV1,
   BobaCandidateVideoScorerGenerateInputV1,
   BobaCandidateVideoScorerSetV1,
+  BobaErrorDoctorGenerateInputV1,
+  BobaErrorDoctorSetV1,
   BobaObserverGenerateInputV1,
   BobaObserverSetV1,
   BobaRightsPermissionGateGenerateInputV1,
@@ -370,6 +372,44 @@ export const api = {
       media_ingested: false;
       rendering_triggered: false;
     }>(`/boba/projects/${projectId}/observer`, {
+      method: "DELETE",
+    }),
+  getBobaErrorDoctor: (projectId: string) =>
+    request<BobaErrorDoctorSetV1>(
+      `/boba/projects/${projectId}/error-doctor`,
+    ),
+  generateBobaErrorDoctor: (
+    projectId: string,
+    input: BobaErrorDoctorGenerateInputV1 = {},
+  ) =>
+    request<BobaErrorDoctorSetV1>(
+      `/boba/projects/${projectId}/error-doctor`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  exportBobaErrorDoctor: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor/export`,
+    ),
+  resetBobaErrorDoctor: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      error_doctor_removed: boolean;
+      observer_removed: false;
+      other_boba_artifacts_removed: false;
+      unrelated_files_deleted: false;
+      validators_executed: false;
+      commands_executed: false;
+      code_modified: false;
+      artifacts_modified: false;
+      media_downloaded: false;
+      media_ingested: false;
+      rendering_triggered: false;
+      repairs_applied: false;
+    }>(`/boba/projects/${projectId}/error-doctor`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>

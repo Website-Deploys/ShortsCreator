@@ -12,6 +12,7 @@ import {
   useBobaCaptionMotion,
   useBobaCandidateClipDiscovery,
   useBobaCandidateVideoScorer,
+  useBobaErrorDoctor,
   useBobaObserver,
   useBobaRightsPermissionGate,
   useBobaCandidates,
@@ -44,6 +45,7 @@ import {
   useExportCreatorProfile,
   useExportBobaApprovalRejectionLearning,
   useExportBobaCandidateVideoScorer,
+  useExportBobaErrorDoctor,
   useExportBobaObserver,
   useExportBobaRightsPermissionGate,
   useExportBobaContentScoutV2,
@@ -58,6 +60,7 @@ import {
   useGenerateBobaCreativeBriefs,
   useGenerateBobaApprovalRejectionLearning,
   useGenerateBobaCandidateVideoScorer,
+  useGenerateBobaErrorDoctor,
   useGenerateBobaObserver,
   useGenerateBobaRightsPermissionGate,
   useGenerateBobaContentScoutV2,
@@ -72,6 +75,7 @@ import {
   useResetCreatorProfile,
   useResetBobaApprovalRejectionLearning,
   useResetBobaCandidateVideoScorer,
+  useResetBobaErrorDoctor,
   useResetBobaObserver,
   useResetBobaRightsPermissionGate,
   useResetBobaContentScoutV2,
@@ -6923,6 +6927,465 @@ function BobaObserverPanel({ projectId }: { projectId: string }) {
   );
 }
 
+function BobaErrorDoctorPanel({ projectId }: { projectId: string }) {
+  const doctorQuery = useBobaErrorDoctor(projectId);
+  const generateDoctor = useGenerateBobaErrorDoctor(projectId);
+  const exportDoctor = useExportBobaErrorDoctor(projectId);
+  const resetDoctor = useResetBobaErrorDoctor(projectId);
+  const [diagnosticContextJson, setDiagnosticContextJson] = useState("");
+  const [errorSummariesText, setErrorSummariesText] = useState("");
+  const [status, setStatus] = useState("");
+  const doctor = doctorQuery.data;
+  const busy =
+    generateDoctor.isPending ||
+    exportDoctor.isPending ||
+    resetDoctor.isPending;
+
+  function generate() {
+    let diagnosticContext: Record<string, unknown> = {};
+    if (diagnosticContextJson.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(diagnosticContextJson);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          setStatus("Diagnostic context must be a JSON object.");
+          return;
+        }
+        diagnosticContext = parsed as Record<string, unknown>;
+      } catch {
+        setStatus("Diagnostic context is not valid JSON.");
+        return;
+      }
+    }
+    const errorSummaries = errorSummariesText
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .slice(0, 32);
+    setStatus("");
+    generateDoctor.mutate(
+      {
+        diagnostic_context: diagnosticContext,
+        error_summaries: errorSummaries,
+      },
+      {
+        onSuccess: (result) => {
+          setStatus(
+            `Error Doctor saved ${result.doctor_summary.total_diagnostic_cases} diagnostic case(s).`,
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportDoctor.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(`boba-error-doctor-v1-${projectId}.json`, payload);
+        setStatus("Safe compact Error Doctor export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's BOBA Error Doctor V1 artifact only? Observer and all other BOBA artifacts remain untouched.",
+      )
+    ) {
+      return;
+    }
+    resetDoctor.mutate(undefined, {
+      onSuccess: () => {
+        setStatus(
+          "BOBA Error Doctor V1 reset; Observer and all other BOBA artifacts remain untouched.",
+        );
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-violet-300/20 bg-violet-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-4xl">
+          <p className="text-sm font-semibold text-white">
+            BOBA Error Doctor V1
+          </p>
+          <p className="text-xs text-muted">
+            {
+              "BOBA Error Doctor V1 diagnoses Observer findings but does not fix files, edit code, run commands, run validators, or perform repairs."
+            }
+          </p>
+          <p className="text-xs text-amber-100">
+            {"A probable cause is not a proven root cause."}
+          </p>
+          <p className="text-xs text-amber-100">
+            {
+              "Human review is required before repair or destructive action."
+            }
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !doctor}
+            onClick={exportArtifact}
+            className="rounded border border-violet-200/30 px-2.5 py-1.5 text-[11px] text-violet-100 disabled:opacity-50"
+          >
+            Export safe diagnosis
+          </button>
+          <button
+            type="button"
+            disabled={busy || !doctor}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Error Doctor V1
+          </button>
+        </div>
+      </div>
+
+      <details className="mt-4 rounded border border-white/10 p-3">
+        <summary className="cursor-pointer text-xs font-semibold text-white">
+          Optional bounded diagnostic context
+        </summary>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <label className="text-xs text-muted">
+            Diagnostic context JSON
+            <textarea
+              value={diagnosticContextJson}
+              onChange={(event) =>
+                setDiagnosticContextJson(event.target.value)
+              }
+              rows={3}
+              placeholder='{"module_name":"rendering","environment_issue":"Bounded local summary"}'
+              className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+            />
+          </label>
+          <label className="text-xs text-muted">
+            Bounded error summaries, one per line
+            <textarea
+              value={errorSummariesText}
+              onChange={(event) => setErrorSummariesText(event.target.value)}
+              rows={3}
+              placeholder="FFmpeg returned a bounded resource error summary"
+              className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+            />
+          </label>
+        </div>
+      </details>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={generate}
+          className="rounded border border-violet-200/30 px-3 py-2 text-xs text-violet-100 disabled:opacity-50"
+        >
+          {generateDoctor.isPending
+            ? "Diagnosing saved findings..."
+            : "Diagnose saved Observer findings"}
+        </button>
+        <p className="text-[11px] text-muted">
+          This reads a saved Observer report only. It does not generate Observer
+          or run any workflow.
+        </p>
+      </div>
+
+      {status && <p className="mt-3 text-xs text-violet-100">{status}</p>}
+      {doctorQuery.isError && (
+        <p className="mt-3 text-xs text-rose-100">
+          Error Doctor report could not be loaded.
+        </p>
+      )}
+
+      {!doctor ? (
+        <p className="mt-4 text-xs text-muted">
+          Error Doctor report is not available. Generate one from a saved
+          Observer report; missing Observer evidence produces an honest
+          insufficient-evidence diagnosis.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ["Cases", doctor.doctor_summary.total_diagnostic_cases],
+              ["Blockers", doctor.doctor_summary.blocker_count],
+              ["Critical", doctor.doctor_summary.critical_count],
+              ["High", doctor.doctor_summary.high_count],
+              ["Cascades", doctor.doctor_summary.cascading_problem_count],
+              ["Blocked workflows", doctor.doctor_summary.blocked_workflow_count],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="rounded border border-white/10 p-2 text-xs text-muted"
+              >
+                <p className="font-semibold text-white">{value}</p>
+                <p>{label}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-violet-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">Highest priority case</p>
+              <p className="mt-1">
+                {doctor.doctor_summary.highest_priority_case ||
+                  "No priority case stated"}
+              </p>
+            </div>
+            <div className="rounded border border-emerald-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">
+                Safest next investigation
+              </p>
+              <p className="mt-1">
+                {doctor.doctor_summary.safest_next_investigation ||
+                  "No safe investigation stated"}
+              </p>
+            </div>
+          </div>
+
+          <details className="mt-4 rounded border border-white/10 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              Diagnostic cases ({doctor.diagnostic_cases.length})
+            </summary>
+            <div className="mt-3 space-y-3">
+              {doctor.diagnostic_cases.map((diagnosticCase) => {
+                const recommendations =
+                  doctor.investigation_recommendations.filter(
+                    (item) =>
+                      item.diagnostic_case_id ===
+                      diagnosticCase.diagnostic_case_id,
+                  );
+                const handoffs = doctor.escalation_handoffs.filter(
+                  (item) =>
+                    item.diagnostic_case_id ===
+                    diagnosticCase.diagnostic_case_id,
+                );
+                return (
+                  <article
+                    key={diagnosticCase.diagnostic_case_id}
+                    className="rounded border border-white/10 bg-black/10 p-3 text-xs text-muted"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-white">
+                          {diagnosticCase.title}
+                        </p>
+                        <p className="mt-1">
+                          {diagnosticCase.error_category} ·{" "}
+                          {diagnosticCase.primary_module || "unknown module"} ·{" "}
+                          {diagnosticCase.workflow_stage}
+                        </p>
+                      </div>
+                      <span className="rounded border border-amber-200/30 px-2 py-1 text-[10px] uppercase text-amber-100">
+                        {diagnosticCase.severity} / {diagnosticCase.urgency} /{" "}
+                        {diagnosticCase.diagnosis_status}
+                      </span>
+                    </div>
+
+                    <p className="mt-3">{diagnosticCase.symptom_summary}</p>
+                    <p className="mt-2">
+                      Affected modules:{" "}
+                      <span className="text-white">
+                        {diagnosticCase.affected_modules.join(", ") ||
+                          "Not available"}
+                      </span>
+                    </p>
+                    <p className="mt-1">
+                      Affected artifacts:{" "}
+                      <span className="text-white">
+                        {diagnosticCase.affected_artifacts.join(", ") ||
+                          "Not available"}
+                      </span>
+                    </p>
+                    <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                      <div className="rounded border border-emerald-300/15 p-2">
+                        <p className="font-semibold text-emerald-100">
+                          CONFIRMED FACTS
+                        </p>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {(diagnosticCase.confirmed_facts.length
+                            ? diagnosticCase.confirmed_facts
+                            : ["No confirmed facts available."]).map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="rounded border border-sky-300/15 p-2">
+                        <p className="font-semibold text-sky-100">
+                          PROBABLE EXPLANATIONS
+                        </p>
+                        <p className="mt-1">
+                          {diagnosticCase.probable_cause_summary}
+                        </p>
+                      </div>
+                      <div className="rounded border border-violet-300/15 p-2">
+                        <p className="font-semibold text-violet-100">
+                          POSSIBLE HYPOTHESES
+                        </p>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {(diagnosticCase.hypotheses.length
+                            ? diagnosticCase.hypotheses.map(
+                                (item) =>
+                                  `${item.hypothesis} (${formatPercent(item.confidence)})`,
+                              )
+                            : ["No bounded hypothesis available."]).map(
+                            (item) => (
+                              <li key={item}>{item}</li>
+                            ),
+                          )}
+                        </ul>
+                      </div>
+                      <div className="rounded border border-amber-300/15 p-2">
+                        <p className="font-semibold text-amber-100">
+                          MISSING INFORMATION
+                        </p>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {(diagnosticCase.missing_information.length
+                            ? diagnosticCase.missing_information
+                            : ["No additional missing information stated."]).map(
+                            (item) => (
+                              <li key={item}>{item}</li>
+                            ),
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 lg:grid-cols-3">
+                      <p>
+                        Processing impact:{" "}
+                        <span className="text-white">
+                          {diagnosticCase.processing_impact}
+                        </span>
+                      </p>
+                      <p>
+                        Safety impact:{" "}
+                        <span className="text-white">
+                          {diagnosticCase.safety_impact}
+                        </span>
+                      </p>
+                      <p>
+                        Confidence:{" "}
+                        <span className="text-white">
+                          {formatPercent(diagnosticCase.confidence)}
+                        </span>
+                      </p>
+                    </div>
+
+                    {recommendations.length > 0 && (
+                      <div className="mt-3">
+                        <p className="font-semibold text-white">
+                          Read-only investigation recommendations
+                        </p>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {recommendations.map((recommendation) => (
+                            <li key={recommendation.recommendation_id}>
+                              {recommendation.action} ·{" "}
+                              {recommendation.requires_command_execution
+                                ? "future manual command may be required"
+                                : "no command required by this recommendation"}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {diagnosticCase.recommended_investigation.length > 0 && (
+                      <p className="mt-3">
+                        Case investigation guidance:{" "}
+                        {diagnosticCase.recommended_investigation.join("; ")}
+                      </p>
+                    )}
+
+                    {handoffs.length > 0 && (
+                      <p className="mt-3 text-amber-100">
+                        Escalation target: {diagnosticCase.escalation_target}.
+                        Structured handoffs:{" "}
+                        {handoffs
+                          .map((handoff) => handoff.target_module)
+                          .join(", ")}
+                        . Automatic application: No. Human approval: Required.
+                      </p>
+                    )}
+
+                    {(diagnosticCase.warnings.length > 0 ||
+                      diagnosticCase.limitations.length > 0) && (
+                      <p className="mt-3 text-amber-100">
+                        Case warnings and limitations:{" "}
+                        {[
+                          ...diagnosticCase.warnings,
+                          ...diagnosticCase.limitations,
+                        ]
+                          .filter(Boolean)
+                          .join("; ")}
+                      </p>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              Cascades, evidence, and signal truth
+            </summary>
+            <div className="mt-3 space-y-3 text-xs text-muted">
+              <div>
+                <p className="font-semibold text-white">
+                  Cascading impacts ({doctor.cascading_impacts.length})
+                </p>
+                {doctor.cascading_impacts.length > 0 ? (
+                  <ul className="mt-1 list-disc space-y-1 pl-4">
+                    {doctor.cascading_impacts.map((impact) => (
+                      <li key={impact.cascade_id}>
+                        {impact.explanation} Chain:{" "}
+                        {impact.impact_chain.join(" → ") || "Not available"}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1">No cascade inferred from known chains.</p>
+                )}
+              </div>
+              <p>
+                Classified Observer findings:{" "}
+                {doctor.classified_findings.length}. Observer used:{" "}
+                {doctor.signal_usage.observer_used ? "Yes" : "No"}. Raw logs
+                read: {doctor.signal_usage.raw_logs_read ? "Yes" : "No"}.
+              </p>
+              <p>
+                Commands, validators, code changes, artifact changes, downloads,
+                external APIs, and destructive actions: Not performed.
+              </p>
+            </div>
+          </details>
+
+          {(doctor.warnings.length > 0 ||
+            doctor.limitations.length > 0 ||
+            doctor.doctor_summary.human_review_notes.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Error Doctor warnings and limitations:{" "}
+              {[
+                ...doctor.warnings,
+                ...doctor.limitations,
+                ...doctor.doctor_summary.human_review_notes,
+              ]
+                .filter(Boolean)
+                .slice(0, 16)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -7757,6 +8220,7 @@ export function ResultsSection({
     <BobaRightsPermissionGatePanel projectId={projectId} />
   );
   const observerPanel = <BobaObserverPanel projectId={projectId} />;
+  const errorDoctorPanel = <BobaErrorDoctorPanel projectId={projectId} />;
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -7783,6 +8247,7 @@ export function ResultsSection({
         {candidateVideoScorerPanel}
         {rightsPermissionGatePanel}
         {observerPanel}
+        {errorDoctorPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -7821,6 +8286,7 @@ export function ResultsSection({
         {candidateVideoScorerPanel}
         {rightsPermissionGatePanel}
         {observerPanel}
+        {errorDoctorPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -7855,6 +8321,7 @@ export function ResultsSection({
         {candidateVideoScorerPanel}
         {rightsPermissionGatePanel}
         {observerPanel}
+        {errorDoctorPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -7889,6 +8356,7 @@ export function ResultsSection({
       {candidateVideoScorerPanel}
       {rightsPermissionGatePanel}
       {observerPanel}
+      {errorDoctorPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

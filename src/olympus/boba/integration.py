@@ -63,6 +63,7 @@ from olympus.boba.editorial_decision import (
     BobaEditorialDecisionSetV1,
 )
 from olympus.boba.editorial_policy import create_editorial_policy
+from olympus.boba.error_doctor import BobaErrorDoctorSetV1, BobaErrorDoctorV1
 from olympus.boba.experimentation import (
     BobaExperimentationSetV1,
     BobaExperimentationSystemV1,
@@ -167,6 +168,7 @@ class BobaIntegration:
             store.root,
             validation_report_root=store.root.parent / "validation_reports",
         )
+        self.error_doctor = BobaErrorDoctorV1()
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1683,6 +1685,44 @@ class BobaIntegration:
 
     def reset_observer_report(self, project_id: str) -> bool:
         return self.store.reset_observer_report(project_id)
+
+    async def generate_boba_error_doctor(
+        self,
+        project_id: str,
+        *,
+        diagnostic_context: dict[str, Any] | None = None,
+        error_summaries: list[str | dict[str, Any]] | None = None,
+        dry_run: bool = False,
+    ) -> BobaErrorDoctorSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError(
+                "Project was not found.",
+                details={"id": project_id},
+            )
+        report = self.error_doctor.analyze(
+            project_id,
+            self.store.load_observer_report(project_id),
+            source_id=project.link_ingestion_id or project_id,
+            manual_context=diagnostic_context,
+            error_summaries=error_summaries,
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return report
+        return self.store.save_boba_error_doctor(report)
+
+    def load_boba_error_doctor(
+        self,
+        project_id: str,
+    ) -> BobaErrorDoctorSetV1 | None:
+        return self.store.load_boba_error_doctor(project_id)
+
+    def export_boba_error_doctor(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_boba_error_doctor(project_id)
+
+    def reset_boba_error_doctor(self, project_id: str) -> bool:
+        return self.store.reset_boba_error_doctor(project_id)
 
     async def generate_performance_feedback(
         self,
