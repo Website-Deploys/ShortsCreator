@@ -72,6 +72,8 @@ import type {
   BobaBrainStateV1,
   BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
+  BobaCandidateVideoScorerGenerateInputV1,
+  BobaCandidateVideoScorerSetV1,
   BobaCandidateV1,
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
@@ -269,6 +271,38 @@ export const api = {
       performance_feedback_removed: false;
       memory_removed: false;
     }>(`/boba/projects/${projectId}/trend-topic-watcher`, {
+      method: "DELETE",
+    }),
+  getBobaCandidateVideoScorer: (projectId: string) =>
+    request<BobaCandidateVideoScorerSetV1>(
+      `/boba/projects/${projectId}/candidate-video-scorer`,
+    ),
+  generateBobaCandidateVideoScorer: (
+    projectId: string,
+    input: BobaCandidateVideoScorerGenerateInputV1 = {},
+  ) =>
+    request<BobaCandidateVideoScorerSetV1>(
+      `/boba/projects/${projectId}/candidate-video-scorer`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  exportBobaCandidateVideoScorer: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/candidate-video-scorer/export`,
+    ),
+  resetBobaCandidateVideoScorer: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      candidate_video_scorer_removed: boolean;
+      trend_topic_watcher_removed: false;
+      research_brain_removed: false;
+      content_scout_removed: false;
+      creator_learning_removed: false;
+      approval_rejection_learning_removed: false;
+      performance_feedback_removed: false;
+      memory_removed: false;
+      media_ingested: false;
+    }>(`/boba/projects/${projectId}/candidate-video-scorer`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>

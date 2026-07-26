@@ -327,4 +327,30 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("monitorRealtimeTrends");
     expect(resultsSection).not.toContain("autoApplyTrendTopicHandoff");
   });
+
+  it("shows metadata-only BOBA Candidate Video Scorer V1 truth and controls", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Candidate Video Scorer V1");
+    expect(resultsSection).toContain(
+      "Candidate Video Scorer V1 uses local/user-provided metadata only.",
+    );
+    expect(resultsSection).toContain(
+      "BOBA does not fetch URLs, scrape platforms, download videos, or confirm copyright safety.",
+    );
+    expect(resultsSection).toContain(
+      "Human approval and rights review are required before any future ingestion.",
+    );
+    expect(resultsSection).toContain("Build candidate review queue");
+    expect(resultsSection).toContain("Shorts potential review");
+    expect(resultsSection).toContain("Rights review:");
+    expect(resultsSection).toContain("Human review queue");
+    expect(resultsSection).toContain("Advisory source handoffs");
+    expect(resultsSection).toContain("Export safe scorer");
+    expect(resultsSection).toContain("Reset Scorer V1");
+    expect(resultsSection).not.toContain("fetchCandidateVideoUrl");
+    expect(resultsSection).not.toContain("downloadCandidateVideo");
+    expect(resultsSection).not.toContain("autoIngestCandidateVideo");
+    expect(resultsSection).not.toContain("confirmCandidateCopyrightSafety");
+  });
 });

@@ -1650,6 +1650,227 @@ export interface BobaTrendTopicWatcherGenerateInputV1 {
   dry_run?: boolean;
 }
 
+export type BobaCandidateVideoSourceTypeV1 =
+  | "csv"
+  | "json"
+  | "manual"
+  | "content_scout_v2"
+  | "research_brain"
+  | "trend_topic_watcher"
+  | "test_synthetic";
+
+export type BobaCandidateRightsStatusV1 =
+  | "owned"
+  | "licensed"
+  | "permission_granted"
+  | "permission_needed"
+  | "unknown"
+  | "blocked";
+
+export type BobaCandidateRightsReadinessV1 =
+  | "ready_for_review"
+  | "needs_permission"
+  | "unknown_needs_review"
+  | "blocked";
+
+export type BobaCandidateVideoRecommendationTypeV1 =
+  | "review_now"
+  | "save_for_later"
+  | "seek_permission"
+  | "reject"
+  | "blocked";
+
+export type BobaCandidateVideoPriorityV1 =
+  | "low"
+  | "medium"
+  | "high"
+  | "urgent";
+
+export interface BobaCandidateVideoImportSourceV1 {
+  import_id: string;
+  source_type: BobaCandidateVideoSourceTypeV1;
+  source_label: string;
+  source_path: string;
+  imported_at: string;
+  item_count: number;
+  accepted_count: number;
+  rejected_count: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaCandidateVideoV1 {
+  candidate_video_id: string;
+  title: string;
+  description: string;
+  source_label: string;
+  source_reference: string;
+  source_url: string | null;
+  duration_seconds: number | null;
+  creator_or_channel: string;
+  published_at: string;
+  topic_tags: string[];
+  categories: string[];
+  rights_status: BobaCandidateRightsStatusV1;
+  permission_notes: string;
+  user_notes: string;
+  source_artifact_refs: string[];
+  raw_metadata_summary: Record<string, unknown>;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaCandidateVideoScoreV1 {
+  candidate_video_id: string;
+  creator_fit_score: number;
+  topic_opportunity_score: number;
+  research_support_score: number;
+  trend_support_score: number;
+  shortability_score: number;
+  hook_potential_score: number;
+  story_potential_score: number;
+  format_fit_score: number;
+  rights_readiness_score: number;
+  risk_score: number;
+  review_priority_score: number;
+  overall_candidate_score: number;
+  confidence: number;
+  score_reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaShortsPotentialReviewV1 {
+  candidate_video_id: string;
+  possible_clip_types: string[];
+  possible_hook_directions: string[];
+  possible_story_angles: string[];
+  possible_format_styles: string[];
+  emotional_story_promise: string;
+  likely_weaknesses: string[];
+  human_review_questions: string[];
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaCandidateRightsReviewV1 {
+  candidate_video_id: string;
+  rights_status: BobaCandidateRightsStatusV1;
+  rights_readiness: BobaCandidateRightsReadinessV1;
+  rights_review_required: boolean;
+  permission_required: boolean;
+  blocked: boolean;
+  reason: string;
+  human_review_notes: string[];
+  warnings: string[];
+}
+
+export interface BobaCandidateVideoRecommendationV1 {
+  candidate_video_id: string;
+  recommendation: BobaCandidateVideoRecommendationTypeV1;
+  priority: BobaCandidateVideoPriorityV1;
+  reason: string;
+  shorts_potential: BobaShortsPotentialReviewV1;
+  rights_review: BobaCandidateRightsReviewV1;
+  next_human_action: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaScoredCandidateVideoV1 {
+  candidate_video: BobaCandidateVideoV1;
+  score: BobaCandidateVideoScoreV1;
+  shorts_potential: BobaShortsPotentialReviewV1;
+  rights_review: BobaCandidateRightsReviewV1;
+  recommendation: BobaCandidateVideoRecommendationV1;
+  duplicate_of_candidate_video_id: string | null;
+}
+
+export interface BobaCandidateVideoReviewQueueV1 {
+  top_candidates: BobaCandidateVideoRecommendationV1[];
+  backup_candidates: BobaCandidateVideoRecommendationV1[];
+  permission_needed_candidates: BobaCandidateVideoRecommendationV1[];
+  blocked_candidates: BobaCandidateVideoRecommendationV1[];
+  duplicate_or_similar_candidates: BobaCandidateVideoRecommendationV1[];
+  rejected_candidates: BobaCandidateVideoRecommendationV1[];
+  queue_summary: string;
+  warnings: string[];
+}
+
+export interface BobaCandidateVideoHandoffTargetV1 {
+  candidate_video_ids: string[];
+  topics: string[];
+  recommended_actions: string[];
+  prerequisites: string[];
+  warnings: string[];
+  apply_automatically: false;
+}
+
+export interface BobaCandidateVideoSourceHandoffV1 {
+  content_scout_handoff: BobaCandidateVideoHandoffTargetV1;
+  research_brain_handoff: BobaCandidateVideoHandoffTargetV1;
+  trend_topic_handoff: BobaCandidateVideoHandoffTargetV1;
+  rights_permission_gate_handoff: BobaCandidateVideoHandoffTargetV1;
+  future_ingestion_handoff: BobaCandidateVideoHandoffTargetV1;
+  apply_automatically: false;
+}
+
+export interface BobaCandidateVideoSummaryV1 {
+  total_candidates: number;
+  review_now_count: number;
+  save_for_later_count: number;
+  seek_permission_count: number;
+  blocked_count: number;
+  rejected_count: number;
+  strongest_candidates: string[];
+  strongest_topics: string[];
+  common_risks: string[];
+  rights_summary: string[];
+  human_review_notes: string[];
+}
+
+export interface BobaCandidateVideoSignalUsageV1 {
+  content_scout_used: boolean;
+  research_brain_used: boolean;
+  trend_topic_watcher_used: boolean;
+  creator_learning_used: boolean;
+  approval_rejection_learning_used: boolean;
+  performance_feedback_used: boolean;
+  memory_used: boolean;
+  local_import_used: boolean;
+  manual_input_used: boolean;
+  external_api_used: false;
+  url_fetching_used: false;
+  scraping_used: false;
+  downloading_used: false;
+  media_ingestion_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaCandidateVideoScorerSetV1 {
+  schema_version: "boba_candidate_video_scorer_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  imported_sources: BobaCandidateVideoImportSourceV1[];
+  candidate_videos: BobaCandidateVideoV1[];
+  scored_candidates: BobaScoredCandidateVideoV1[];
+  review_queue: BobaCandidateVideoReviewQueueV1;
+  scorer_summary: BobaCandidateVideoSummaryV1;
+  source_handoffs: BobaCandidateVideoSourceHandoffV1;
+  signal_usage: BobaCandidateVideoSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaCandidateVideoScorerGenerateInputV1 {
+  manual_candidates?: Record<string, unknown>[];
+  import_paths?: string[];
+  source_label?: string;
+  dry_run?: boolean;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;
