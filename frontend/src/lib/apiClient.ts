@@ -74,6 +74,8 @@ import type {
   BobaCandidateClipDiscoveryV1,
   BobaCandidateVideoScorerGenerateInputV1,
   BobaCandidateVideoScorerSetV1,
+  BobaRightsPermissionGateGenerateInputV1,
+  BobaRightsPermissionGateSetV1,
   BobaCandidateV1,
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
@@ -303,6 +305,39 @@ export const api = {
       memory_removed: false;
       media_ingested: false;
     }>(`/boba/projects/${projectId}/candidate-video-scorer`, {
+      method: "DELETE",
+    }),
+  getBobaRightsPermissionGate: (projectId: string) =>
+    request<BobaRightsPermissionGateSetV1>(
+      `/boba/projects/${projectId}/rights-permission-gate`,
+    ),
+  generateBobaRightsPermissionGate: (
+    projectId: string,
+    input: BobaRightsPermissionGateGenerateInputV1 = {},
+  ) =>
+    request<BobaRightsPermissionGateSetV1>(
+      `/boba/projects/${projectId}/rights-permission-gate`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  exportBobaRightsPermissionGate: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/rights-permission-gate/export`,
+    ),
+  resetBobaRightsPermissionGate: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      rights_permission_gate_removed: boolean;
+      candidate_video_scorer_removed: false;
+      trend_topic_watcher_removed: false;
+      research_brain_removed: false;
+      content_scout_removed: false;
+      clip_briefs_removed: false;
+      music_mood_removed: false;
+      memory_removed: false;
+      media_ingested: false;
+      legal_validation_used: false;
+    }>(`/boba/projects/${projectId}/rights-permission-gate`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>
