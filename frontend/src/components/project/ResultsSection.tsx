@@ -12,6 +12,7 @@ import {
   useBobaCaptionMotion,
   useBobaCandidateClipDiscovery,
   useBobaCandidateVideoScorer,
+  useBobaRightsPermissionGate,
   useBobaCandidates,
   useBobaClipBriefs,
   useBobaClipRanking,
@@ -42,6 +43,7 @@ import {
   useExportCreatorProfile,
   useExportBobaApprovalRejectionLearning,
   useExportBobaCandidateVideoScorer,
+  useExportBobaRightsPermissionGate,
   useExportBobaContentScoutV2,
   useExportBobaCreatorLearning,
   useExportBobaExperimentation,
@@ -54,6 +56,7 @@ import {
   useGenerateBobaCreativeBriefs,
   useGenerateBobaApprovalRejectionLearning,
   useGenerateBobaCandidateVideoScorer,
+  useGenerateBobaRightsPermissionGate,
   useGenerateBobaContentScoutV2,
   useGenerateBobaCreatorLearning,
   useGenerateBobaExperimentation,
@@ -66,6 +69,7 @@ import {
   useResetCreatorProfile,
   useResetBobaApprovalRejectionLearning,
   useResetBobaCandidateVideoScorer,
+  useResetBobaRightsPermissionGate,
   useResetBobaContentScoutV2,
   useResetBobaExperimentation,
   useResetBobaPerformanceFeedback,
@@ -5909,6 +5913,530 @@ function BobaCandidateVideoScorerPanel({
   );
 }
 
+function BobaRightsPermissionGatePanel({
+  projectId,
+}: {
+  projectId: string;
+}) {
+  const gateQuery = useBobaRightsPermissionGate(projectId);
+  const generateGate = useGenerateBobaRightsPermissionGate(projectId);
+  const exportGate = useExportBobaRightsPermissionGate(projectId);
+  const resetGate = useResetBobaRightsPermissionGate(projectId);
+  const [manualJson, setManualJson] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("manual");
+  const [status, setStatus] = useState("");
+  const gate = gateQuery.data;
+  const busy =
+    generateGate.isPending || exportGate.isPending || resetGate.isPending;
+  const decisionByItem = new Map(
+    (gate?.gate_decisions ?? []).map((decision) => [
+      decision.review_item_id,
+      decision,
+    ]),
+  );
+  const checklistByItem = new Map(
+    (gate?.permission_checklists ?? []).map((checklist) => [
+      checklist.review_item_id,
+      checklist,
+    ]),
+  );
+  const riskByItem = new Map(
+    (gate?.risk_reviews ?? []).map((risk) => [risk.review_item_id, risk]),
+  );
+  const handoffByItem = new Map(
+    (gate?.future_ingestion_handoffs ?? []).map((handoff) => [
+      handoff.review_item_id,
+      handoff,
+    ]),
+  );
+  const reviewGroups = gate
+    ? [
+        {
+          label: "Ready for human review",
+          items: gate.reviewed_items.filter(
+            (item) =>
+              decisionByItem.get(item.review_item_id)?.gate_status ===
+              "ready_for_human_review",
+          ),
+        },
+        {
+          label: "Permission needed",
+          items: gate.reviewed_items.filter(
+            (item) =>
+              decisionByItem.get(item.review_item_id)?.gate_status ===
+              "needs_permission",
+          ),
+        },
+        {
+          label: "Unknown rights / review needed",
+          items: gate.reviewed_items.filter((item) =>
+            ["needs_rights_review", "insufficient_information"].includes(
+              decisionByItem.get(item.review_item_id)?.gate_status ?? "",
+            ),
+          ),
+        },
+        {
+          label: "Blocked items",
+          items: gate.reviewed_items.filter(
+            (item) =>
+              decisionByItem.get(item.review_item_id)?.gate_status ===
+              "blocked",
+          ),
+        },
+      ]
+    : [];
+
+  function generate() {
+    let manualItems: Record<string, unknown>[] = [];
+    if (manualJson.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(manualJson);
+        if (
+          !Array.isArray(parsed) ||
+          parsed.some(
+            (item) =>
+              !item || typeof item !== "object" || Array.isArray(item),
+          )
+        ) {
+          setStatus("Manual rights items must be a JSON array of objects.");
+          return;
+        }
+        manualItems = parsed as Record<string, unknown>[];
+      } catch {
+        setStatus("Manual rights metadata is not valid JSON.");
+        return;
+      }
+    }
+    setStatus("");
+    generateGate.mutate(
+      {
+        manual_items: manualItems,
+        source_label: sourceLabel.trim() || "manual",
+      },
+      {
+        onSuccess: (result) => {
+          setStatus(
+            `Rights Gate saved ${result.rights_summary.total_reviewed} item(s) for human review.`,
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportGate.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(
+          `boba-rights-permission-gate-v1-${projectId}.json`,
+          payload,
+        );
+        setStatus("Safe compact Rights Gate export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's Rights + Permission Gate V1 artifact only? Candidate Scorer, Scout, Research, Trend, Clip Briefs, Music Mood, memory, and media remain untouched.",
+      )
+    ) {
+      return;
+    }
+    resetGate.mutate(undefined, {
+      onSuccess: () => {
+        setStatus(
+          "Rights + Permission Gate V1 reset; other BOBA artifacts and media remain untouched.",
+        );
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-amber-300/20 bg-amber-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            BOBA Rights + Permission Gate V1
+          </p>
+          <p className="text-xs text-muted">
+            Rights + Permission Gate V1 is not legal advice.
+          </p>
+          <p className="text-xs text-muted">
+            BOBA does not verify copyright ownership, validate licenses, fetch
+            URLs, scrape platforms, or download media.
+          </p>
+          <p className="text-xs text-muted">
+            Unknown rights are never treated as safe.
+          </p>
+          <p className="text-xs text-muted">
+            Future ingestion requires human approval and acceptable rights
+            status.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !gate}
+            onClick={exportArtifact}
+            className="rounded border border-amber-200/30 px-2.5 py-1.5 text-[11px] text-amber-100 disabled:opacity-50"
+          >
+            Export safe Rights Gate
+          </button>
+          <button
+            type="button"
+            disabled={busy || !gate}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Rights Gate V1
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[10rem_1fr_auto]">
+        <label className="text-xs text-muted">
+          Source label
+          <input
+            value={sourceLabel}
+            onChange={(event) => setSourceLabel(event.target.value)}
+            maxLength={160}
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Manual rights metadata JSON array
+          <textarea
+            value={manualJson}
+            onChange={(event) => setManualJson(event.target.value)}
+            rows={6}
+            placeholder='[{"title":"Creator-owned interview","rights_status":"owned","ownership_notes":"Recorded and owned by creator; project note ref OWN-001","platform_source_notes":"Review any guest release before processing"}]'
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={generate}
+          className="self-end rounded border border-amber-200/30 px-3 py-2 text-xs text-amber-100 disabled:opacity-50"
+        >
+          {generateGate.isPending
+            ? "Building rights review..."
+            : "Build rights review gate"}
+        </button>
+      </div>
+
+      {status && <p className="mt-2 text-xs text-amber-100">{status}</p>}
+      {gateQuery.isError && (
+        <p className="mt-2 text-xs text-amber-100">
+          Rights + Permission Gate V1 could not be loaded.
+        </p>
+      )}
+
+      {!gate ? (
+        <p className="mt-4 text-xs text-muted">
+          No saved Rights + Permission Gate V1 artifact is available. Add local
+          rights metadata, or build from available Candidate Scorer, Scout,
+          Research, Trend, Clip Brief, and Music Mood artifacts.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-2 text-xs text-muted sm:grid-cols-2 lg:grid-cols-6">
+            <p className="rounded border border-white/10 p-2">
+              Reviewed: {gate.rights_summary.total_reviewed}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Ready: {gate.rights_summary.ready_for_human_review_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Permission: {gate.rights_summary.needs_permission_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Rights review: {gate.rights_summary.needs_rights_review_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Blocked: {gate.rights_summary.blocked_count}
+            </p>
+            <p className="rounded border border-white/10 p-2">
+              Insufficient:{" "}
+              {gate.rights_summary.insufficient_information_count}
+            </p>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-100">
+              Rights review groups
+            </p>
+            <div className="mt-2 grid gap-3 lg:grid-cols-4">
+              {reviewGroups.map((group) => (
+                <div
+                  key={group.label}
+                  className="rounded border border-white/10 p-3"
+                >
+                  <p className="text-xs font-semibold text-white">
+                    {group.label} ({group.items.length})
+                  </p>
+                  {group.items.length === 0 ? (
+                    <p className="mt-2 text-xs text-muted">No items.</p>
+                  ) : (
+                    group.items.slice(0, 10).map((item) => (
+                      <p
+                        key={`${group.label}-${item.review_item_id}`}
+                        className="mt-2 border-t border-white/10 pt-2 text-xs text-muted"
+                      >
+                        {item.title || item.source_label || item.review_item_id} /{" "}
+                        {readableName(item.declared_rights_status)}
+                      </p>
+                    ))
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-100">
+              Reviewed items, decisions, and advisory handoffs
+            </p>
+            <div className="mt-2 grid gap-3 lg:grid-cols-2">
+              {gate.reviewed_items.slice(0, 30).map((item) => {
+                const decision = decisionByItem.get(item.review_item_id);
+                const checklist = checklistByItem.get(item.review_item_id);
+                const risk = riskByItem.get(item.review_item_id);
+                const handoff = handoffByItem.get(item.review_item_id);
+                const activeRisks = risk
+                  ? [
+                      {
+                        label: "Unknown rights",
+                        active: risk.unknown_rights_risk,
+                      },
+                      {
+                        label: "Third-party media",
+                        active: risk.third_party_media_risk,
+                      },
+                      {
+                        label: "Music/audio",
+                        active: risk.music_audio_rights_risk,
+                      },
+                      {
+                        label: "Platform terms",
+                        active: risk.platform_terms_risk,
+                      },
+                      {
+                        label: "People/privacy",
+                        active: risk.privacy_release_risk,
+                      },
+                      {
+                        label: "Source ambiguity",
+                        active: risk.source_ambiguity_risk,
+                      },
+                      {
+                        label: "Copyrighted source",
+                        active: risk.copyrighted_source_material_risk,
+                      },
+                      {
+                        label: "Permission evidence missing",
+                        active: risk.permission_evidence_missing_risk,
+                      },
+                    ]
+                      .filter((entry) => entry.active)
+                      .map((entry) => entry.label)
+                  : [];
+                return (
+                  <article
+                    key={item.review_item_id}
+                    className="rounded border border-white/10 p-3 text-xs text-muted"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-white">
+                          {item.title || "Untitled rights review item"}
+                        </p>
+                        <p className="mt-1">
+                          {item.source_label || "Unknown source"} /{" "}
+                          {readableName(item.declared_rights_status)}
+                        </p>
+                      </div>
+                      <span className="rounded bg-amber-400/10 px-2 py-1 text-amber-100">
+                        {decision
+                          ? readableName(decision.gate_status)
+                          : "Decision unavailable"}
+                      </span>
+                    </div>
+
+                    {decision && (
+                      <div className="mt-3 rounded bg-white/[0.03] p-2">
+                        <p className="font-semibold text-white">Gate decision</p>
+                        <p className="mt-1">{decision.decision_reason}</p>
+                        <p className="mt-1">
+                          Human review:{" "}
+                          {decision.allow_human_review ? "Allowed" : "Blocked"} /
+                          Future ingestion precheck:{" "}
+                          {decision.allow_future_ingestion_precheck
+                            ? "Eligible"
+                            : "Blocked"}{" "}
+                          / Confidence: {formatPercent(decision.confidence)}
+                        </p>
+                        {decision.required_human_checks
+                          .slice(0, 4)
+                          .map((check) => (
+                            <p key={check} className="mt-1">
+                              Human check: {check}
+                            </p>
+                          ))}
+                      </div>
+                    )}
+
+                    {checklist && (
+                      <div className="mt-3 rounded bg-white/[0.03] p-2">
+                        <p className="font-semibold text-white">
+                          Permission checklist
+                        </p>
+                        {checklist.checklist_items.map((check) => (
+                          <p key={check.item_id} className="mt-1">
+                            {check.label}: {readableName(check.status)}
+                            {check.required ? " / Required" : ""}
+                          </p>
+                        ))}
+                        <p className="mt-1 text-amber-100">
+                          Final human approval:{" "}
+                          {checklist.final_human_approval_required
+                            ? "Required"
+                            : "Not required"}
+                        </p>
+                      </div>
+                    )}
+
+                    {risk && (
+                      <div className="mt-3 rounded bg-white/[0.03] p-2">
+                        <p className="font-semibold text-white">
+                          Risk review:{" "}
+                          {readableName(risk.overall_rights_risk)}
+                        </p>
+                        <p className="mt-1">
+                          Active risks:{" "}
+                          {activeRisks.join(", ") || "No flagged risk signals"}
+                        </p>
+                        {risk.blockers.slice(0, 3).map((blocker) => (
+                          <p key={blocker} className="mt-1 text-rose-100">
+                            Blocker: {blocker}
+                          </p>
+                        ))}
+                        {risk.fixes.slice(0, 3).map((fix) => (
+                          <p key={fix} className="mt-1">
+                            Human action: {fix}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+
+                    {handoff && (
+                      <div className="mt-3 rounded bg-white/[0.03] p-2">
+                        <p className="font-semibold text-white">
+                          Future ingestion handoff
+                        </p>
+                        <p className="mt-1">
+                          {readableName(handoff.ingestion_precheck_status)} /
+                          Next: {readableName(handoff.allowed_next_step)}
+                        </p>
+                        <p className="mt-1">
+                          Apply automatically:{" "}
+                          {handoff.apply_automatically ? "Enabled" : "No"}
+                        </p>
+                        {handoff.blocked_reason && (
+                          <p className="mt-1 text-rose-100">
+                            {handoff.blocked_reason}
+                          </p>
+                        )}
+                        {handoff.required_before_ingestion
+                          .slice(0, 4)
+                          .map((requirement) => (
+                            <p key={requirement} className="mt-1">
+                              Required: {requirement}
+                            </p>
+                          ))}
+                      </div>
+                    )}
+
+                    {item.evidence_snippets.length > 0 && (
+                      <div className="mt-3">
+                        <p className="font-semibold text-white">
+                          Compact evidence notes
+                        </p>
+                        {item.evidence_snippets.slice(0, 4).map((evidence) => (
+                          <p key={evidence.evidence_id} className="mt-1">
+                            {evidence.source_artifact}.{evidence.source_field}:{" "}
+                            {evidence.snippet}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    {item.missing_evidence.length > 0 && (
+                      <p className="mt-2 text-amber-100">
+                        Missing evidence: {item.missing_evidence.join(", ")}
+                      </p>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">
+                Rights status breakdown
+              </p>
+              {Object.entries(gate.rights_summary.rights_status_breakdown).map(
+                ([rightsStatus, count]) => (
+                  <p key={rightsStatus} className="mt-1">
+                    {readableName(rightsStatus)}: {count}
+                  </p>
+                ),
+              )}
+              <p className="mt-2">
+                Common risks:{" "}
+                {gate.rights_summary.common_risks.join(", ") ||
+                  "No common risk summary"}
+              </p>
+            </div>
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">
+                Local signal and safety boundary
+              </p>
+              <p className="mt-1">
+                Candidate Scorer:{" "}
+                {gate.signal_usage.candidate_video_scorer_used ? "Used" : "No"} /
+                Content Scout:{" "}
+                {gate.signal_usage.content_scout_used ? "Used" : "No"} /
+                Research:{" "}
+                {gate.signal_usage.research_brain_used ? "Used" : "No"} / Trend:{" "}
+                {gate.signal_usage.trend_topic_watcher_used ? "Used" : "No"}
+              </p>
+              <p className="mt-1">
+                External API, URL fetching, scraping, downloading, media
+                ingestion, and legal validation: Not used
+              </p>
+            </div>
+          </div>
+
+          {(gate.warnings.length > 0 || gate.limitations.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Rights Gate notes:{" "}
+              {[...gate.warnings, ...gate.limitations]
+                .slice(0, 10)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -6739,6 +7267,9 @@ export function ResultsSection({
   const candidateVideoScorerPanel = (
     <BobaCandidateVideoScorerPanel projectId={projectId} />
   );
+  const rightsPermissionGatePanel = (
+    <BobaRightsPermissionGatePanel projectId={projectId} />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -6763,6 +7294,7 @@ export function ResultsSection({
         {researchBrainPanel}
         {trendTopicWatcherPanel}
         {candidateVideoScorerPanel}
+        {rightsPermissionGatePanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -6799,6 +7331,7 @@ export function ResultsSection({
         {researchBrainPanel}
         {trendTopicWatcherPanel}
         {candidateVideoScorerPanel}
+        {rightsPermissionGatePanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -6831,6 +7364,7 @@ export function ResultsSection({
         {researchBrainPanel}
         {trendTopicWatcherPanel}
         {candidateVideoScorerPanel}
+        {rightsPermissionGatePanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -6863,6 +7397,7 @@ export function ResultsSection({
       {researchBrainPanel}
       {trendTopicWatcherPanel}
       {candidateVideoScorerPanel}
+      {rightsPermissionGatePanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

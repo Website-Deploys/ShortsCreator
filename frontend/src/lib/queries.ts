@@ -53,6 +53,8 @@ import type {
   BobaCandidateClipDiscoveryV1,
   BobaCandidateVideoScorerGenerateInputV1,
   BobaCandidateVideoScorerSetV1,
+  BobaRightsPermissionGateGenerateInputV1,
+  BobaRightsPermissionGateSetV1,
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
   BobaClipRankingV1,
@@ -106,6 +108,8 @@ export const queryKeys = {
     ["boba", "projects", id, "trend-topic-watcher"] as const,
   bobaCandidateVideoScorer: (id: string) =>
     ["boba", "projects", id, "candidate-video-scorer"] as const,
+  bobaRightsPermissionGate: (id: string) =>
+    ["boba", "projects", id, "rights-permission-gate"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -468,6 +472,56 @@ export function useResetBobaCandidateVideoScorer(projectId: string) {
     onSuccess: () => {
       queryClient.setQueryData(
         queryKeys.bobaCandidateVideoScorer(projectId),
+        null,
+      );
+    },
+  });
+}
+
+export function useBobaRightsPermissionGate(projectId: string) {
+  return useQuery<BobaRightsPermissionGateSetV1 | null>({
+    queryKey: queryKeys.bobaRightsPermissionGate(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaRightsPermissionGate(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useGenerateBobaRightsPermissionGate(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaRightsPermissionGateGenerateInputV1 = {}) =>
+      api.generateBobaRightsPermissionGate(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(
+          queryKeys.bobaRightsPermissionGate(projectId),
+          result,
+        );
+      }
+    },
+  });
+}
+
+export function useExportBobaRightsPermissionGate(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaRightsPermissionGate(projectId),
+  });
+}
+
+export function useResetBobaRightsPermissionGate(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaRightsPermissionGate(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(
+        queryKeys.bobaRightsPermissionGate(projectId),
         null,
       );
     },

@@ -67,6 +67,9 @@ from olympus.boba.performance_feedback import (
     BobaPerformanceFeedbackSetV1,
 )
 from olympus.boba.research_brain import BobaResearchBrainSetV1
+from olympus.boba.rights_permission_gate import (
+    BobaRightsPermissionGateSetV1,
+)
 from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
 from olympus.boba.trend_topic_watcher import BobaTrendTopicWatcherSetV1
 from olympus.boba.whole_video import BobaWholeVideoUnderstandingV1
@@ -1249,6 +1252,106 @@ class BobaMemoryStore:
 
     def reset_candidate_video_scorer(self, project_id: str) -> bool:
         path = self.candidate_video_scorer_path(project_id)
+        removed = False
+        with self._lock:
+            if path.exists():
+                path.unlink()
+                removed = True
+            directory = path.parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
+
+    def rights_permission_gate_path(self, project_id: str) -> Path:
+        return self._path(project_id, "rights_permission_gate/index.json")
+
+    def save_rights_permission_gate(
+        self,
+        gate: BobaRightsPermissionGateSetV1,
+    ) -> BobaRightsPermissionGateSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                gate.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+            )
+            self._atomic_write(
+                self.rights_permission_gate_path(gate.project_id),
+                safe,
+            )
+        return gate
+
+    def load_rights_permission_gate(
+        self,
+        project_id: str,
+    ) -> BobaRightsPermissionGateSetV1 | None:
+        raw = self._read(self.rights_permission_gate_path(project_id), None)
+        return (
+            BobaRightsPermissionGateSetV1.model_validate(raw)
+            if isinstance(raw, dict)
+            else None
+        )
+
+    def export_rights_permission_gate(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        gate = self.load_rights_permission_gate(project_id)
+        if gate is None:
+            raise ValidationError(
+                "BOBA Rights + Permission Gate V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = gate.model_dump(mode="json")
+        for item in payload.get("reviewed_items", []):
+            if not isinstance(item, dict):
+                continue
+            for field_name in (
+                "source_reference",
+                "source_url",
+                "permission_notes",
+                "license_notes",
+                "ownership_notes",
+                "platform_source_notes",
+                "source_artifact_refs",
+                "evidence_snippets",
+            ):
+                item.pop(field_name, None)
+        export = {
+            "schema_version": "boba_rights_permission_gate_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "rights_permission_gate": payload,
+            "privacy": {
+                "private_paths_excluded": True,
+                "source_urls_excluded": True,
+                "private_notes_excluded": True,
+                "evidence_snippets_excluded": True,
+                "raw_source_content_excluded": True,
+                "full_transcripts_excluded": True,
+                "full_legal_documents_excluded": True,
+                "media_files_excluded": True,
+                "credentials_excluded": True,
+                "external_api_used": False,
+                "url_fetching_used": False,
+                "scraping_used": False,
+                "downloading_used": False,
+                "media_ingestion_used": False,
+                "legal_validation_used": False,
+                "copyright_safety_confirmed": False,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError(
+                "BOBA Rights + Permission Gate V1 export is invalid."
+            )
+        return safe
+
+    def reset_rights_permission_gate(self, project_id: str) -> bool:
+        path = self.rights_permission_gate_path(project_id)
         removed = False
         with self._lock:
             if path.exists():

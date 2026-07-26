@@ -1871,6 +1871,220 @@ export interface BobaCandidateVideoScorerGenerateInputV1 {
   dry_run?: boolean;
 }
 
+export type BobaDeclaredRightsStatusV1 =
+  | "owned"
+  | "licensed"
+  | "permission_granted"
+  | "permission_needed"
+  | "unknown"
+  | "blocked"
+  | "public_domain_claimed"
+  | "fair_use_claimed";
+
+export type BobaRightsGateStatusV1 =
+  | "ready_for_human_review"
+  | "needs_permission"
+  | "needs_rights_review"
+  | "blocked"
+  | "insufficient_information";
+
+export type BobaPermissionChecklistCategoryV1 =
+  | "ownership"
+  | "license"
+  | "permission"
+  | "platform_terms"
+  | "third_party_content"
+  | "music_audio"
+  | "people_privacy"
+  | "source_quality"
+  | "final_approval";
+
+export type BobaPermissionChecklistStatusV1 =
+  | "passed"
+  | "warning"
+  | "blocked"
+  | "unknown"
+  | "not_applicable";
+
+export type BobaOverallRightsRiskV1 =
+  | "low"
+  | "medium"
+  | "high"
+  | "blocked"
+  | "unknown";
+
+export type BobaIngestionPrecheckStatusV1 =
+  | "eligible_for_manual_ingestion_review"
+  | "permission_required_before_review"
+  | "rights_review_required_before_review"
+  | "blocked"
+  | "insufficient_information";
+
+export type BobaAllowedNextStepV1 =
+  | "human_review_only"
+  | "seek_permission"
+  | "add_rights_evidence"
+  | "do_not_process"
+  | "blocked";
+
+export interface BobaRightsEvidenceSnippetV1 {
+  evidence_id: string;
+  source_artifact: string;
+  source_field: string;
+  snippet: string;
+  confidence: number;
+  usage_warning: string;
+}
+
+export interface BobaRightsReviewedItemV1 {
+  review_item_id: string;
+  project_id: string;
+  candidate_video_id: string;
+  source_item_id: string;
+  title: string;
+  source_label: string;
+  source_reference: string;
+  source_url: string | null;
+  declared_rights_status: BobaDeclaredRightsStatusV1;
+  permission_notes: string;
+  license_notes: string;
+  ownership_notes: string;
+  platform_source_notes: string;
+  source_artifact_refs: string[];
+  evidence_snippets: BobaRightsEvidenceSnippetV1[];
+  missing_evidence: string[];
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRightsGateDecisionV1 {
+  decision_id: string;
+  review_item_id: string;
+  candidate_video_id: string;
+  gate_status: BobaRightsGateStatusV1;
+  allow_human_review: boolean;
+  allow_future_ingestion_precheck: boolean;
+  requires_permission: boolean;
+  requires_rights_review: boolean;
+  blocked: boolean;
+  decision_reason: string;
+  required_human_checks: string[];
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaPermissionChecklistItemV1 {
+  item_id: string;
+  label: string;
+  category: BobaPermissionChecklistCategoryV1;
+  status: BobaPermissionChecklistStatusV1;
+  required: boolean;
+  reason: string;
+  human_action: string;
+}
+
+export interface BobaPermissionChecklistV1 {
+  checklist_id: string;
+  review_item_id: string;
+  ownership_confirmed: boolean;
+  license_confirmed: boolean;
+  permission_granted: boolean;
+  permission_evidence_reference_present: boolean;
+  platform_terms_review_needed: boolean;
+  third_party_content_review_needed: boolean;
+  music_audio_rights_review_needed: boolean;
+  people_privacy_release_review_needed: boolean;
+  source_quality_review_needed: boolean;
+  final_human_approval_required: boolean;
+  checklist_items: BobaPermissionChecklistItemV1[];
+  warnings: string[];
+}
+
+export interface BobaRightsRiskReviewV1 {
+  risk_review_id: string;
+  review_item_id: string;
+  unknown_rights_risk: boolean;
+  third_party_media_risk: boolean;
+  music_audio_rights_risk: boolean;
+  platform_terms_risk: boolean;
+  privacy_release_risk: boolean;
+  source_ambiguity_risk: boolean;
+  copyrighted_source_material_risk: boolean;
+  permission_evidence_missing_risk: boolean;
+  overall_rights_risk: BobaOverallRightsRiskV1;
+  blockers: string[];
+  warnings: string[];
+  fixes: string[];
+}
+
+export interface BobaFutureIngestionHandoffV1 {
+  handoff_id: string;
+  review_item_id: string;
+  candidate_video_id: string;
+  ingestion_precheck_status: BobaIngestionPrecheckStatusV1;
+  allowed_next_step: BobaAllowedNextStepV1;
+  required_before_ingestion: string[];
+  blocked_reason: string;
+  apply_automatically: false;
+  warnings: string[];
+}
+
+export interface BobaRightsSummaryV1 {
+  total_reviewed: number;
+  ready_for_human_review_count: number;
+  needs_permission_count: number;
+  needs_rights_review_count: number;
+  blocked_count: number;
+  insufficient_information_count: number;
+  common_risks: string[];
+  rights_status_breakdown: Record<string, number>;
+  human_review_notes: string[];
+  limitations: string[];
+}
+
+export interface BobaRightsPermissionSignalUsageV1 {
+  candidate_video_scorer_used: boolean;
+  content_scout_used: boolean;
+  research_brain_used: boolean;
+  trend_topic_watcher_used: boolean;
+  clip_briefs_used: boolean;
+  music_mood_used: boolean;
+  memory_used: boolean;
+  manual_input_used: boolean;
+  external_api_used: false;
+  url_fetching_used: false;
+  scraping_used: false;
+  downloading_used: false;
+  media_ingestion_used: false;
+  legal_validation_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaRightsPermissionGateSetV1 {
+  schema_version: "boba_rights_permission_gate_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  reviewed_items: BobaRightsReviewedItemV1[];
+  gate_decisions: BobaRightsGateDecisionV1[];
+  permission_checklists: BobaPermissionChecklistV1[];
+  risk_reviews: BobaRightsRiskReviewV1[];
+  future_ingestion_handoffs: BobaFutureIngestionHandoffV1[];
+  rights_summary: BobaRightsSummaryV1;
+  signal_usage: BobaRightsPermissionSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRightsPermissionGateGenerateInputV1 {
+  manual_items?: Record<string, unknown>[];
+  source_label?: string;
+  dry_run?: boolean;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;

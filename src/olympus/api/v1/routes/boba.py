@@ -216,6 +216,17 @@ class CandidateVideoScorerGenerateRequest(BaseModel):
     dry_run: bool = False
 
 
+class RightsPermissionGateGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    manual_items: list[dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=500,
+    )
+    source_label: str = Field(default="manual", min_length=1, max_length=160)
+    dry_run: bool = False
+
+
 class ScoutScoreRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1156,6 +1167,82 @@ async def reset_candidate_video_scorer(
         "performance_feedback_removed": False,
         "memory_removed": False,
         "media_ingested": False,
+    }
+
+
+@router.post("/projects/{project_id}/rights-permission-gate")
+async def create_rights_permission_gate(
+    project_id: str,
+    body: RightsPermissionGateGenerateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    gate = await boba.generate_rights_permission_gate(
+        project_id,
+        manual_items=body.manual_items,
+        source_label=body.source_label,
+        dry_run=body.dry_run,
+    )
+    return gate.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/rights-permission-gate")
+async def get_rights_permission_gate(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    gate = boba.load_rights_permission_gate(project_id)
+    if gate is None:
+        raise NotFoundError(
+            "BOBA Rights + Permission Gate V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return gate.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/rights-permission-gate/export")
+async def export_rights_permission_gate(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_rights_permission_gate(project_id) is None:
+        raise NotFoundError(
+            "BOBA Rights + Permission Gate V1 is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_rights_permission_gate(project_id)
+
+
+@router.delete("/projects/{project_id}/rights-permission-gate")
+async def reset_rights_permission_gate(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_rights_permission_gate(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "rights_permission_gate_removed": removed,
+        "candidate_video_scorer_removed": False,
+        "trend_topic_watcher_removed": False,
+        "research_brain_removed": False,
+        "content_scout_removed": False,
+        "clip_briefs_removed": False,
+        "music_mood_removed": False,
+        "memory_removed": False,
+        "media_ingested": False,
+        "legal_validation_used": False,
     }
 
 

@@ -103,6 +103,10 @@ from olympus.boba.research_brain import (
     BobaResearchBrainSetV1,
     BobaResearchBrainV1,
 )
+from olympus.boba.rights_permission_gate import (
+    BobaRightsPermissionGateSetV1,
+    BobaRightsPermissionGateV1,
+)
 from olympus.boba.scout import BobaScout
 from olympus.boba.store import BobaMemoryStore
 from olympus.boba.trend_topic_watcher import (
@@ -157,6 +161,7 @@ class BobaIntegration:
         self.research_brain = BobaResearchBrainV1()
         self.trend_topic_watcher = BobaTrendTopicWatcherV1()
         self.candidate_video_scorer = BobaCandidateVideoScorerV1()
+        self.rights_permission_gate = BobaRightsPermissionGateV1()
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1585,6 +1590,59 @@ class BobaIntegration:
 
     def reset_candidate_video_scorer(self, project_id: str) -> bool:
         return self.store.reset_candidate_video_scorer(project_id)
+
+    async def generate_rights_permission_gate(
+        self,
+        project_id: str,
+        *,
+        manual_items: list[dict[str, Any]] | None = None,
+        source_label: str = "manual",
+        dry_run: bool = False,
+    ) -> BobaRightsPermissionGateSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError(
+                "Project was not found.",
+                details={"id": project_id},
+            )
+        gate = self.rights_permission_gate.analyze(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+            manual_items=manual_items or [],
+            source_label=source_label,
+            candidate_video_scorer=(
+                self.store.load_candidate_video_scorer(project_id)
+            ),
+            content_scout=self.store.load_content_scout_v2(project_id),
+            research_brain=self.store.load_research_brain(project_id),
+            trend_topic_watcher=self.store.load_trend_topic_watcher(project_id),
+            clip_briefs=self.store.load_clip_briefs(project_id),
+            music_mood=self.store.load_music_mood(project_id),
+            boba_memory=(
+                self.store.load_project_memory(project_id)
+                if self.memory_enabled
+                else None
+            ),
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return gate
+        return self.store.save_rights_permission_gate(gate)
+
+    def load_rights_permission_gate(
+        self,
+        project_id: str,
+    ) -> BobaRightsPermissionGateSetV1 | None:
+        return self.store.load_rights_permission_gate(project_id)
+
+    def export_rights_permission_gate(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        return self.store.export_rights_permission_gate(project_id)
+
+    def reset_rights_permission_gate(self, project_id: str) -> bool:
+        return self.store.reset_rights_permission_gate(project_id)
 
     async def generate_performance_feedback(
         self,

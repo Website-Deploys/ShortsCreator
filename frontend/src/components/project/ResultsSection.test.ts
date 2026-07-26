@@ -353,4 +353,36 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("autoIngestCandidateVideo");
     expect(resultsSection).not.toContain("confirmCandidateCopyrightSafety");
   });
+
+  it("shows advisory BOBA Rights + Permission Gate V1 truth and controls", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Rights + Permission Gate V1");
+    expect(resultsSection).toContain(
+      "Rights + Permission Gate V1 is not legal advice.",
+    );
+    expect(resultsSection).toContain(
+      "BOBA does not verify copyright ownership, validate licenses, fetch",
+    );
+    expect(resultsSection).toContain(
+      "Unknown rights are never treated as safe.",
+    );
+    expect(resultsSection).toContain(
+      "Future ingestion requires human approval and acceptable rights",
+    );
+    expect(resultsSection).toContain("Build rights review gate");
+    expect(resultsSection).toContain("Permission checklist");
+    expect(resultsSection).toContain("Risk review:");
+    expect(resultsSection).toContain("Future ingestion handoff");
+    expect(resultsSection).toContain("Ready for human review");
+    expect(resultsSection).toContain("Permission needed");
+    expect(resultsSection).toContain("Unknown rights / review needed");
+    expect(resultsSection).toContain("Blocked items");
+    expect(resultsSection).toContain("Export safe Rights Gate");
+    expect(resultsSection).toContain("Reset Rights Gate V1");
+    expect(resultsSection).not.toContain("fetchRightsSourceUrl");
+    expect(resultsSection).not.toContain("downloadRightsMedia");
+    expect(resultsSection).not.toContain("autoIngestRightsMedia");
+    expect(resultsSection).not.toContain("validateLegalOwnership");
+  });
 });
