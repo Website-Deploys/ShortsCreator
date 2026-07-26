@@ -234,6 +234,17 @@ class ObserverGenerateRequest(BaseModel):
     dry_run: bool = False
 
 
+class ErrorDoctorGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    diagnostic_context: dict[str, Any] = Field(default_factory=dict, max_length=64)
+    error_summaries: list[str | dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+    dry_run: bool = False
+
+
 class ScoutScoreRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1324,6 +1335,84 @@ async def reset_observer_report(
         "media_downloaded": False,
         "media_ingested": False,
         "rendering_triggered": False,
+    }
+
+
+@router.post("/projects/{project_id}/error-doctor")
+async def create_error_doctor_report(
+    project_id: str,
+    body: ErrorDoctorGenerateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.generate_boba_error_doctor(
+        project_id,
+        diagnostic_context=body.diagnostic_context,
+        error_summaries=body.error_summaries,
+        dry_run=body.dry_run,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/error-doctor")
+async def get_error_doctor_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = boba.load_boba_error_doctor(project_id)
+    if report is None:
+        raise NotFoundError(
+            "BOBA Error Doctor V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/error-doctor/export")
+async def export_error_doctor_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_boba_error_doctor(project_id) is None:
+        raise NotFoundError(
+            "BOBA Error Doctor V1 is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_boba_error_doctor(project_id)
+
+
+@router.delete("/projects/{project_id}/error-doctor")
+async def reset_error_doctor_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_boba_error_doctor(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "error_doctor_removed": removed,
+        "observer_removed": False,
+        "other_boba_artifacts_removed": False,
+        "unrelated_files_deleted": False,
+        "validators_executed": False,
+        "commands_executed": False,
+        "code_modified": False,
+        "artifacts_modified": False,
+        "media_downloaded": False,
+        "media_ingested": False,
+        "rendering_triggered": False,
+        "repairs_applied": False,
     }
 
 

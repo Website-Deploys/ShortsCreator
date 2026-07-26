@@ -411,4 +411,31 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("autoRepairObserverFinding");
     expect(resultsSection).not.toContain("autoRenderObserverProject");
   });
+
+  it("shows advisory BOBA Error Doctor V1 diagnosis boundaries", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Error Doctor V1");
+    expect(resultsSection).toContain(
+      "BOBA Error Doctor V1 diagnoses Observer findings but does not fix files, edit code, run commands, run validators, or perform repairs.",
+    );
+    expect(resultsSection).toContain(
+      "A probable cause is not a proven root cause.",
+    );
+    expect(resultsSection).toContain(
+      "Human review is required before repair or destructive action.",
+    );
+    expect(resultsSection).toContain("CONFIRMED FACTS");
+    expect(resultsSection).toContain("PROBABLE EXPLANATIONS");
+    expect(resultsSection).toContain("POSSIBLE HYPOTHESES");
+    expect(resultsSection).toContain("MISSING INFORMATION");
+    expect(resultsSection).toContain("Diagnose saved Observer findings");
+    expect(resultsSection).toContain("Read-only investigation recommendations");
+    expect(resultsSection).toContain("Export safe diagnosis");
+    expect(resultsSection).toContain("Reset Error Doctor V1");
+    expect(resultsSection).toContain("Automatic application: No");
+    expect(resultsSection).not.toContain("autoFixErrorDoctorCase");
+    expect(resultsSection).not.toContain("autoRunErrorDoctorValidator");
+    expect(resultsSection).not.toContain("autoApplyErrorDoctorRepair");
+  });
 });

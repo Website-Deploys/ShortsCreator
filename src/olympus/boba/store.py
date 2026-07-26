@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 from pydantic import BaseModel
+from pydantic import ValidationError as PydanticValidationError
 
 from olympus.boba.approval_rejection_learning import (
     BobaApprovalRejectionLearningSetV1,
@@ -43,6 +44,7 @@ from olympus.boba.creator_learning import (
     BobaCreatorLearningSetV1,
 )
 from olympus.boba.editorial_decision import BobaEditorialDecisionSetV1
+from olympus.boba.error_doctor import BobaErrorDoctorSetV1
 from olympus.boba.experimentation import (
     BobaExperimentationSetV1,
     BobaExperimentManualResultV1,
@@ -1454,6 +1456,106 @@ class BobaMemoryStore:
 
     def reset_observer_report(self, project_id: str) -> bool:
         path = self.observer_path(project_id)
+        removed = False
+        with self._lock:
+            if path.exists():
+                path.unlink()
+                removed = True
+            directory = path.parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
+
+    def error_doctor_path(self, project_id: str) -> Path:
+        return self._path(project_id, "error_doctor/index.json")
+
+    def save_boba_error_doctor(
+        self,
+        report: BobaErrorDoctorSetV1,
+    ) -> BobaErrorDoctorSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                report.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+            )
+            self._atomic_write(self.error_doctor_path(report.project_id), safe)
+        return report
+
+    def load_boba_error_doctor(
+        self,
+        project_id: str,
+    ) -> BobaErrorDoctorSetV1 | None:
+        try:
+            raw = self._read(self.error_doctor_path(project_id), None)
+            return (
+                BobaErrorDoctorSetV1.model_validate(raw)
+                if isinstance(raw, dict)
+                else None
+            )
+        except (PydanticValidationError, ValidationError):
+            return None
+
+    def export_boba_error_doctor(self, project_id: str) -> dict[str, Any]:
+        report = self.load_boba_error_doctor(project_id)
+        if report is None:
+            raise ValidationError(
+                "BOBA Error Doctor V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = report.model_dump(mode="json")
+        for collection_name in ("diagnostic_cases", "classified_findings"):
+            collection = payload.get(collection_name, [])
+            if not isinstance(collection, list):
+                continue
+            for item in collection:
+                if not isinstance(item, dict):
+                    continue
+                evidence_items = item.get("evidence", [])
+                if not isinstance(evidence_items, list):
+                    continue
+                for evidence in evidence_items:
+                    if not isinstance(evidence, dict):
+                        continue
+                    evidence.pop("observed_value", None)
+                    evidence.pop("expected_value", None)
+                    evidence.pop("timestamp", None)
+        export = {
+            "schema_version": "boba_error_doctor_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "error_doctor": payload,
+            "privacy": {
+                "private_paths_excluded": True,
+                "full_evidence_values_excluded": True,
+                "raw_logs_excluded": True,
+                "observer_report_excluded": True,
+                "full_transcripts_excluded": True,
+                "media_files_excluded": True,
+                "credentials_excluded": True,
+                "external_api_used": False,
+                "url_fetching_used": False,
+                "scraping_used": False,
+                "downloading_used": False,
+                "command_execution_used": False,
+                "code_modification_used": False,
+                "artifact_modification_used": False,
+                "destructive_action_used": False,
+                "validator_execution_used": False,
+                "rendering_used": False,
+                "media_ingestion_used": False,
+                "repairs_applied": False,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Error Doctor V1 export is invalid.")
+        return safe
+
+    def reset_boba_error_doctor(self, project_id: str) -> bool:
+        path = self.error_doctor_path(project_id)
         removed = False
         with self._lock:
             if path.exists():
