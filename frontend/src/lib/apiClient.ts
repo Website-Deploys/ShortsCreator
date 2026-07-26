@@ -74,6 +74,8 @@ import type {
   BobaCandidateClipDiscoveryV1,
   BobaCandidateVideoScorerGenerateInputV1,
   BobaCandidateVideoScorerSetV1,
+  BobaObserverGenerateInputV1,
+  BobaObserverSetV1,
   BobaRightsPermissionGateGenerateInputV1,
   BobaRightsPermissionGateSetV1,
   BobaCandidateV1,
@@ -338,6 +340,36 @@ export const api = {
       media_ingested: false;
       legal_validation_used: false;
     }>(`/boba/projects/${projectId}/rights-permission-gate`, {
+      method: "DELETE",
+    }),
+  getBobaObserver: (projectId: string) =>
+    request<BobaObserverSetV1>(`/boba/projects/${projectId}/observer`),
+  generateBobaObserver: (
+    projectId: string,
+    input: BobaObserverGenerateInputV1 = {},
+  ) =>
+    request<BobaObserverSetV1>(`/boba/projects/${projectId}/observer`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  exportBobaObserver: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/observer/export`,
+    ),
+  resetBobaObserver: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      observer_removed: boolean;
+      other_boba_artifacts_removed: false;
+      unrelated_files_deleted: false;
+      validators_executed: false;
+      commands_executed: false;
+      code_modified: false;
+      media_downloaded: false;
+      media_ingested: false;
+      rendering_triggered: false;
+    }>(`/boba/projects/${projectId}/observer`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>

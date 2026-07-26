@@ -12,6 +12,7 @@ import {
   useBobaCaptionMotion,
   useBobaCandidateClipDiscovery,
   useBobaCandidateVideoScorer,
+  useBobaObserver,
   useBobaRightsPermissionGate,
   useBobaCandidates,
   useBobaClipBriefs,
@@ -43,6 +44,7 @@ import {
   useExportCreatorProfile,
   useExportBobaApprovalRejectionLearning,
   useExportBobaCandidateVideoScorer,
+  useExportBobaObserver,
   useExportBobaRightsPermissionGate,
   useExportBobaContentScoutV2,
   useExportBobaCreatorLearning,
@@ -56,6 +58,7 @@ import {
   useGenerateBobaCreativeBriefs,
   useGenerateBobaApprovalRejectionLearning,
   useGenerateBobaCandidateVideoScorer,
+  useGenerateBobaObserver,
   useGenerateBobaRightsPermissionGate,
   useGenerateBobaContentScoutV2,
   useGenerateBobaCreatorLearning,
@@ -69,6 +72,7 @@ import {
   useResetCreatorProfile,
   useResetBobaApprovalRejectionLearning,
   useResetBobaCandidateVideoScorer,
+  useResetBobaObserver,
   useResetBobaRightsPermissionGate,
   useResetBobaContentScoutV2,
   useResetBobaExperimentation,
@@ -6437,6 +6441,488 @@ function BobaRightsPermissionGatePanel({
   );
 }
 
+function BobaObserverPanel({ projectId }: { projectId: string }) {
+  const observerQuery = useBobaObserver(projectId);
+  const generateObserver = useGenerateBobaObserver(projectId);
+  const exportObserver = useExportBobaObserver(projectId);
+  const resetObserver = useResetBobaObserver(projectId);
+  const [workflowContextJson, setWorkflowContextJson] = useState("");
+  const [status, setStatus] = useState("");
+  const observer = observerQuery.data;
+  const busy =
+    generateObserver.isPending ||
+    exportObserver.isPending ||
+    resetObserver.isPending;
+
+  const artifactCounts = observer
+    ? {
+        readable: observer.artifact_observations.filter(
+          (artifact) => artifact.exists && artifact.readable,
+        ).length,
+        missing: observer.artifact_observations.filter(
+          (artifact) => !artifact.exists,
+        ).length,
+        stale: observer.artifact_observations.filter(
+          (artifact) => artifact.freshness_status === "stale",
+        ).length,
+        unreadable: observer.artifact_observations.filter(
+          (artifact) => artifact.exists && !artifact.readable,
+        ).length,
+      }
+    : null;
+  const dependencyIssues =
+    observer?.dependency_observations.filter(
+      (dependency) => dependency.status !== "satisfied",
+    ) ?? [];
+  const validationGaps =
+    observer?.validation_observations.filter(
+      (validation) =>
+        validation.latest_status !== "passed" ||
+        validation.freshness_status === "stale",
+    ) ?? [];
+  const safeRecommendations =
+    observer?.next_action_recommendations.filter(
+      (recommendation) => recommendation.safe,
+    ) ?? [];
+  const unsafeRecommendations =
+    observer?.next_action_recommendations.filter(
+      (recommendation) => !recommendation.safe,
+    ) ?? [];
+
+  function generate() {
+    let workflowContext: Record<string, unknown> = {};
+    if (workflowContextJson.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(workflowContextJson);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          setStatus("Workflow context must be a JSON object.");
+          return;
+        }
+        workflowContext = parsed as Record<string, unknown>;
+      } catch {
+        setStatus("Workflow context is not valid JSON.");
+        return;
+      }
+    }
+    setStatus("");
+    generateObserver.mutate(
+      { workflow_context: workflowContext },
+      {
+        onSuccess: (result) => {
+          setStatus(
+            `Observer saved ${result.observer_summary.total_modules_observed} module observation(s).`,
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportObserver.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(`boba-observer-v1-${projectId}.json`, payload);
+        setStatus("Safe compact Observer export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's BOBA Observer V1 artifact only? All observed BOBA artifacts remain untouched.",
+      )
+    ) {
+      return;
+    }
+    resetObserver.mutate(undefined, {
+      onSuccess: () => {
+        setStatus(
+          "BOBA Observer V1 reset; all other BOBA artifacts remain untouched.",
+        );
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-sky-300/20 bg-sky-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-white">BOBA Observer V1</p>
+          <p className="text-xs text-muted">
+            {
+              "BOBA Observer V1 observes only. It does not fix, edit code, run validators, delete files, download media, or render."
+            }
+          </p>
+          <p className="text-xs text-muted">
+            {
+              "Unsafe next actions require human review or future safety modules."
+            }
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !observer}
+            onClick={exportArtifact}
+            className="rounded border border-sky-200/30 px-2.5 py-1.5 text-[11px] text-sky-100 disabled:opacity-50"
+          >
+            Export safe Observer report
+          </button>
+          <button
+            type="button"
+            disabled={busy || !observer}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Observer V1
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto]">
+        <label className="text-xs text-muted">
+          Optional current workflow context JSON
+          <textarea
+            value={workflowContextJson}
+            onChange={(event) => setWorkflowContextJson(event.target.value)}
+            rows={3}
+            placeholder='{"workflow_stage":"planning","note":"Human-provided local context"}'
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={generate}
+          className="self-end rounded border border-sky-200/30 px-3 py-2 text-xs text-sky-100 disabled:opacity-50"
+        >
+          {generateObserver.isPending
+            ? "Observing saved state..."
+            : "Observe saved project state"}
+        </button>
+      </div>
+
+      {status && <p className="mt-3 text-xs text-sky-100">{status}</p>}
+
+      {!observer ? (
+        <p className="mt-4 text-xs text-muted">
+          Observer report is not available. Generate one from saved local BOBA
+          artifacts; no validator or workflow action runs automatically.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ["Healthy", observer.observer_summary.healthy_count],
+              ["Partial", observer.observer_summary.partial_count],
+              ["Missing", observer.observer_summary.missing_count],
+              ["Blocked", observer.observer_summary.blocked_count],
+              ["Stale", observer.observer_summary.stale_count],
+              ["Warnings", observer.observer_summary.warning_count],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="rounded border border-white/10 p-2 text-xs text-muted"
+              >
+                <p>{label}</p>
+                <p className="mt-1 text-lg font-semibold text-white">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">Safest next step</p>
+              <p className="mt-1">
+                {observer.observer_summary.safest_next_step ||
+                  "No safe next step stated"}
+              </p>
+            </div>
+            <div className="rounded border border-rose-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-rose-100">
+                Riskiest next step
+              </p>
+              <p className="mt-1">
+                {observer.observer_summary.riskiest_next_step ||
+                  "No risky next step stated"}
+              </p>
+            </div>
+          </div>
+
+          <details className="mt-4 rounded border border-white/10 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              Workflow health
+            </summary>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              {observer.workflow_observations.map((workflow) => (
+                <article
+                  key={workflow.workflow_stage}
+                  className="rounded border border-white/10 p-3 text-xs text-muted"
+                >
+                  <p className="font-semibold text-white">
+                    {readableName(workflow.workflow_stage)}
+                  </p>
+                  <p className="mt-1">
+                    Completed:{" "}
+                    {workflow.completed_modules.join(", ") || "None observed"}
+                  </p>
+                  <p className="mt-1">
+                    Ready: {workflow.ready_modules.join(", ") || "None"}
+                  </p>
+                  <p className="mt-1">
+                    Incomplete:{" "}
+                    {workflow.incomplete_modules.join(", ") || "None"}
+                  </p>
+                  <p className="mt-1">
+                    Blocked: {workflow.blocked_modules.join(", ") || "None"}
+                  </p>
+                  {workflow.safe_next_actions.slice(0, 3).map((action) => (
+                    <p key={action} className="mt-1 text-emerald-100">
+                      Safe: {action}
+                    </p>
+                  ))}
+                  {workflow.unsafe_next_actions.slice(0, 3).map((action) => (
+                    <p key={action} className="mt-1 text-rose-100">
+                      Unsafe: {action}
+                    </p>
+                  ))}
+                </article>
+              ))}
+            </div>
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              Module health
+            </summary>
+            <div className="mt-3 grid gap-2 lg:grid-cols-2">
+              {observer.module_health_observations.map((module) => (
+                <div
+                  key={module.module_name}
+                  className="rounded border border-white/10 p-3 text-xs text-muted"
+                >
+                  <p className="font-semibold text-white">
+                    {readableName(module.module_name)} /{" "}
+                    {readableName(module.health_status)}
+                  </p>
+                  <p className="mt-1">
+                    Category: {readableName(module.module_category)} /
+                    Confidence:{" "}
+                    {Math.round(module.confidence * 100)}%
+                  </p>
+                  {module.missing_inputs.length > 0 && (
+                    <p className="mt-1 text-rose-100">
+                      Missing inputs: {module.missing_inputs.join(", ")}
+                    </p>
+                  )}
+                  {module.missing_outputs.length > 0 && (
+                    <p className="mt-1 text-amber-100">
+                      Missing outputs: {module.missing_outputs.join(", ")}
+                    </p>
+                  )}
+                  {module.stale_outputs.length > 0 && (
+                    <p className="mt-1 text-amber-100">
+                      Stale outputs: {module.stale_outputs.join(", ")}
+                    </p>
+                  )}
+                  {module.blocked_reason && (
+                    <p className="mt-1 text-rose-100">
+                      Blocked reason: {module.blocked_reason}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              Artifact observations
+            </summary>
+            {artifactCounts && (
+              <p className="mt-2 text-xs text-muted">
+                Readable: {artifactCounts.readable} / Missing:{" "}
+                {artifactCounts.missing} / Stale: {artifactCounts.stale} /
+                Unreadable: {artifactCounts.unreadable}
+              </p>
+            )}
+            <div className="mt-3 grid gap-2 lg:grid-cols-2">
+              {observer.artifact_observations.map((artifact) => (
+                <div
+                  key={artifact.artifact_id}
+                  className="rounded border border-white/10 p-3 text-xs text-muted"
+                >
+                  <p className="font-semibold text-white">
+                    {readableName(artifact.artifact_id)}
+                  </p>
+                  <p className="mt-1">
+                    {artifact.exists ? "Exists" : "Missing"} /{" "}
+                    {artifact.readable ? "Readable" : "Unreadable"} /{" "}
+                    {readableName(artifact.freshness_status)} /{" "}
+                    {readableName(artifact.dependency_status)}
+                  </p>
+                  <p className="mt-1">
+                    Schema: {artifact.schema_version || "Unknown"} / Size:{" "}
+                    {formatBytes(artifact.size_bytes)}
+                  </p>
+                  {artifact.findings.slice(0, 2).map((finding) => (
+                    <p key={finding.finding_id} className="mt-1 text-amber-100">
+                      {finding.message}
+                    </p>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </details>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <details className="rounded border border-white/10 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-white">
+                Broken or stale dependencies ({dependencyIssues.length})
+              </summary>
+              <div className="mt-2 space-y-2 text-xs text-muted">
+                {dependencyIssues.length === 0 && (
+                  <p>No dependency issue observed.</p>
+                )}
+                {dependencyIssues.map((dependency) => (
+                  <div
+                    key={dependency.dependency_id}
+                    className="rounded border border-white/10 p-2"
+                  >
+                    <p className="font-semibold text-white">
+                      {readableName(dependency.upstream_module)} →{" "}
+                      {readableName(dependency.downstream_module)} /{" "}
+                      {readableName(dependency.status)}
+                    </p>
+                    <p className="mt-1">{dependency.reason}</p>
+                    <p className="mt-1">
+                      Inspect: {dependency.recommended_inspection}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </details>
+
+            <details className="rounded border border-white/10 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-white">
+                Validation gaps ({validationGaps.length})
+              </summary>
+              <div className="mt-2 space-y-2 text-xs text-muted">
+                {validationGaps.length === 0 && (
+                  <p>No missing, stale, failed, or unknown report observed.</p>
+                )}
+                {validationGaps.map((validation) => (
+                  <div
+                    key={validation.validator_name}
+                    className="rounded border border-white/10 p-2"
+                  >
+                    <p className="font-semibold text-white">
+                      {validation.validator_name} /{" "}
+                      {readableName(validation.latest_status)}
+                    </p>
+                    <p className="mt-1">
+                      Freshness: {readableName(validation.freshness_status)}
+                    </p>
+                    {validation.missing_reason && (
+                      <p className="mt-1 text-amber-100">
+                        {validation.missing_reason}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          </div>
+
+          <details className="mt-3 rounded border border-white/10 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              Safety observations
+            </summary>
+            <div className="mt-3 grid gap-2 lg:grid-cols-2">
+              {observer.safety_observations.map((safety) => (
+                <div
+                  key={safety.safety_id}
+                  className="rounded border border-white/10 p-3 text-xs text-muted"
+                >
+                  <p className="font-semibold text-white">
+                    {readableName(safety.safety_area)} /{" "}
+                    {readableName(safety.status)}
+                  </p>
+                  <p className="mt-1">{safety.reason}</p>
+                  {safety.required_human_checks.slice(0, 3).map((check) => (
+                    <p key={check} className="mt-1 text-amber-100">
+                      Human check: {check}
+                    </p>
+                  ))}
+                  {safety.unsafe_next_actions.slice(0, 3).map((action) => (
+                    <p key={action} className="mt-1 text-rose-100">
+                      Unsafe: {action}
+                    </p>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </details>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-emerald-300/20 p-3">
+              <p className="text-xs font-semibold text-emerald-100">
+                Safe next actions
+              </p>
+              <div className="mt-2 space-y-2 text-xs text-muted">
+                {safeRecommendations.length === 0 && (
+                  <p>No safe recommendation stated.</p>
+                )}
+                {safeRecommendations.slice(0, 12).map((recommendation) => (
+                  <p key={recommendation.recommendation_id}>
+                    {readableName(recommendation.priority)} /{" "}
+                    {recommendation.action}
+                  </p>
+                ))}
+              </div>
+            </div>
+            <div className="rounded border border-rose-300/20 p-3">
+              <p className="text-xs font-semibold text-rose-100">
+                Unsafe next actions
+              </p>
+              <div className="mt-2 space-y-2 text-xs text-muted">
+                {unsafeRecommendations.length === 0 && (
+                  <p>No unsafe recommendation stated.</p>
+                )}
+                {unsafeRecommendations.slice(0, 12).map((recommendation) => (
+                  <p key={recommendation.recommendation_id}>
+                    {readableName(recommendation.priority)} /{" "}
+                    {recommendation.action} / Human review:{" "}
+                    {recommendation.human_review_required ? "Required" : "No"}
+                  </p>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {(observer.warnings.length > 0 ||
+            observer.limitations.length > 0 ||
+            observer.observer_summary.human_review_notes.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Observer warnings and limitations:{" "}
+              {[
+                ...observer.warnings,
+                ...observer.limitations,
+                ...observer.observer_summary.human_review_notes,
+              ]
+                .slice(0, 12)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -7270,6 +7756,7 @@ export function ResultsSection({
   const rightsPermissionGatePanel = (
     <BobaRightsPermissionGatePanel projectId={projectId} />
   );
+  const observerPanel = <BobaObserverPanel projectId={projectId} />;
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -7295,6 +7782,7 @@ export function ResultsSection({
         {trendTopicWatcherPanel}
         {candidateVideoScorerPanel}
         {rightsPermissionGatePanel}
+        {observerPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -7332,6 +7820,7 @@ export function ResultsSection({
         {trendTopicWatcherPanel}
         {candidateVideoScorerPanel}
         {rightsPermissionGatePanel}
+        {observerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -7365,6 +7854,7 @@ export function ResultsSection({
         {trendTopicWatcherPanel}
         {candidateVideoScorerPanel}
         {rightsPermissionGatePanel}
+        {observerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -7398,6 +7888,7 @@ export function ResultsSection({
       {trendTopicWatcherPanel}
       {candidateVideoScorerPanel}
       {rightsPermissionGatePanel}
+      {observerPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

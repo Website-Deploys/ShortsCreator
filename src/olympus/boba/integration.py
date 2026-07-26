@@ -87,6 +87,7 @@ from olympus.boba.music_mood import (
     BobaMusicMoodRecommendationSetV1,
     music_manifest_awareness,
 )
+from olympus.boba.observer import BobaObserverSetV1, BobaObserverV1
 from olympus.boba.performance_feedback import (
     BobaManualPerformanceMetricsV1,
     BobaPerformanceEventType,
@@ -162,6 +163,10 @@ class BobaIntegration:
         self.trend_topic_watcher = BobaTrendTopicWatcherV1()
         self.candidate_video_scorer = BobaCandidateVideoScorerV1()
         self.rights_permission_gate = BobaRightsPermissionGateV1()
+        self.observer = BobaObserverV1(
+            store.root,
+            validation_report_root=store.root.parent / "validation_reports",
+        )
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1643,6 +1648,41 @@ class BobaIntegration:
 
     def reset_rights_permission_gate(self, project_id: str) -> bool:
         return self.store.reset_rights_permission_gate(project_id)
+
+    async def generate_observer_report(
+        self,
+        project_id: str,
+        *,
+        workflow_context: dict[str, Any] | None = None,
+        dry_run: bool = False,
+    ) -> BobaObserverSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError(
+                "Project was not found.",
+                details={"id": project_id},
+            )
+        report = self.observer.analyze(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+            workflow_context=workflow_context,
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return report
+        return self.store.save_observer_report(report)
+
+    def load_observer_report(
+        self,
+        project_id: str,
+    ) -> BobaObserverSetV1 | None:
+        return self.store.load_observer_report(project_id)
+
+    def export_observer_report(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_observer_report(project_id)
+
+    def reset_observer_report(self, project_id: str) -> bool:
+        return self.store.reset_observer_report(project_id)
 
     async def generate_performance_feedback(
         self,

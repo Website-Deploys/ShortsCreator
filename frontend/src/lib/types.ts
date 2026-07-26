@@ -2085,6 +2085,231 @@ export interface BobaRightsPermissionGateGenerateInputV1 {
   dry_run?: boolean;
 }
 
+export type BobaObserverFreshnessStatusV1 =
+  | "fresh"
+  | "stale"
+  | "unknown"
+  | "missing";
+
+export type BobaObserverIssueLevelV1 =
+  | "ok"
+  | "info"
+  | "warning"
+  | "blocker"
+  | "unknown";
+
+export interface BobaObserverFindingV1 {
+  finding_id: string;
+  category:
+    | "missing_artifact"
+    | "stale_artifact"
+    | "unreadable_artifact"
+    | "missing_validation"
+    | "stale_validation"
+    | "broken_dependency"
+    | "unsafe_action"
+    | "rights_gap"
+    | "unknown_state"
+    | "info";
+  message: string;
+  evidence: string[];
+  issue_level: BobaObserverIssueLevelV1;
+  related_module: string;
+  related_artifact: string;
+  recommended_followup: string;
+}
+
+export interface BobaArtifactObservationV1 {
+  artifact_id: string;
+  module_name: string;
+  artifact_type: string;
+  expected_path: string;
+  exists: boolean;
+  readable: boolean;
+  schema_version: string;
+  created_at: string;
+  freshness_status: BobaObserverFreshnessStatusV1;
+  dependency_status:
+    | "satisfied"
+    | "missing_upstream"
+    | "stale_upstream"
+    | "unknown"
+    | "not_applicable";
+  size_bytes: number;
+  issue_level: BobaObserverIssueLevelV1;
+  findings: BobaObserverFindingV1[];
+  warnings: string[];
+}
+
+export interface BobaModuleHealthObservationV1 {
+  module_name: string;
+  module_category:
+    | "core"
+    | "video_intelligence"
+    | "creative"
+    | "learning"
+    | "scouting"
+    | "rights_safety"
+    | "self_healing"
+    | "frontend"
+    | "validation";
+  expected_artifacts: string[];
+  required_dependencies: string[];
+  optional_dependencies: string[];
+  health_status:
+    | "healthy"
+    | "partial"
+    | "missing"
+    | "stale"
+    | "blocked"
+    | "unknown";
+  missing_inputs: string[];
+  missing_outputs: string[];
+  stale_outputs: string[];
+  blocked_reason: string;
+  confidence: number;
+  findings: BobaObserverFindingV1[];
+  warnings: string[];
+}
+
+export interface BobaWorkflowObservationV1 {
+  workflow_stage: string;
+  completed_modules: string[];
+  ready_modules: string[];
+  incomplete_modules: string[];
+  blocked_modules: string[];
+  unsafe_next_actions: string[];
+  safe_next_actions: string[];
+  findings: BobaObserverFindingV1[];
+  warnings: string[];
+}
+
+export interface BobaDependencyObservationV1 {
+  dependency_id: string;
+  downstream_module: string;
+  upstream_module: string;
+  upstream_artifact: string;
+  downstream_artifact: string;
+  status: "satisfied" | "missing" | "stale" | "broken" | "unknown";
+  reason: string;
+  recommended_inspection: string;
+  issue_level: BobaObserverIssueLevelV1;
+  warnings: string[];
+}
+
+export interface BobaValidationObservationV1 {
+  validator_name: string;
+  report_path: string;
+  report_exists: boolean;
+  latest_status: "passed" | "failed" | "partial" | "unknown" | "missing";
+  report_created_at: string;
+  freshness_status: BobaObserverFreshnessStatusV1;
+  missing_reason: string;
+  issue_level: BobaObserverIssueLevelV1;
+  warnings: string[];
+}
+
+export interface BobaSafetyObservationV1 {
+  safety_id: string;
+  safety_area:
+    | "rights_permission"
+    | "ingestion"
+    | "rendering"
+    | "downloading"
+    | "external_api"
+    | "secrets"
+    | "destructive_action"
+    | "validation_gap"
+    | "unknown";
+  status: "safe_to_review" | "needs_human_review" | "blocked" | "unknown";
+  reason: string;
+  related_artifacts: string[];
+  required_human_checks: string[];
+  unsafe_next_actions: string[];
+  warnings: string[];
+}
+
+export interface BobaNextActionRecommendationV1 {
+  recommendation_id: string;
+  action_type:
+    | "inspect"
+    | "validate"
+    | "generate_missing_artifact"
+    | "run_future_validator"
+    | "human_review"
+    | "merge_required"
+    | "do_not_process"
+    | "blocked"
+    | "unknown";
+  action: string;
+  safe: boolean;
+  reason: string;
+  prerequisites: string[];
+  suggested_owner_module: string;
+  human_review_required: boolean;
+  priority: "low" | "medium" | "high" | "urgent";
+  warnings: string[];
+}
+
+export interface BobaObserverSummaryV1 {
+  total_modules_observed: number;
+  healthy_count: number;
+  partial_count: number;
+  missing_count: number;
+  blocked_count: number;
+  stale_count: number;
+  unknown_count: number;
+  blocker_count: number;
+  warning_count: number;
+  safest_next_step: string;
+  riskiest_next_step: string;
+  human_review_notes: string[];
+}
+
+export interface BobaObserverSignalUsageV1 {
+  boba_store_used: boolean;
+  local_artifacts_read: boolean;
+  validation_reports_read: boolean;
+  rights_gate_used: boolean;
+  candidate_video_scorer_used: boolean;
+  research_brain_used: boolean;
+  content_scout_used: boolean;
+  trend_topic_watcher_used: boolean;
+  external_api_used: false;
+  url_fetching_used: false;
+  scraping_used: false;
+  downloading_used: false;
+  command_execution_used: false;
+  code_modification_used: false;
+  destructive_action_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaObserverSetV1 {
+  schema_version: "boba_observer_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  workflow_observations: BobaWorkflowObservationV1[];
+  artifact_observations: BobaArtifactObservationV1[];
+  module_health_observations: BobaModuleHealthObservationV1[];
+  dependency_observations: BobaDependencyObservationV1[];
+  validation_observations: BobaValidationObservationV1[];
+  safety_observations: BobaSafetyObservationV1[];
+  next_action_recommendations: BobaNextActionRecommendationV1[];
+  observer_summary: BobaObserverSummaryV1;
+  signal_usage: BobaObserverSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaObserverGenerateInputV1 {
+  workflow_context?: Record<string, unknown>;
+  dry_run?: boolean;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;
