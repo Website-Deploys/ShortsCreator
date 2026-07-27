@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from olympus.boba.approval_rejection_learning import (
@@ -30,6 +31,12 @@ from olympus.boba.clip_ranking import (
 )
 from olympus.boba.clip_ranking import (
     BobaClipRankingV1 as BobaDiscoveryClipRankingV1,
+)
+from olympus.boba.code_surgeon import (
+    BobaCodeApprovalRecordV1,
+    BobaCodeProposalSourceV1,
+    BobaCodeSurgeonSetV1,
+    BobaCodeSurgeonV1,
 )
 from olympus.boba.content_scout import (
     BobaContentScoutSetV2,
@@ -179,6 +186,14 @@ class BobaIntegration:
         self.error_doctor = BobaErrorDoctorV1()
         self.root_cause_analyzer = BobaRootCauseAnalyzerV1()
         self.repair_planner = BobaRepairPlannerV1()
+        source_repository_root = Path(__file__).resolve().parents[3]
+        current_repository_root = Path.cwd().resolve()
+        repository_root = (
+            current_repository_root
+            if (current_repository_root / ".git").exists()
+            else source_repository_root
+        )
+        self.code_surgeon = BobaCodeSurgeonV1(repository_root)
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1811,6 +1826,123 @@ class BobaIntegration:
 
     def reset_boba_repair_planner(self, project_id: str) -> bool:
         return self.store.reset_boba_repair_planner(project_id)
+
+    async def generate_boba_code_surgeon_proposal(
+        self,
+        project_id: str,
+        *,
+        repair_case_id: str | None = None,
+        repair_strategy_id: str | None = None,
+        unified_diff: str | None = None,
+        proposal_source: BobaCodeProposalSourceV1 = "user_provided_diff",
+        deterministic_template_identifier: str | None = None,
+        template_parameters: dict[str, Any] | None = None,
+        base_branch: str = "main",
+        affected_paths: list[str] | None = None,
+        approved_special_paths: list[str] | None = None,
+    ) -> BobaCodeSurgeonSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        report = self.code_surgeon.propose(
+            project_id,
+            self.store.load_boba_repair_planner(project_id),
+            source_id=project.link_ingestion_id or project_id,
+            repair_case_id=repair_case_id,
+            repair_strategy_id=repair_strategy_id,
+            unified_diff=unified_diff,
+            proposal_source=proposal_source,
+            deterministic_template_identifier=deterministic_template_identifier,
+            template_parameters=template_parameters,
+            base_branch=base_branch,
+            affected_paths=affected_paths or [],
+            approved_special_paths=approved_special_paths or [],
+        )
+        return self.store.save_boba_code_surgeon(
+            report,
+            unified_diff=self.code_surgeon.last_proposed_diff,
+            patch_proposal_id=(
+                report.patch_proposals[-1].patch_proposal_id
+                if report.patch_proposals
+                else None
+            ),
+        )
+
+    async def validate_boba_code_surgeon_patch(
+        self,
+        project_id: str,
+        **kwargs: Any,
+    ) -> BobaCodeSurgeonSetV1:
+        kwargs["proposal_source"] = "imported_review_patch"
+        return await self.generate_boba_code_surgeon_proposal(project_id, **kwargs)
+
+    async def execute_approved_boba_code_surgeon_patch(
+        self,
+        project_id: str,
+        *,
+        patch_proposal_id: str,
+        approval: BobaCodeApprovalRecordV1,
+        approved_validation_commands: list[str],
+    ) -> BobaCodeSurgeonSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        report = self.store.load_boba_code_surgeon(project_id)
+        if report is None:
+            raise ValidationError("BOBA Code Surgeon V1 proposal is not available.")
+        unified_diff = self.store.load_boba_code_surgeon_patch(
+            project_id,
+            patch_proposal_id,
+        )
+        updated = self.code_surgeon.execute_approved(
+            report,
+            patch_proposal_id=patch_proposal_id,
+            unified_diff=unified_diff,
+            approval=approval,
+            approved_validation_commands=approved_validation_commands,
+        )
+        run_id = (
+            updated.isolated_runs[-1].isolated_run_id
+            if updated.isolated_runs
+            else patch_proposal_id
+        )
+        return self.store.save_boba_code_surgeon(
+            updated,
+            unified_diff=unified_diff,
+            patch_proposal_id=run_id,
+        )
+
+    async def prepare_boba_code_surgeon_local_commit(
+        self,
+        project_id: str,
+        *,
+        isolated_run_id: str,
+        approval: BobaCodeApprovalRecordV1,
+    ) -> BobaCodeSurgeonSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        report = self.store.load_boba_code_surgeon(project_id)
+        if report is None:
+            raise ValidationError("BOBA Code Surgeon V1 proposal is not available.")
+        updated = self.code_surgeon.prepare_local_commit(
+            report,
+            isolated_run_id=isolated_run_id,
+            approval=approval,
+        )
+        return self.store.save_boba_code_surgeon(updated)
+
+    def load_boba_code_surgeon(
+        self,
+        project_id: str,
+    ) -> BobaCodeSurgeonSetV1 | None:
+        return self.store.load_boba_code_surgeon(project_id)
+
+    def export_boba_code_surgeon(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_boba_code_surgeon(project_id)
+
+    def reset_boba_code_surgeon(self, project_id: str) -> bool:
+        return self.store.reset_boba_code_surgeon(project_id)
 
     async def generate_performance_feedback(
         self,

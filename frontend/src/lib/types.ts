@@ -3658,6 +3658,391 @@ export interface BobaRepairPlannerGenerateInputV1 {
   dry_run?: boolean;
 }
 
+export type BobaCodeEvidenceStrengthV1 =
+  | "strong"
+  | "moderate"
+  | "weak"
+  | "conflicting"
+  | "insufficient"
+  | "unknown";
+
+export type BobaCodeApprovalTypeV1 =
+  | "proposal_review"
+  | "isolated_patch_execution"
+  | "special_path_change"
+  | "dependency_change"
+  | "workflow_change"
+  | "local_commit_creation"
+  | "unknown";
+
+export interface BobaCodeRepairCaseV1 {
+  code_repair_case_id: string;
+  source_repair_case_id: string;
+  source_repair_strategy_id: string;
+  title: string;
+  target_module: string;
+  suspected_code_defect: string;
+  evidence_strength: BobaCodeEvidenceStrengthV1;
+  code_change_justified: boolean;
+  justification: string;
+  affected_paths: string[];
+  protected_paths_detected: string[];
+  required_behavior: string[];
+  behavior_to_preserve: string[];
+  validation_requirements: string[];
+  quality_requirements: string[];
+  rollback_requirements: string[];
+  approval_required: true;
+  execution_eligible: boolean;
+  blocked_reason: string | null;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaCodePatchFileV1 {
+  path: string;
+  operation: "add" | "modify" | "delete" | "rename" | "mode_change" | "unknown";
+  language: string;
+  previous_sha256: string;
+  proposed_sha256: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  generated: boolean;
+  protected: boolean;
+  special_approval_required: boolean;
+  reason_for_change: string;
+  behavior_preserved: string[];
+  validation_needed: string[];
+  warnings: string[];
+}
+
+export interface BobaCodePatchHunkV1 {
+  file_path: string;
+  old_start: number;
+  old_count: number;
+  new_start: number;
+  new_count: number;
+  bounded_summary: string;
+  change_reason: string;
+  related_evidence_ids: string[];
+  risk: string;
+  warnings: string[];
+}
+
+export interface BobaCodePatchProposalV1 {
+  patch_proposal_id: string;
+  code_repair_case_id: string;
+  proposal_source:
+    | "deterministic_template"
+    | "user_provided_diff"
+    | "codex_provided_diff"
+    | "imported_review_patch"
+    | "unknown";
+  base_branch: string;
+  base_commit_sha: string;
+  proposed_branch: string;
+  title: string;
+  summary: string;
+  rationale: string;
+  files: BobaCodePatchFileV1[];
+  hunks: BobaCodePatchHunkV1[];
+  unified_diff_reference: string;
+  diff_sha256: string;
+  changed_file_count: number;
+  additions: number;
+  deletions: number;
+  total_changed_lines: number;
+  patch_size_bytes: number;
+  applies_cleanly: boolean;
+  path_policy_passed: boolean;
+  secret_scan_passed: boolean;
+  scope_check_passed: boolean;
+  binary_change_detected: boolean;
+  dependency_change_detected: boolean;
+  workflow_change_detected: boolean;
+  risk_level: string;
+  approval_status: string;
+  execution_status: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaCodeApprovalRecordV1 {
+  approval_id: string;
+  code_repair_case_id: string;
+  patch_proposal_id: string;
+  approval_type: BobaCodeApprovalTypeV1;
+  approved: boolean;
+  approved_at?: string;
+  approved_by: string;
+  approved_base_commit_sha: string;
+  approved_diff_sha256: string;
+  approved_scope: string[];
+  approved_validation_commands: string[];
+  approved_special_paths: string[];
+  approval_expires_at?: string | null;
+  explicit_confirmation: boolean;
+  warnings?: string[];
+}
+
+export interface BobaCodeExecutionPolicyV1 {
+  policy_id: string;
+  protected_branches: string[];
+  protected_paths: string[];
+  special_approval_paths: string[];
+  allowed_extensions: string[];
+  blocked_extensions: string[];
+  maximum_changed_files: number;
+  maximum_changed_lines: number;
+  maximum_diff_size_bytes: number;
+  maximum_individual_file_size_bytes: number;
+  maximum_validation_commands: number;
+  maximum_patch_attempts: number;
+  command_timeout_seconds: number;
+  output_capture_limit_bytes: number;
+  network_access_allowed: false;
+  package_installation_allowed: false;
+  service_restart_allowed: false;
+  push_allowed: false;
+  merge_allowed: false;
+  tag_allowed: false;
+  destructive_git_allowed: false;
+  direct_main_modification_allowed: false;
+  warnings: string[];
+}
+
+export interface BobaCodeIsolatedRunV1 {
+  isolated_run_id: string;
+  patch_proposal_id: string;
+  mode: string;
+  base_branch: string;
+  base_commit_sha: string;
+  repair_branch: string;
+  sanitized_worktree_reference: string;
+  worktree_created: boolean;
+  current_worktree_clean_before_run: boolean;
+  patch_apply_check_passed: boolean;
+  patch_applied: boolean;
+  changed_files_verified: boolean;
+  approval_verified: boolean;
+  execution_started_at: string | null;
+  execution_completed_at: string | null;
+  run_status: string;
+  stop_reason: string | null;
+  warnings: string[];
+}
+
+export interface BobaCodeValidationCommandV1 {
+  validation_command_id: string;
+  name: string;
+  executable: string;
+  arguments: string[];
+  working_directory_scope: string;
+  category: string;
+  required: boolean;
+  approved: boolean;
+  timeout_seconds: number;
+  network_forbidden: true;
+  shell_used: false;
+  expected_exit_codes: number[];
+  output_limit_bytes: number;
+  warnings: string[];
+}
+
+export interface BobaCodeValidationResultV1 {
+  validation_result_id: string;
+  validation_command_id: string;
+  name: string;
+  status: string;
+  exit_code: number | null;
+  duration_seconds: number;
+  bounded_stdout_summary: string;
+  bounded_stderr_summary: string;
+  output_truncated: boolean;
+  secrets_redacted: boolean;
+  required: boolean;
+  blocks_acceptance: boolean;
+  warnings: string[];
+}
+
+export interface BobaCodeValidationRunV1 {
+  validation_run_id: string;
+  isolated_run_id: string;
+  commands: BobaCodeValidationCommandV1[];
+  results: BobaCodeValidationResultV1[];
+  required_checks_passed: boolean;
+  optional_checks_passed: boolean;
+  failed_required_checks: string[];
+  failed_optional_checks: string[];
+  skipped_checks: string[];
+  acceptance_criteria_met: boolean;
+  rejection_reason: string | null;
+  started_at: string;
+  completed_at: string | null;
+  warnings: string[];
+}
+
+export interface BobaCodeRollbackRecordV1 {
+  rollback_record_id: string;
+  isolated_run_id: string;
+  rollback_trigger: string;
+  rollback_scope: string;
+  rollback_started_at: string | null;
+  rollback_completed_at: string | null;
+  patch_removed: boolean;
+  temporary_worktree_removed: boolean;
+  repair_branch_preserved_for_review: boolean;
+  source_worktree_unchanged: boolean;
+  rollback_validation_passed: boolean;
+  rollback_status: string;
+  human_review_required: boolean;
+  warnings: string[];
+}
+
+export interface BobaCodeReviewPackageV1 {
+  review_package_id: string;
+  patch_proposal_id: string;
+  isolated_run_id: string;
+  repair_branch: string;
+  base_commit_sha: string;
+  local_commit_sha: string;
+  commit_created: boolean;
+  diff_summary: string;
+  changed_files: string[];
+  validation_summary: string;
+  failed_or_skipped_checks: string[];
+  risk_summary: string;
+  rollback_summary: string;
+  PR_title: string;
+  PR_body: string;
+  reviewer_checklist: string[];
+  prohibited_next_actions: string[];
+  ready_for_manual_push: boolean;
+  ready_for_manual_PR: boolean;
+  ready_for_merge: false;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaCodeSurgeonExecutionHandoffV1 {
+  handoff_id: string;
+  code_repair_case_id: string;
+  patch_proposal_id: string;
+  target_module: string;
+  reason: string;
+  required_inputs: string[];
+  validation_requirements: string[];
+  constraints: string[];
+  prohibited_actions: string[];
+  apply_automatically: false;
+  human_approval_required: true;
+  priority: string;
+  warnings: string[];
+}
+
+export interface BobaCodeSurgeonSummaryV1 {
+  total_repair_cases: number;
+  eligible_case_count: number;
+  blocked_case_count: number;
+  proposal_count: number;
+  approved_proposal_count: number;
+  isolated_execution_count: number;
+  validation_pass_count: number;
+  validation_failure_count: number;
+  rollback_count: number;
+  local_commit_count: number;
+  protected_path_block_count: number;
+  secret_scan_block_count: number;
+  scope_block_count: number;
+  current_highest_priority_case: string;
+  safest_reviewable_patch: string;
+  required_human_actions: string[];
+  limitations: string[];
+}
+
+export interface BobaCodeSurgeonSignalUsageV1 {
+  repair_planner_used: boolean;
+  repair_planner_artifact_read: boolean;
+  root_cause_references_used: boolean;
+  approval_record_used: boolean;
+  git_repository_inspected: boolean;
+  isolated_worktree_used: boolean;
+  provided_patch_used: boolean;
+  deterministic_template_used: boolean;
+  secret_scan_used: boolean;
+  validation_commands_executed: boolean;
+  code_modified_in_isolated_worktree: boolean;
+  local_branch_created: boolean;
+  local_commit_created: boolean;
+  main_branch_modified: false;
+  push_used: false;
+  PR_created: false;
+  merge_used: false;
+  tag_used: false;
+  external_api_used: false;
+  network_access_used: false;
+  url_fetching_used: false;
+  scraping_used: false;
+  downloading_used: false;
+  package_installation_used: false;
+  service_restart_used: false;
+  destructive_git_used: false;
+  destructive_action_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaCodeSurgeonSetV1 {
+  schema_version: "boba_code_surgeon_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  repair_planner_source: string;
+  repair_cases: BobaCodeRepairCaseV1[];
+  patch_proposals: BobaCodePatchProposalV1[];
+  approval_records: BobaCodeApprovalRecordV1[];
+  execution_policies: BobaCodeExecutionPolicyV1[];
+  isolated_runs: BobaCodeIsolatedRunV1[];
+  validation_runs: BobaCodeValidationRunV1[];
+  rollback_records: BobaCodeRollbackRecordV1[];
+  review_packages: BobaCodeReviewPackageV1[];
+  execution_handoffs: BobaCodeSurgeonExecutionHandoffV1[];
+  surgeon_summary: BobaCodeSurgeonSummaryV1;
+  signal_usage: BobaCodeSurgeonSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaCodeSurgeonProposalInputV1 {
+  repair_case_id?: string;
+  repair_strategy_id?: string;
+  unified_diff?: string;
+  proposal_source?:
+    | "deterministic_template"
+    | "user_provided_diff"
+    | "codex_provided_diff"
+    | "imported_review_patch";
+  deterministic_template_identifier?: string;
+  template_parameters?: Record<string, unknown>;
+  base_branch?: string;
+  affected_paths?: string[];
+  approved_special_paths?: string[];
+}
+
+export interface BobaCodeSurgeonExecuteInputV1 {
+  patch_proposal_id: string;
+  approval: BobaCodeApprovalRecordV1;
+  approved_validation_commands: string[];
+}
+
+export interface BobaCodeSurgeonCommitInputV1 {
+  isolated_run_id: string;
+  approval: BobaCodeApprovalRecordV1;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;

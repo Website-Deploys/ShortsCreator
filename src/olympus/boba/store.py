@@ -26,6 +26,7 @@ from olympus.boba.clip_discovery import BobaCandidateClipDiscoveryV1
 from olympus.boba.clip_ranking import (
     BobaClipRankingV1 as BobaDiscoveryClipRankingV1,
 )
+from olympus.boba.code_surgeon import BobaCodeSurgeonSetV1
 from olympus.boba.content_scout import BobaContentScoutSetV2
 from olympus.boba.contracts import (
     BobaBrainStateV1,
@@ -82,6 +83,30 @@ from olympus.platform.errors import ValidationError
 
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 ModelT = TypeVar("ModelT", bound=BaseModel)
+
+
+def _sanitize_code_surgeon_payload(value: Any, *, max_excerpt_chars: int) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_code_surgeon_payload(
+                item,
+                max_excerpt_chars=max_excerpt_chars,
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list | tuple | set):
+        return [
+            _sanitize_code_surgeon_payload(
+                item,
+                max_excerpt_chars=max_excerpt_chars,
+            )
+            for item in value
+        ]
+    return sanitize_memory_payload(
+        value,
+        max_excerpt_chars=max_excerpt_chars,
+        path="boba.code_surgeon.value",
+    )
 
 
 class BobaMemoryStore:
@@ -1775,6 +1800,195 @@ class BobaMemoryStore:
             if directory.exists() and not any(directory.iterdir()):
                 directory.rmdir()
         return removed
+
+    def code_surgeon_path(self, project_id: str) -> Path:
+        return self._path(project_id, "code_surgeon/index.json")
+
+    def code_surgeon_run_path(self, project_id: str, run_id: str) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", run_id):
+            raise ValidationError("Invalid BOBA Code Surgeon run id.")
+        return self._path(project_id, f"code_surgeon/runs/{run_id}/index.json")
+
+    def code_surgeon_patch_path(self, project_id: str, reference_id: str) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", reference_id):
+            raise ValidationError("Invalid BOBA Code Surgeon patch reference.")
+        return self._path(project_id, f"code_surgeon/runs/{reference_id}/patch.diff")
+
+    def save_boba_code_surgeon(
+        self,
+        report: BobaCodeSurgeonSetV1,
+        *,
+        unified_diff: str | None = None,
+        patch_proposal_id: str | None = None,
+    ) -> BobaCodeSurgeonSetV1:
+        with self._lock:
+            safe = _sanitize_code_surgeon_payload(
+                report.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+            )
+            self._atomic_write(self.code_surgeon_path(report.project_id), safe)
+            if report.isolated_runs:
+                run = report.isolated_runs[-1]
+                run_payload = {
+                    "schema_version": "boba_code_surgeon_run_v1",
+                    "project_id": report.project_id,
+                    "isolated_run": run.model_dump(mode="json"),
+                    "validation_run": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in reversed(report.validation_runs)
+                            if item.isolated_run_id == run.isolated_run_id
+                        ),
+                        None,
+                    ),
+                    "rollback_record": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in reversed(report.rollback_records)
+                            if item.isolated_run_id == run.isolated_run_id
+                        ),
+                        None,
+                    ),
+                    "review_package": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in reversed(report.review_packages)
+                            if item.isolated_run_id == run.isolated_run_id
+                        ),
+                        None,
+                    ),
+                }
+                self._atomic_write(
+                    self.code_surgeon_run_path(report.project_id, run.isolated_run_id),
+                    _sanitize_code_surgeon_payload(
+                        run_payload,
+                        max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+                    ),
+                )
+            if unified_diff is not None:
+                reference_id = patch_proposal_id or (
+                    report.patch_proposals[-1].patch_proposal_id
+                    if report.patch_proposals
+                    else ""
+                )
+                if not reference_id:
+                    raise ValidationError(
+                        "A patch proposal id is required to store a Code Surgeon diff."
+                    )
+                if len(unified_diff.encode("utf-8")) > 2_000_000:
+                    raise ValidationError("Code Surgeon diff exceeds the hard storage limit.")
+                self._atomic_write_text(
+                    self.code_surgeon_patch_path(report.project_id, reference_id),
+                    unified_diff,
+                )
+        return report
+
+    def load_boba_code_surgeon(
+        self,
+        project_id: str,
+    ) -> BobaCodeSurgeonSetV1 | None:
+        try:
+            raw = self._read(self.code_surgeon_path(project_id), None)
+            return (
+                BobaCodeSurgeonSetV1.model_validate(raw)
+                if isinstance(raw, dict)
+                else None
+            )
+        except (PydanticValidationError, ValidationError):
+            return None
+
+    def load_boba_code_surgeon_patch(
+        self,
+        project_id: str,
+        patch_proposal_id: str,
+    ) -> str:
+        path = self.code_surgeon_patch_path(project_id, patch_proposal_id)
+        try:
+            if path.stat().st_size > 2_000_000:
+                raise ValidationError("Stored Code Surgeon diff exceeds the hard limit.")
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise ValidationError(
+                "Stored Code Surgeon diff is unavailable.",
+                details={
+                    "project_id": project_id,
+                    "patch_proposal_id": patch_proposal_id,
+                },
+            ) from exc
+        except OSError as exc:
+            raise ValidationError("Stored Code Surgeon diff could not be read.") from exc
+
+    def export_boba_code_surgeon(self, project_id: str) -> dict[str, Any]:
+        report = self.load_boba_code_surgeon(project_id)
+        if report is None:
+            raise ValidationError(
+                "BOBA Code Surgeon V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = report.model_dump(mode="json")
+        for run in payload.get("isolated_runs", []):
+            if isinstance(run, dict):
+                run["sanitized_worktree_reference"] = str(
+                    run.get("sanitized_worktree_reference", "")
+                ).replace("\\", "/")
+        export = {
+            "schema_version": "boba_code_surgeon_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "code_surgeon": payload,
+            "privacy": {
+                "full_unified_diffs_excluded": True,
+                "unbounded_logs_excluded": True,
+                "private_absolute_paths_excluded": True,
+                "credentials_excluded": True,
+                "repair_planner_report_excluded": True,
+                "root_cause_analyzer_report_excluded": True,
+                "external_api_used": False,
+                "network_access_used": False,
+                "push_used": False,
+                "remote_pr_created": False,
+                "merge_used": False,
+                "tag_used": False,
+                "package_installation_used": False,
+                "service_restart_used": False,
+                "destructive_git_used": False,
+            },
+        }
+        safe = _sanitize_code_surgeon_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Code Surgeon V1 export is invalid.")
+        return safe
+
+    def reset_boba_code_surgeon(self, project_id: str) -> bool:
+        report = self.load_boba_code_surgeon(project_id)
+        if report and any(
+            run.worktree_created
+            and run.run_status
+            in {
+                "worktree_ready",
+                "patch_applied",
+                "validation_running",
+                "validation_passed",
+                "local_commit_prepared",
+            }
+            for run in report.isolated_runs
+        ):
+            raise ValidationError(
+                "Code Surgeon metadata cannot be reset while an isolated worktree "
+                "may still require review or explicit cleanup."
+            )
+        directory = self.code_surgeon_path(project_id).parent.resolve()
+        project_directory = self._project_dir(project_id).resolve()
+        if directory.parent != project_directory or directory.name != "code_surgeon":
+            raise ValidationError("Invalid BOBA Code Surgeon reset path.")
+        with self._lock:
+            if not directory.exists():
+                return False
+            shutil.rmtree(directory)
+        return True
 
     def approval_rejection_learning_path(self, project_id: str) -> Path:
         return self._path(project_id, "approval_rejection_learning/index.json")

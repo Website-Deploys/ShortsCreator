@@ -500,4 +500,29 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("autoApplyRepairPatch");
     expect(resultsSection).not.toContain("autoResumeRepairWorkflow");
   });
+
+  it("shows BOBA Code Surgeon V1 approval and execution boundaries", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Code Surgeon V1");
+    expect(resultsSection).toContain("Code Surgeon never edits main directly.");
+    expect(resultsSection).toContain(
+      "I approve applying this exact patch to an isolated repair branch",
+    );
+    expect(resultsSection).toContain(
+      "Create a local review commit on the isolated repair branch.",
+    );
+    expect(resultsSection).toContain(
+      "No push, remote PR, merge, deployment, or release occurs here.",
+    );
+    expect(resultsSection).toContain(
+      "BOBA is testing the patch in a separate workspace.",
+    );
+    expect(resultsSection).toContain(
+      "The patch did not pass a required test. BOBA rejected it",
+    );
+    expect(resultsSection).toContain(
+      "Code Surgeon does not push, merge, deploy, install packages, or",
+    );
+  });
 });

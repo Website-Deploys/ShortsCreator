@@ -12,6 +12,7 @@ import {
   useBobaCaptionMotion,
   useBobaCandidateClipDiscovery,
   useBobaCandidateVideoScorer,
+  useBobaCodeSurgeon,
   useBobaErrorDoctor,
   useBobaObserver,
   useBobaRepairPlanner,
@@ -47,6 +48,7 @@ import {
   useExportCreatorProfile,
   useExportBobaApprovalRejectionLearning,
   useExportBobaCandidateVideoScorer,
+  useExportBobaCodeSurgeon,
   useExportBobaErrorDoctor,
   useExportBobaObserver,
   useExportBobaRepairPlanner,
@@ -76,11 +78,13 @@ import {
   useGenerateBobaResearchBrain,
   useGenerateBobaTrendTopicWatcher,
   useGenerateBobaWholeVideoUnderstanding,
+  useExecuteBobaCodeSurgeonPatch,
   usePlans,
   useRenderManifest,
   useResetCreatorProfile,
   useResetBobaApprovalRejectionLearning,
   useResetBobaCandidateVideoScorer,
+  useResetBobaCodeSurgeon,
   useResetBobaErrorDoctor,
   useResetBobaObserver,
   useResetBobaRepairPlanner,
@@ -95,9 +99,12 @@ import {
   useRecordBobaCreatorLearningEvent,
   useRecordBobaPerformanceFeedbackEvent,
   useResetBobaCreatorLearning,
+  usePrepareBobaCodeSurgeonCommit,
+  useProposeBobaCodeSurgeon,
   useScoreBobaCandidate,
   useSubmitClipFeedback,
   useUpdateCreatorProfile,
+  useValidateBobaCodeSurgeonPatch,
 } from "@/lib/queries";
 import { formatBytes, formatDuration, isTerminal } from "@/lib/rendering";
 import type {
@@ -105,6 +112,7 @@ import type {
   BobaBrainStateV1,
   BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
+  BobaCodeApprovalRecordV1,
   BobaClipBriefSetV1,
   BobaClipRankingV1,
   BobaScoutRecommendationV2,
@@ -8648,6 +8656,612 @@ function BobaRepairPlannerPanel({ projectId }: { projectId: string }) {
   );
 }
 
+function BobaCodeSurgeonPanel({ projectId }: { projectId: string }) {
+  const plannerQuery = useBobaRepairPlanner(projectId);
+  const surgeonQuery = useBobaCodeSurgeon(projectId);
+  const proposePatch = useProposeBobaCodeSurgeon(projectId);
+  const validatePatch = useValidateBobaCodeSurgeonPatch(projectId);
+  const executePatch = useExecuteBobaCodeSurgeonPatch(projectId);
+  const prepareCommit = usePrepareBobaCodeSurgeonCommit(projectId);
+  const exportSurgeon = useExportBobaCodeSurgeon(projectId);
+  const resetSurgeon = useResetBobaCodeSurgeon(projectId);
+  const [selectedCaseId, setSelectedCaseId] = useState("");
+  const [unifiedDiff, setUnifiedDiff] = useState("");
+  const [affectedPaths, setAffectedPaths] = useState("");
+  const [validationCommands, setValidationCommands] =
+    useState("git_diff_check");
+  const [reviewer, setReviewer] = useState("local-human-reviewer");
+  const [executionApproved, setExecutionApproved] = useState(false);
+  const [commitApproved, setCommitApproved] = useState(false);
+  const [status, setStatus] = useState("");
+  const planner = plannerQuery.data;
+  const report = surgeonQuery.data;
+  const codeCases =
+    planner?.repair_cases.filter((repairCase) =>
+      planner.execution_handoffs.some(
+        (handoff) =>
+          handoff.repair_case_id === repairCase.repair_case_id &&
+          handoff.target_module === "code_surgeon",
+      ),
+    ) ?? [];
+  const effectiveCaseId = selectedCaseId || codeCases[0]?.repair_case_id || "";
+  const proposal =
+    report?.patch_proposals[(report?.patch_proposals.length ?? 0) - 1];
+  const repairCase = proposal
+    ? report?.repair_cases.find(
+        (item) => item.code_repair_case_id === proposal.code_repair_case_id,
+      )
+    : report?.repair_cases[0];
+  const isolatedRun =
+    report?.isolated_runs[(report?.isolated_runs.length ?? 0) - 1];
+  const validationRun = isolatedRun
+    ? report?.validation_runs.find(
+        (item) => item.isolated_run_id === isolatedRun.isolated_run_id,
+      )
+    : undefined;
+  const rollback = isolatedRun
+    ? report?.rollback_records.find(
+        (item) => item.isolated_run_id === isolatedRun.isolated_run_id,
+      )
+    : undefined;
+  const reviewPackage = proposal
+    ? report?.review_packages.find(
+        (item) => item.patch_proposal_id === proposal.patch_proposal_id,
+      )
+    : undefined;
+  const busy =
+    proposePatch.isPending ||
+    validatePatch.isPending ||
+    executePatch.isPending ||
+    prepareCommit.isPending ||
+    exportSurgeon.isPending ||
+    resetSurgeon.isPending;
+  const companionMessage =
+    rollback || isolatedRun?.run_status === "rolled_back"
+      ? "The patch did not pass a required test. BOBA rejected it and rolled back the isolated attempt. Your main project was not changed."
+      : executePatch.isPending ||
+          isolatedRun?.run_status === "worktree_ready" ||
+          isolatedRun?.run_status === "patch_applied" ||
+          isolatedRun?.run_status === "validation_running"
+        ? "BOBA is testing the patch in a separate workspace. Your main project and source files remain untouched."
+        : isolatedRun?.run_status === "validation_passed" ||
+            isolatedRun?.run_status === "local_commit_prepared"
+          ? "The isolated patch passed its required checks. Human review is still required before any manual push or merge."
+          : proposal
+            ? `The problem appears to be inside the code. BOBA prepared a small patch that changes ${proposal.changed_file_count} file(s). Nothing has been modified yet. You can review the exact changes before allowing BOBA to test them in an isolated branch.`
+            : "Nothing has been modified. Code Surgeon needs an eligible Repair Planner handoff and an exact bounded patch before isolated testing can be approved.";
+
+  function parsedPaths() {
+    return affectedPaths
+      .split(/[\n,]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function parsedCommands() {
+    return validationCommands
+      .split(/[\n,]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function submitProposal(validateOnly: boolean) {
+    if (!effectiveCaseId) {
+      setStatus("Create a Repair Planner Code Surgeon handoff first.");
+      return;
+    }
+    if (!unifiedDiff.trim()) {
+      setStatus("Paste the exact bounded unified diff to review.");
+      return;
+    }
+    const mutation = validateOnly ? validatePatch : proposePatch;
+    setStatus("");
+    mutation.mutate(
+      {
+        repair_case_id: effectiveCaseId,
+        unified_diff: unifiedDiff,
+        proposal_source: "user_provided_diff",
+        base_branch: "main",
+        affected_paths: parsedPaths(),
+      },
+      {
+        onSuccess: (result) => {
+          const latest =
+            result.patch_proposals[result.patch_proposals.length - 1];
+          setExecutionApproved(false);
+          setCommitApproved(false);
+          setStatus(
+            latest
+              ? `Patch ${latest.execution_status.replace(/_/g, " ")}; ${latest.changed_file_count} file(s), +${latest.additions}/-${latest.deletions}.`
+              : "No patch was produced because the handoff remains blocked.",
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function approvalRecord(
+    approvalType: "isolated_patch_execution" | "local_commit_creation",
+  ): BobaCodeApprovalRecordV1 | null {
+    if (!proposal) return null;
+    const commands = parsedCommands();
+    return {
+      approval_id: `approval_${approvalType}_${Date.now()}`,
+      code_repair_case_id: proposal.code_repair_case_id,
+      patch_proposal_id: proposal.patch_proposal_id,
+      approval_type: approvalType,
+      approved: true,
+      approved_by: reviewer.trim() || "local-human-reviewer",
+      approved_base_commit_sha: proposal.base_commit_sha,
+      approved_diff_sha256: proposal.diff_sha256,
+      approved_scope: proposal.files.map((item) => item.path),
+      approved_validation_commands: commands,
+      approved_special_paths: proposal.files
+        .filter((item) => item.special_approval_required)
+        .map((item) => item.path),
+      approval_expires_at: null,
+      explicit_confirmation: true,
+      warnings: [],
+    };
+  }
+
+  function executeApprovedPatch() {
+    const approval = approvalRecord("isolated_patch_execution");
+    const commands = parsedCommands();
+    if (!proposal || !approval || !executionApproved) {
+      setStatus("Exact isolated-patch approval is required.");
+      return;
+    }
+    if (commands.length === 0) {
+      setStatus("At least one approved validation command is required.");
+      return;
+    }
+    executePatch.mutate(
+      {
+        patch_proposal_id: proposal.patch_proposal_id,
+        approval,
+        approved_validation_commands: commands,
+      },
+      {
+        onSuccess: (result) => {
+          const latest = result.isolated_runs[result.isolated_runs.length - 1];
+          setCommitApproved(false);
+          setStatus(
+            latest
+              ? `Isolated execution status: ${latest.run_status.replace(/_/g, " ")}.`
+              : "Execution remained blocked.",
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function createLocalReviewCommit() {
+    const approval = approvalRecord("local_commit_creation");
+    if (!isolatedRun || !approval || !commitApproved) {
+      setStatus("Separate local-commit approval is required.");
+      return;
+    }
+    prepareCommit.mutate(
+      {
+        isolated_run_id: isolatedRun.isolated_run_id,
+        approval,
+      },
+      {
+        onSuccess: (result) => {
+          const latest =
+            result.review_packages[result.review_packages.length - 1];
+          setStatus(
+            latest?.commit_created
+              ? `Local review commit prepared: ${latest.local_commit_sha.slice(0, 12)}. Nothing was pushed.`
+              : "No local commit was created.",
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportSurgeon.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(`boba-code-surgeon-v1-${projectId}.json`, payload);
+        setStatus("Sanitized Code Surgeon review package downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset Code Surgeon metadata only? Active isolated worktrees block reset and must be reviewed separately.",
+      )
+    ) {
+      return;
+    }
+    resetSurgeon.mutate(undefined, {
+      onSuccess: () => setStatus("Code Surgeon metadata reset. Source code was not deleted."),
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-4xl">
+          <p className="text-sm font-semibold text-white">
+            BOBA Code Surgeon V1
+          </p>
+          <p className="text-xs text-muted">
+            Code Surgeon never edits main directly.
+          </p>
+          <p className="text-xs text-muted">
+            Code Surgeon does not push, merge, deploy, install packages, or
+            restart services.
+          </p>
+          <p className="text-xs text-amber-100">
+            A passing patch still requires human review.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !report}
+            onClick={exportArtifact}
+            className="rounded border border-cyan-200/30 px-2.5 py-1.5 text-[11px] text-cyan-100 disabled:opacity-50"
+          >
+            Export safe review package
+          </button>
+          <button
+            type="button"
+            disabled={busy || !report}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Code Surgeon metadata
+          </button>
+        </div>
+      </div>
+      <p className="mt-3 rounded border border-sky-300/20 bg-sky-300/[0.04] p-3 text-xs text-sky-100">
+        {companionMessage}
+      </p>
+
+      <details className="mt-4 rounded border border-white/10 p-3" open={!report}>
+        <summary className="cursor-pointer text-xs font-semibold text-white">
+          PROPOSAL
+        </summary>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <label className="text-xs text-muted">
+            Saved Repair Planner code case
+            <select
+              value={effectiveCaseId}
+              onChange={(event) => setSelectedCaseId(event.target.value)}
+              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+            >
+              {codeCases.length === 0 && (
+                <option value="">No Code Surgeon handoff available</option>
+              )}
+              {codeCases.map((item) => (
+                <option key={item.repair_case_id} value={item.repair_case_id}>
+                  {item.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-muted">
+            Exact affected paths, comma or line separated
+            <textarea
+              value={affectedPaths}
+              onChange={(event) => setAffectedPaths(event.target.value)}
+              rows={3}
+              placeholder="src/olympus/example.py"
+              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-white"
+            />
+          </label>
+        </div>
+        <label className="mt-3 block text-xs text-muted">
+          Reviewed unified diff
+          <textarea
+            value={unifiedDiff}
+            onChange={(event) => setUnifiedDiff(event.target.value)}
+            rows={10}
+            placeholder={"diff --git a/path b/path\n--- a/path\n+++ b/path\n@@ ..."}
+            className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-[11px] text-white"
+          />
+        </label>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => submitProposal(false)}
+            className="rounded border border-cyan-200/30 px-3 py-2 text-xs text-cyan-100 disabled:opacity-50"
+          >
+            Prepare proposal only
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => submitProposal(true)}
+            className="rounded border border-violet-200/30 px-3 py-2 text-xs text-violet-100 disabled:opacity-50"
+          >
+            Validate patch without applying
+          </button>
+        </div>
+      </details>
+
+      {status && <p className="mt-3 text-xs text-cyan-100">{status}</p>}
+      {surgeonQuery.isError && (
+        <p className="mt-3 text-xs text-rose-100">
+          Code Surgeon report could not be loaded.
+        </p>
+      )}
+
+      {!report ? (
+        <p className="mt-4 text-xs text-muted">
+          Nothing has been modified. Select a saved Code Surgeon handoff and
+          review the exact bounded diff before requesting isolated validation.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ["Cases", report.surgeon_summary.total_repair_cases],
+              ["Eligible", report.surgeon_summary.eligible_case_count],
+              ["Proposals", report.surgeon_summary.proposal_count],
+              ["Executions", report.surgeon_summary.isolated_execution_count],
+              ["Validation pass", report.surgeon_summary.validation_pass_count],
+              ["Rollbacks", report.surgeon_summary.rollback_count],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="rounded border border-white/10 p-2 text-xs text-muted"
+              >
+                <p className="font-semibold text-white">{value}</p>
+                <p>{label}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">WHY THIS CHANGE</p>
+              <p className="mt-1">
+                {repairCase?.justification || "No justified code change is available."}
+              </p>
+              <p className="mt-1">
+                Evidence: {repairCase?.evidence_strength ?? "unknown"} ·
+                Confidence {formatPercent(repairCase?.confidence ?? null)} ·
+                Eligible: {repairCase?.execution_eligible ? "Yes" : "No"}
+              </p>
+              {repairCase?.blocked_reason && (
+                <p className="mt-1 text-rose-100">
+                  Blocked: {repairCase.blocked_reason}
+                </p>
+              )}
+            </div>
+            <div className="rounded border border-rose-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-rose-100">RISKS</p>
+              <p className="mt-1">
+                Patch risk: {proposal?.risk_level ?? "not available"} · Apply
+                check: {proposal?.applies_cleanly ? "Passed" : "Not passed"} ·
+                Scope: {proposal?.scope_check_passed ? "Passed" : "Blocked"} ·
+                Secret scan:{" "}
+                {proposal?.secret_scan_passed ? "Passed" : "Blocked"}
+              </p>
+              <RepairPlannerList
+                items={[
+                  ...(proposal?.warnings ?? []),
+                  ...(repairCase?.warnings ?? []),
+                ]}
+                empty="No additional bounded warning is recorded."
+              />
+            </div>
+          </div>
+
+          <details className="mt-3 rounded border border-white/10 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              FILES THAT WILL CHANGE ({proposal?.changed_file_count ?? 0})
+            </summary>
+            {proposal ? (
+              <div className="mt-3 space-y-2 text-xs text-muted">
+                <p>
+                  Base: {proposal.base_branch} @{" "}
+                  {proposal.base_commit_sha.slice(0, 12)} · Diff:{" "}
+                  {proposal.diff_sha256.slice(0, 12)} · Branch:{" "}
+                  {proposal.proposed_branch}
+                </p>
+                <p>
+                  +{proposal.additions}/-{proposal.deletions} ·{" "}
+                  {formatBytes(proposal.patch_size_bytes)}
+                </p>
+                {proposal.files.map((file) => (
+                  <div
+                    key={file.path}
+                    className="rounded border border-white/10 p-2"
+                  >
+                    <p className="font-mono text-white">{file.path}</p>
+                    <p>
+                      {file.operation} · +{file.additions}/-{file.deletions} ·{" "}
+                      {file.special_approval_required
+                        ? "Special approval required"
+                        : "Standard bounded path"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-muted">No patch is available.</p>
+            )}
+          </details>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-emerald-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-emerald-100">
+                VALIDATION REQUIRED
+              </p>
+              <RepairPlannerList
+                items={repairCase?.validation_requirements ?? []}
+              />
+              <label className="mt-3 block">
+                Exact allowlisted command names
+                <input
+                  value={validationCommands}
+                  onChange={(event) => setValidationCommands(event.target.value)}
+                  placeholder="git_diff_check, ruff, pytest, mypy"
+                  className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-white"
+                />
+              </label>
+              <p className="mt-2 text-[11px]">
+                Unknown, unavailable, skipped, timed-out, or failed required
+                checks reject the patch.
+              </p>
+            </div>
+            <div className="rounded border border-sky-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-sky-100">ROLLBACK STATUS</p>
+              <p className="mt-1">
+                {rollback
+                  ? `${rollback.rollback_status.replace(/_/g, " ")} · Patch removed: ${rollback.patch_removed ? "Yes" : "No"} · Original worktree unchanged: ${rollback.source_worktree_unchanged ? "Yes" : "No"}`
+                  : "No rollback has been required."}
+              </p>
+              <RepairPlannerList
+                items={repairCase?.rollback_requirements ?? []}
+              />
+            </div>
+          </div>
+
+          <div className="mt-3 rounded border border-orange-300/20 p-3 text-xs text-muted">
+            <p className="font-semibold text-orange-100">APPROVAL REQUIRED</p>
+            <label className="mt-2 block">
+              Reviewer identifier
+              <input
+                value={reviewer}
+                onChange={(event) => setReviewer(event.target.value)}
+                className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+              />
+            </label>
+            <label className="mt-3 flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={executionApproved}
+                onChange={(event) => setExecutionApproved(event.target.checked)}
+              />
+              <span>
+                I approve applying this exact patch to an isolated repair branch
+                based on the displayed base commit and diff hash.
+              </span>
+            </label>
+            <button
+              type="button"
+              disabled={
+                busy ||
+                !proposal ||
+                proposal.execution_status === "blocked" ||
+                !executionApproved
+              }
+              onClick={executeApprovedPatch}
+              className="mt-3 rounded border border-orange-200/30 px-3 py-2 text-xs text-orange-100 disabled:opacity-50"
+            >
+              Apply and validate in isolated branch
+            </button>
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">EXECUTION STATUS</p>
+              <p className="mt-1">
+                {isolatedRun
+                  ? `${isolatedRun.run_status.replace(/_/g, " ")} · Worktree: ${isolatedRun.worktree_created ? "Created" : "Not created"} · Patch applied: ${isolatedRun.patch_applied ? "Yes" : "No"}`
+                  : "Proposal only; no isolated code modification has occurred."}
+              </p>
+              {isolatedRun?.stop_reason && (
+                <p className="mt-1 text-rose-100">
+                  Stop reason: {isolatedRun.stop_reason}
+                </p>
+              )}
+            </div>
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">VALIDATION RESULTS</p>
+              <p className="mt-1">
+                {validationRun
+                  ? `Required checks: ${validationRun.required_checks_passed ? "Passed" : "Failed"} · Acceptance: ${validationRun.acceptance_criteria_met ? "Met" : "Not met"}`
+                  : "Validation has not run."}
+              </p>
+              {validationRun?.results.map((result) => (
+                <p key={result.validation_result_id}>
+                  {result.name}: {result.status.replace(/_/g, " ")}
+                  {result.exit_code === null ? "" : ` (${result.exit_code})`}
+                </p>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-3 rounded border border-fuchsia-300/20 p-3 text-xs text-muted">
+            <p className="font-semibold text-fuchsia-100">HUMAN REVIEW</p>
+            <p className="mt-1">
+              {reviewPackage?.validation_summary ??
+                "Review package is not available yet."}
+            </p>
+            <RepairPlannerList
+              items={reviewPackage?.reviewer_checklist ?? []}
+            />
+            {reviewPackage && (
+              <details className="mt-3 rounded border border-white/10 p-2">
+                <summary className="cursor-pointer font-semibold text-white">
+                  PR title and body preview
+                </summary>
+                <p className="mt-2 font-semibold text-white">
+                  {reviewPackage.PR_title}
+                </p>
+                <pre className="mt-2 whitespace-pre-wrap text-[11px]">
+                  {reviewPackage.PR_body}
+                </pre>
+              </details>
+            )}
+            <label className="mt-3 flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={commitApproved}
+                onChange={(event) => setCommitApproved(event.target.checked)}
+              />
+              <span>
+                Create a local review commit on the isolated repair branch.
+              </span>
+            </label>
+            <button
+              type="button"
+              disabled={
+                busy ||
+                isolatedRun?.run_status !== "validation_passed" ||
+                !commitApproved
+              }
+              onClick={createLocalReviewCommit}
+              className="mt-3 rounded border border-fuchsia-200/30 px-3 py-2 text-xs text-fuchsia-100 disabled:opacity-50"
+            >
+              Prepare local review commit
+            </button>
+            <p className="mt-2 text-[11px] text-amber-100">
+              No push, remote PR, merge, deployment, or release occurs here.
+            </p>
+          </div>
+
+          {(report.warnings.length > 0 || report.limitations.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Code Surgeon warnings and limitations:{" "}
+              {[...report.warnings, ...report.limitations]
+                .filter(Boolean)
+                .slice(0, 24)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -9487,6 +10101,7 @@ export function ResultsSection({
     <BobaRootCauseAnalyzerPanel projectId={projectId} />
   );
   const repairPlannerPanel = <BobaRepairPlannerPanel projectId={projectId} />;
+  const codeSurgeonPanel = <BobaCodeSurgeonPanel projectId={projectId} />;
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -9516,6 +10131,7 @@ export function ResultsSection({
         {errorDoctorPanel}
         {rootCauseAnalyzerPanel}
         {repairPlannerPanel}
+        {codeSurgeonPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -9557,6 +10173,7 @@ export function ResultsSection({
         {errorDoctorPanel}
         {rootCauseAnalyzerPanel}
         {repairPlannerPanel}
+        {codeSurgeonPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -9594,6 +10211,7 @@ export function ResultsSection({
         {errorDoctorPanel}
         {rootCauseAnalyzerPanel}
         {repairPlannerPanel}
+        {codeSurgeonPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -9631,6 +10249,7 @@ export function ResultsSection({
       {errorDoctorPanel}
       {rootCauseAnalyzerPanel}
       {repairPlannerPanel}
+      {codeSurgeonPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}
