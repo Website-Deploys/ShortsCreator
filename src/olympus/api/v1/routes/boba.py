@@ -252,6 +252,13 @@ class RootCauseAnalyzerGenerateRequest(BaseModel):
     dry_run: bool = False
 
 
+class RepairPlannerGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    planning_context: dict[str, Any] = Field(default_factory=dict, max_length=64)
+    dry_run: bool = False
+
+
 class ScoutScoreRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1500,6 +1507,89 @@ async def reset_root_cause_analyzer_report(
         "repairs_applied": False,
         "fallback_tools_executed": False,
         "workflow_resume_authorized": False,
+    }
+
+
+@router.post("/projects/{project_id}/repair-planner")
+async def create_repair_planner_report(
+    project_id: str,
+    body: RepairPlannerGenerateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.generate_boba_repair_planner(
+        project_id,
+        planning_context=body.planning_context,
+        dry_run=body.dry_run,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/repair-planner")
+async def get_repair_planner_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = boba.load_boba_repair_planner(project_id)
+    if report is None:
+        raise NotFoundError(
+            "BOBA Repair Planner V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/repair-planner/export")
+async def export_repair_planner_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_boba_repair_planner(project_id) is None:
+        raise NotFoundError(
+            "BOBA Repair Planner V1 is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_boba_repair_planner(project_id)
+
+
+@router.delete("/projects/{project_id}/repair-planner")
+async def reset_repair_planner_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_boba_repair_planner(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "repair_planner_removed": removed,
+        "root_cause_analyzer_removed": False,
+        "error_doctor_removed": False,
+        "observer_removed": False,
+        "other_boba_artifacts_removed": False,
+        "unrelated_files_deleted": False,
+        "validators_executed": False,
+        "commands_executed": False,
+        "code_modified": False,
+        "artifacts_modified": False,
+        "media_downloaded": False,
+        "media_ingested": False,
+        "rendering_triggered": False,
+        "repairs_applied": False,
+        "fallback_tools_executed": False,
+        "workflow_resumed": False,
+        "services_restarted": False,
+        "packages_installed": False,
     }
 
 

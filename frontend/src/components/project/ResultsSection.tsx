@@ -14,6 +14,7 @@ import {
   useBobaCandidateVideoScorer,
   useBobaErrorDoctor,
   useBobaObserver,
+  useBobaRepairPlanner,
   useBobaRootCauseAnalyzer,
   useBobaRightsPermissionGate,
   useBobaCandidates,
@@ -48,6 +49,7 @@ import {
   useExportBobaCandidateVideoScorer,
   useExportBobaErrorDoctor,
   useExportBobaObserver,
+  useExportBobaRepairPlanner,
   useExportBobaRootCauseAnalyzer,
   useExportBobaRightsPermissionGate,
   useExportBobaContentScoutV2,
@@ -64,6 +66,7 @@ import {
   useGenerateBobaCandidateVideoScorer,
   useGenerateBobaErrorDoctor,
   useGenerateBobaObserver,
+  useGenerateBobaRepairPlanner,
   useGenerateBobaRootCauseAnalyzer,
   useGenerateBobaRightsPermissionGate,
   useGenerateBobaContentScoutV2,
@@ -80,6 +83,7 @@ import {
   useResetBobaCandidateVideoScorer,
   useResetBobaErrorDoctor,
   useResetBobaObserver,
+  useResetBobaRepairPlanner,
   useResetBobaRootCauseAnalyzer,
   useResetBobaRightsPermissionGate,
   useResetBobaContentScoutV2,
@@ -7983,6 +7987,667 @@ function BobaRootCauseAnalyzerPanel({ projectId }: { projectId: string }) {
   );
 }
 
+function RepairPlannerList({
+  items,
+  empty = "Not available",
+}: {
+  items: string[];
+  empty?: string;
+}) {
+  const visible = items.filter(Boolean).slice(0, 16);
+  if (visible.length === 0) {
+    return <p className="mt-1 text-muted">{empty}</p>;
+  }
+  return (
+    <ul className="mt-1 list-disc space-y-1 pl-4 text-muted">
+      {visible.map((item, index) => (
+        <li key={`${index}-${item}`}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function BobaRepairPlannerPanel({ projectId }: { projectId: string }) {
+  const plannerQuery = useBobaRepairPlanner(projectId);
+  const generatePlanner = useGenerateBobaRepairPlanner(projectId);
+  const exportPlanner = useExportBobaRepairPlanner(projectId);
+  const resetPlanner = useResetBobaRepairPlanner(projectId);
+  const [planningContextJson, setPlanningContextJson] = useState("");
+  const [status, setStatus] = useState("");
+  const planner = plannerQuery.data;
+  const busy =
+    generatePlanner.isPending ||
+    exportPlanner.isPending ||
+    resetPlanner.isPending;
+
+  function generate() {
+    let planningContext: Record<string, unknown> = {};
+    if (planningContextJson.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(planningContextJson);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          setStatus("Planning context must be a JSON object.");
+          return;
+        }
+        planningContext = parsed as Record<string, unknown>;
+      } catch {
+        setStatus("Planning context is not valid JSON.");
+        return;
+      }
+    }
+    setStatus("");
+    generatePlanner.mutate(
+      { planning_context: planningContext },
+      {
+        onSuccess: (result) => {
+          setStatus(
+            `Repair Planner saved ${result.planner_summary.total_repair_cases} advisory case(s).`,
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportPlanner.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(`boba-repair-planner-v1-${projectId}.json`, payload);
+        setStatus("Safe compact Repair Planner export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset this project's BOBA Repair Planner V1 artifact only? Root Cause Analyzer, Error Doctor, Observer, and all other BOBA artifacts remain untouched.",
+      )
+    ) {
+      return;
+    }
+    resetPlanner.mutate(undefined, {
+      onSuccess: () => {
+        setStatus(
+          "BOBA Repair Planner V1 reset; Root Cause Analyzer, Error Doctor, Observer, and all other BOBA artifacts remain untouched.",
+        );
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-violet-300/20 bg-violet-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-4xl">
+          <p className="text-sm font-semibold text-white">
+            BOBA Repair Planner V1
+          </p>
+          <p className="text-xs text-muted">
+            {
+              "BOBA Repair Planner V1 creates repair plans only. It does not execute commands, edit code, modify files, install tools, restart services, activate fallback tools, or resume workflows."
+            }
+          </p>
+          <p className="text-xs text-amber-100">
+            {"A repair plan is not proof that the repair will succeed."}
+          </p>
+          <p className="text-xs text-amber-100">
+            {
+              "Approved repairs must pass validation and output-quality review before Olympus continues."
+            }
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !planner}
+            onClick={exportArtifact}
+            className="rounded border border-violet-200/30 px-2.5 py-1.5 text-[11px] text-violet-100 disabled:opacity-50"
+          >
+            Export safe repair plan
+          </button>
+          <button
+            type="button"
+            disabled={busy || !planner}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Repair Planner V1
+          </button>
+        </div>
+      </div>
+
+      <details className="mt-4 rounded border border-white/10 p-3">
+        <summary className="cursor-pointer text-xs font-semibold text-white">
+          Optional bounded planning context
+        </summary>
+        <label className="mt-3 block text-xs text-muted">
+          Planning context JSON
+          <textarea
+            value={planningContextJson}
+            onChange={(event) => setPlanningContextJson(event.target.value)}
+            rows={3}
+            placeholder='{"cases":{"analysis_case_id":{"valid_checkpoint_available":true}}}'
+            className="mt-1 w-full rounded border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white"
+          />
+        </label>
+      </details>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={generate}
+          className="rounded border border-violet-200/30 px-3 py-2 text-xs text-violet-100 disabled:opacity-50"
+        >
+          {generatePlanner.isPending
+            ? "Planning from saved root causes..."
+            : "Create plans from saved Root Cause Analyzer"}
+        </button>
+        <p className="text-[11px] text-muted">
+          This reads the saved Root Cause Analyzer artifact only. It does not
+          regenerate diagnostics or execute any proposed step.
+        </p>
+      </div>
+
+      {status && <p className="mt-3 text-xs text-violet-100">{status}</p>}
+      {plannerQuery.isError && (
+        <p className="mt-3 text-xs text-rose-100">
+          Repair Planner report could not be loaded.
+        </p>
+      )}
+
+      {!planner ? (
+        <p className="mt-4 text-xs text-muted">
+          Repair Planner report is not available. Create it from the saved Root
+          Cause Analyzer report; missing analyzer data produces an honest
+          needs-more-evidence result.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ["Cases", planner.planner_summary.total_repair_cases],
+              ["Plan ready", planner.planner_summary.plan_ready_count],
+              ["Conditional", planner.planner_summary.conditional_plan_count],
+              [
+                "More evidence",
+                planner.planner_summary.needs_more_evidence_count,
+              ],
+              ["Safety blocked", planner.planner_summary.safety_block_count],
+              ["Human decision", planner.planner_summary.human_decision_count],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="rounded border border-white/10 p-2 text-xs text-muted"
+              >
+                <p className="font-semibold text-white">{value}</p>
+                <p>{label}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-3">
+            <div className="rounded border border-emerald-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">Safest strategy</p>
+              <p className="mt-1">
+                {planner.planner_summary.safest_repair_strategy ||
+                  "Not available"}
+              </p>
+            </div>
+            <div className="rounded border border-cyan-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">Most reversible</p>
+              <p className="mt-1">
+                {planner.planner_summary.most_reversible_strategy ||
+                  "Not available"}
+              </p>
+            </div>
+            <div className="rounded border border-rose-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">Highest risk case</p>
+              <p className="mt-1">
+                {planner.planner_summary.highest_risk_case || "Not available"}
+              </p>
+            </div>
+          </div>
+
+          <details className="mt-4 rounded border border-white/10 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              Advisory repair planning cases ({planner.repair_cases.length})
+            </summary>
+            <div className="mt-3 space-y-4">
+              {planner.repair_cases.map((repairCase) => {
+                const strategies = planner.repair_strategies.filter(
+                  (item) => item.repair_case_id === repairCase.repair_case_id,
+                );
+                const recommended = strategies.find(
+                  (item) =>
+                    item.repair_strategy_id ===
+                    repairCase.recommended_strategy_id,
+                );
+                const alternatives = strategies.filter((item) =>
+                  repairCase.alternative_strategy_ids.includes(
+                    item.repair_strategy_id,
+                  ),
+                );
+                const rejected = planner.rejected_strategies.filter(
+                  (item) => item.repair_case_id === repairCase.repair_case_id,
+                );
+                const risk = planner.risk_assessments.find(
+                  (item) =>
+                    item.risk_assessment_id === repairCase.risk_assessment_id,
+                );
+                const checkpoint = planner.checkpoint_plans.find(
+                  (item) =>
+                    item.checkpoint_plan_id === repairCase.checkpoint_plan_id,
+                );
+                const rollback = planner.rollback_plans.find(
+                  (item) =>
+                    item.rollback_plan_id === repairCase.rollback_plan_id,
+                );
+                const validation = planner.validation_plans.find(
+                  (item) =>
+                    item.validation_plan_id === repairCase.validation_plan_id,
+                );
+                const quality = planner.quality_preservation_plans.find(
+                  (item) =>
+                    item.quality_preservation_plan_id ===
+                    repairCase.quality_preservation_plan_id,
+                );
+                const approval = planner.approval_gates.find(
+                  (item) =>
+                    item.approval_gate_id === repairCase.approval_gate_id,
+                );
+                const handoffs = planner.execution_handoffs.filter((item) =>
+                  repairCase.execution_handoff_ids.includes(item.handoff_id),
+                );
+                const blockedActions = [
+                  ...(recommended?.prohibited_actions ?? []),
+                  ...(approval?.prohibited_actions ?? []),
+                  ...handoffs.flatMap((item) => item.prohibited_actions),
+                ].filter(
+                  (item, index, items) => item && items.indexOf(item) === index,
+                );
+
+                return (
+                  <article
+                    key={repairCase.repair_case_id}
+                    className="rounded border border-violet-300/20 bg-black/10 p-3 text-xs text-muted"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-white">
+                          {repairCase.title}
+                        </p>
+                        <p>
+                          Status:{" "}
+                          {repairCase.planning_status.replace(/_/g, " ")} ·
+                          Repair needed: {repairCase.repair_needed ? "Yes" : "No"}{" "}
+                          · Scope: {repairCase.repair_scope.replace(/_/g, " ")}
+                        </p>
+                      </div>
+                      <span className="rounded bg-white/5 px-2 py-1 text-[11px] text-white">
+                        Confidence {formatPercent(repairCase.confidence)}
+                      </span>
+                    </div>
+                    <p className="mt-2">
+                      <span className="font-semibold text-white">
+                        Strongest supported root cause:
+                      </span>{" "}
+                      {repairCase.selected_root_cause_summary ||
+                        "More evidence is required."}
+                    </p>
+                    {repairCase.blocked_reason && (
+                      <p className="mt-1 text-rose-100">
+                        Blocked: {repairCase.blocked_reason}
+                      </p>
+                    )}
+
+                    <div className="mt-3 rounded border border-emerald-300/20 p-3">
+                      <p className="font-semibold text-emerald-100">
+                        RECOMMENDED PLAN
+                      </p>
+                      {recommended ? (
+                        <>
+                          <p className="mt-1 font-semibold text-white">
+                            {recommended.title}
+                          </p>
+                          <p>
+                            {recommended.strategy_type.replace(/_/g, " ")} ·
+                            Risk {recommended.estimated_risk.replace(/_/g, " ")}{" "}
+                            · Complexity{" "}
+                            {recommended.estimated_complexity.replace(/_/g, " ")}{" "}
+                            · Reversibility{" "}
+                            {recommended.reversibility.replace(/_/g, " ")}
+                          </p>
+                          <p className="mt-2">
+                            Technical: {recommended.description}
+                          </p>
+                          <p className="mt-1 text-cyan-100">
+                            Easy explanation: {recommended.easy_explanation}
+                          </p>
+                          <p className="mt-2 font-semibold text-white">
+                            Proposed future steps
+                          </p>
+                          {recommended.proposed_steps.length > 0 ? (
+                            <ol className="mt-1 list-decimal space-y-1 pl-4">
+                              {recommended.proposed_steps.map((step) => (
+                                <li key={step.repair_step_id}>
+                                  {step.description} Owner:{" "}
+                                  {step.suggested_owner_module || "human_operator"}
+                                  . Approval required: Yes.
+                                </li>
+                              ))}
+                            </ol>
+                          ) : (
+                            <p className="mt-1">No executable step is proposed.</p>
+                          )}
+                          <p className="mt-2">
+                            Expected result: {recommended.expected_result}
+                          </p>
+                          <p>
+                            Expected quality effect:{" "}
+                            {recommended.expected_quality_effect}
+                          </p>
+                          <p>
+                            Expected workflow effect:{" "}
+                            {recommended.expected_workflow_effect}
+                          </p>
+                          {(recommended.maximum_attempts ||
+                            recommended.maximum_recovery_duration_seconds) && (
+                            <p className="mt-1">
+                              Recovery budget: maximum{" "}
+                              {recommended.maximum_attempts ?? "bounded"} attempt(s)
+                              and{" "}
+                              {recommended.maximum_recovery_duration_seconds ??
+                                "bounded"}{" "}
+                              seconds.
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="mt-1">
+                          No strategy is recommended until more evidence or human
+                          review is available.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="mt-3 rounded border border-cyan-300/20 p-3">
+                      <p className="font-semibold text-cyan-100">
+                        ALTERNATIVE PLANS
+                      </p>
+                      {alternatives.length > 0 ? (
+                        <div className="mt-2 space-y-2">
+                          {alternatives.map((strategy) => (
+                            <div
+                              key={strategy.repair_strategy_id}
+                              className="rounded border border-white/10 p-2"
+                            >
+                              <p className="font-semibold text-white">
+                                {strategy.title}
+                              </p>
+                              <p>{strategy.description}</p>
+                              <p>
+                                {strategy.strategy_type.replace(/_/g, " ")} ·
+                                Risk {strategy.estimated_risk.replace(/_/g, " ")}{" "}
+                                · Reversibility{" "}
+                                {strategy.reversibility.replace(/_/g, " ")}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-1">
+                          No safe alternative is supported by current evidence.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="mt-3 rounded border border-white/10 p-3">
+                      <p className="font-semibold text-white">WHY THIS PLAN</p>
+                      <p className="mt-1">
+                        {recommended?.rationale ||
+                          "No plan is selected because current evidence is insufficient or blocked."}
+                      </p>
+                      <p className="mt-1">
+                        Workflow impact: {repairCase.expected_workflow_impact}
+                      </p>
+                    </div>
+
+                    <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                      <div className="rounded border border-rose-300/20 p-3">
+                        <p className="font-semibold text-rose-100">RISKS</p>
+                        <p className="mt-1">
+                          Overall: {risk?.overall_risk.replace(/_/g, " ") ?? "unknown"}
+                          . Output quality:{" "}
+                          {risk?.output_quality_risk.replace(/_/g, " ") ??
+                            "unknown"}
+                          . Source data:{" "}
+                          {risk?.source_data_risk.replace(/_/g, " ") ?? "unknown"}.
+                        </p>
+                        <RepairPlannerList
+                          items={[
+                            ...(risk?.blockers ?? []),
+                            ...(risk?.residual_risks ?? []),
+                          ]}
+                          empty="No additional risk detail is available."
+                        />
+                      </div>
+                      <div className="rounded border border-amber-300/20 p-3">
+                        <p className="font-semibold text-amber-100">CHECKPOINT</p>
+                        <p className="mt-1">
+                          Required: {checkpoint?.checkpoint_required ? "Yes" : "No"}
+                          . Type:{" "}
+                          {checkpoint?.checkpoint_type.replace(/_/g, " ") ??
+                            "unknown"}
+                          . Source media untouched:{" "}
+                          {checkpoint?.source_media_must_remain_untouched
+                            ? "Required"
+                            : "Not confirmed"}
+                          .
+                        </p>
+                        <RepairPlannerList
+                          items={[
+                            ...(checkpoint?.artifacts_to_preserve ?? []),
+                            ...(checkpoint?.state_to_preserve ?? []),
+                          ]}
+                          empty="No checkpoint state is required for this no-action plan."
+                        />
+                      </div>
+                      <div className="rounded border border-sky-300/20 p-3">
+                        <p className="font-semibold text-sky-100">ROLLBACK</p>
+                        <p className="mt-1">
+                          Required: {rollback?.rollback_required ? "Yes" : "No"}.
+                          Scope:{" "}
+                          {rollback?.rollback_scope.replace(/_/g, " ") ??
+                            "unknown"}
+                          . Destructive rollback blocked:{" "}
+                          {rollback?.destructive_rollback_blocked ? "Yes" : "No"}.
+                        </p>
+                        <RepairPlannerList
+                          items={[
+                            ...(rollback?.rollback_trigger_conditions ?? []),
+                            ...(rollback?.rollback_steps ?? []),
+                            ...(rollback?.rollback_validation ?? []),
+                          ]}
+                          empty="No rollback operation is required for this no-action plan."
+                        />
+                      </div>
+                      <div className="rounded border border-emerald-300/20 p-3">
+                        <p className="font-semibold text-emerald-100">
+                          VALIDATION REQUIRED
+                        </p>
+                        <p className="mt-1">
+                          Validator Runner:{" "}
+                          {validation?.requires_validator_runner ? "Required" : "No"}
+                          . Validators:{" "}
+                          {validation?.required_validators.join(", ") ||
+                            "Not available"}
+                          .
+                        </p>
+                        <RepairPlannerList
+                          items={[
+                            ...(validation?.acceptance_criteria ?? []),
+                            ...(validation?.rejection_criteria ?? []),
+                          ]}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                      <div className="rounded border border-fuchsia-300/20 p-3">
+                        <p className="font-semibold text-fuchsia-100">
+                          QUALITY REQUIREMENTS
+                        </p>
+                        <RepairPlannerList
+                          items={[
+                            ...(quality?.non_negotiable_requirements ?? []),
+                            ...(quality?.unacceptable_degradations ?? []),
+                            ...(quality?.fallback_acceptance_rules ?? []),
+                          ]}
+                        />
+                      </div>
+                      <div className="rounded border border-orange-300/20 p-3">
+                        <p className="font-semibold text-orange-100">
+                          APPROVAL REQUIRED
+                        </p>
+                        <p className="mt-1">
+                          Status:{" "}
+                          {approval?.approval_status.replace(/_/g, " ") ??
+                            "unknown"}
+                          . Final human approval:{" "}
+                          {approval?.final_human_approval_required
+                            ? "Required"
+                            : "Not required"}
+                          . Safety gate:{" "}
+                          {approval?.safety_gate_required ? "Required" : "No"}.
+                          Rights gate:{" "}
+                          {approval?.rights_gate_required ? "Required" : "No"}.
+                        </p>
+                        <RepairPlannerList
+                          items={[
+                            ...(approval?.required_approvals ?? []),
+                            ...(approval?.actions_requiring_approval ?? []),
+                          ]}
+                        />
+                      </div>
+                    </div>
+
+                    <details className="mt-3 rounded border border-white/10 p-3">
+                      <summary className="cursor-pointer font-semibold text-white">
+                        Execution handoffs ({handoffs.length})
+                      </summary>
+                      <div className="mt-2 space-y-2">
+                        {handoffs.length > 0 ? (
+                          handoffs.map((handoff) => (
+                            <div
+                              key={handoff.handoff_id}
+                              className="rounded border border-white/10 p-2"
+                            >
+                              <p className="font-semibold text-white">
+                                {handoff.target_module.replace(/_/g, " ")}
+                              </p>
+                              <p>{handoff.reason}</p>
+                              <p>
+                                Capability: {handoff.required_capability}.
+                                Automatic application: No. Human approval:
+                                Required.
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <p>No future execution handoff is available.</p>
+                        )}
+                      </div>
+                    </details>
+
+                    <div className="mt-3 rounded border border-rose-300/20 p-3">
+                      <p className="font-semibold text-rose-100">
+                        BLOCKED ACTIONS
+                      </p>
+                      <RepairPlannerList
+                        items={blockedActions}
+                        empty="No case-specific action is listed; global V1 non-execution boundaries still apply."
+                      />
+                      {rejected.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          <p className="font-semibold text-white">
+                            Rejected unsafe strategies
+                          </p>
+                          {rejected.slice(0, 12).map((item) => (
+                            <p key={item.rejected_strategy_id}>
+                              {item.title}: {item.rejection_reason}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {(repairCase.warnings.length > 0 ||
+                      repairCase.limitations.length > 0 ||
+                      recommended?.warnings.length) && (
+                      <p className="mt-3 text-amber-100">
+                        Warnings and limitations:{" "}
+                        {[
+                          ...repairCase.warnings,
+                          ...repairCase.limitations,
+                          ...(recommended?.warnings ?? []),
+                        ]
+                          .filter(Boolean)
+                          .slice(0, 20)
+                          .join("; ")}
+                      </p>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              Planning and execution truth
+            </summary>
+            <div className="mt-3 space-y-2 text-xs text-muted">
+              <p>
+                Root Cause Analyzer artifact read:{" "}
+                {planner.signal_usage.root_cause_artifact_read ? "Yes" : "No"}.
+                Checkpoint registry inspected:{" "}
+                {planner.signal_usage.checkpoint_system_inspected ? "Yes" : "No"}.
+                Validator registry inspected:{" "}
+                {planner.signal_usage.validation_registry_inspected ? "Yes" : "No"}.
+              </p>
+              <p>
+                Commands, validators, code changes, source-artifact changes,
+                repairs, fallback tools, workflow resume, service restarts,
+                package installation, downloads, external APIs, rendering, and
+                destructive actions: Not performed.
+              </p>
+            </div>
+          </details>
+
+          {(planner.warnings.length > 0 ||
+            planner.limitations.length > 0 ||
+            planner.planner_summary.human_review_notes.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Repair Planner warnings and limitations:{" "}
+              {[
+                ...planner.warnings,
+                ...planner.limitations,
+                ...planner.planner_summary.human_review_notes,
+              ]
+                .filter(Boolean)
+                .slice(0, 20)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -8821,6 +9486,7 @@ export function ResultsSection({
   const rootCauseAnalyzerPanel = (
     <BobaRootCauseAnalyzerPanel projectId={projectId} />
   );
+  const repairPlannerPanel = <BobaRepairPlannerPanel projectId={projectId} />;
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -8849,6 +9515,7 @@ export function ResultsSection({
         {observerPanel}
         {errorDoctorPanel}
         {rootCauseAnalyzerPanel}
+        {repairPlannerPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -8889,6 +9556,7 @@ export function ResultsSection({
         {observerPanel}
         {errorDoctorPanel}
         {rootCauseAnalyzerPanel}
+        {repairPlannerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -8925,6 +9593,7 @@ export function ResultsSection({
         {observerPanel}
         {errorDoctorPanel}
         {rootCauseAnalyzerPanel}
+        {repairPlannerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -8961,6 +9630,7 @@ export function ResultsSection({
       {observerPanel}
       {errorDoctorPanel}
       {rootCauseAnalyzerPanel}
+      {repairPlannerPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}
