@@ -72,6 +72,10 @@ import type {
   BobaBrainStateV1,
   BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
+  BobaCodeSurgeonCommitInputV1,
+  BobaCodeSurgeonExecuteInputV1,
+  BobaCodeSurgeonProposalInputV1,
+  BobaCodeSurgeonSetV1,
   BobaCandidateVideoScorerGenerateInputV1,
   BobaCandidateVideoScorerSetV1,
   BobaErrorDoctorGenerateInputV1,
@@ -499,6 +503,81 @@ export const api = {
       services_restarted: false;
       packages_installed: false;
     }>(`/boba/projects/${projectId}/repair-planner`, {
+      method: "DELETE",
+    }),
+  getBobaCodeSurgeon: (projectId: string) =>
+    request<BobaCodeSurgeonSetV1>(
+      `/boba/projects/${projectId}/code-surgeon`,
+    ),
+  proposeBobaCodeSurgeon: (
+    projectId: string,
+    input: BobaCodeSurgeonProposalInputV1,
+  ) =>
+    request<BobaCodeSurgeonSetV1>(
+      `/boba/projects/${projectId}/code-surgeon/propose`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  validateBobaCodeSurgeonPatch: (
+    projectId: string,
+    input: BobaCodeSurgeonProposalInputV1,
+  ) =>
+    request<BobaCodeSurgeonSetV1>(
+      `/boba/projects/${projectId}/code-surgeon/validate-patch`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  executeApprovedBobaCodeSurgeonPatch: (
+    projectId: string,
+    input: BobaCodeSurgeonExecuteInputV1,
+  ) =>
+    request<BobaCodeSurgeonSetV1>(
+      `/boba/projects/${projectId}/code-surgeon/execute-approved`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  prepareBobaCodeSurgeonLocalCommit: (
+    projectId: string,
+    input: BobaCodeSurgeonCommitInputV1,
+  ) =>
+    request<BobaCodeSurgeonSetV1>(
+      `/boba/projects/${projectId}/code-surgeon/prepare-local-commit`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  exportBobaCodeSurgeon: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/code-surgeon/export`,
+    ),
+  resetBobaCodeSurgeon: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      code_surgeon_removed: boolean;
+      repair_planner_removed: false;
+      root_cause_analyzer_removed: false;
+      other_boba_artifacts_removed: false;
+      source_code_deleted: false;
+      isolated_worktree_deleted: false;
+      branches_deleted: false;
+      main_modified: false;
+      push_used: false;
+      remote_pr_created: false;
+      merge_used: false;
+      tag_used: false;
+      deployment_used: false;
+      package_installation_used: false;
+      service_restart_used: false;
+      destructive_git_used: false;
+    }>(`/boba/projects/${projectId}/code-surgeon`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>

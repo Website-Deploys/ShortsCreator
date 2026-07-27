@@ -13,6 +13,10 @@ from olympus.api.dependencies import (
     SettingsDep,
 )
 from olympus.boba.approvals import BobaApprovalDecision
+from olympus.boba.code_surgeon import (
+    BobaCodeApprovalRecordV1,
+    BobaCodeProposalSourceV1,
+)
 from olympus.boba.creator_learning import (
     BobaCreatorFeedbackEventType,
     BobaCreatorFeedbackTargetType,
@@ -257,6 +261,42 @@ class RepairPlannerGenerateRequest(BaseModel):
 
     planning_context: dict[str, Any] = Field(default_factory=dict, max_length=64)
     dry_run: bool = False
+
+
+class CodeSurgeonProposalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repair_case_id: str | None = Field(default=None, max_length=160)
+    repair_strategy_id: str | None = Field(default=None, max_length=160)
+    unified_diff: str | None = Field(default=None, max_length=200_000)
+    proposal_source: BobaCodeProposalSourceV1 = "user_provided_diff"
+    deterministic_template_identifier: str | None = Field(
+        default=None,
+        max_length=120,
+    )
+    template_parameters: dict[str, Any] = Field(default_factory=dict, max_length=16)
+    base_branch: str = Field(default="main", min_length=1, max_length=240)
+    affected_paths: list[str] = Field(default_factory=list, max_length=64)
+    approved_special_paths: list[str] = Field(default_factory=list, max_length=32)
+
+
+class CodeSurgeonExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    patch_proposal_id: str = Field(min_length=1, max_length=160)
+    approval: BobaCodeApprovalRecordV1
+    approved_validation_commands: list[str] = Field(
+        default_factory=list,
+        min_length=1,
+        max_length=12,
+    )
+
+
+class CodeSurgeonCommitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    isolated_run_id: str = Field(min_length=1, max_length=160)
+    approval: BobaCodeApprovalRecordV1
 
 
 class ScoutScoreRequest(BaseModel):
@@ -1590,6 +1630,154 @@ async def reset_repair_planner_report(
         "workflow_resumed": False,
         "services_restarted": False,
         "packages_installed": False,
+    }
+
+
+@router.post("/projects/{project_id}/code-surgeon/propose")
+async def propose_code_surgeon_patch(
+    project_id: str,
+    body: CodeSurgeonProposalRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.generate_boba_code_surgeon_proposal(
+        project_id,
+        repair_case_id=body.repair_case_id,
+        repair_strategy_id=body.repair_strategy_id,
+        unified_diff=body.unified_diff,
+        proposal_source=body.proposal_source,
+        deterministic_template_identifier=body.deterministic_template_identifier,
+        template_parameters=body.template_parameters,
+        base_branch=body.base_branch,
+        affected_paths=body.affected_paths,
+        approved_special_paths=body.approved_special_paths,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/code-surgeon/validate-patch")
+async def validate_code_surgeon_patch(
+    project_id: str,
+    body: CodeSurgeonProposalRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if not body.unified_diff and not body.deterministic_template_identifier:
+        raise ValidationError("Patch validation requires a bounded diff or template.")
+    report = await boba.validate_boba_code_surgeon_patch(
+        project_id,
+        repair_case_id=body.repair_case_id,
+        repair_strategy_id=body.repair_strategy_id,
+        unified_diff=body.unified_diff,
+        deterministic_template_identifier=body.deterministic_template_identifier,
+        template_parameters=body.template_parameters,
+        base_branch=body.base_branch,
+        affected_paths=body.affected_paths,
+        approved_special_paths=body.approved_special_paths,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/code-surgeon/execute-approved")
+async def execute_approved_code_surgeon_patch(
+    project_id: str,
+    body: CodeSurgeonExecuteRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.execute_approved_boba_code_surgeon_patch(
+        project_id,
+        patch_proposal_id=body.patch_proposal_id,
+        approval=body.approval,
+        approved_validation_commands=body.approved_validation_commands,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/code-surgeon/prepare-local-commit")
+async def prepare_code_surgeon_local_commit(
+    project_id: str,
+    body: CodeSurgeonCommitRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.prepare_boba_code_surgeon_local_commit(
+        project_id,
+        isolated_run_id=body.isolated_run_id,
+        approval=body.approval,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/code-surgeon")
+async def get_code_surgeon_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = boba.load_boba_code_surgeon(project_id)
+    if report is None:
+        raise NotFoundError(
+            "BOBA Code Surgeon V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/code-surgeon/export")
+async def export_code_surgeon_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_boba_code_surgeon(project_id) is None:
+        raise NotFoundError(
+            "BOBA Code Surgeon V1 is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_boba_code_surgeon(project_id)
+
+
+@router.delete("/projects/{project_id}/code-surgeon")
+async def reset_code_surgeon_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_boba_code_surgeon(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "code_surgeon_removed": removed,
+        "repair_planner_removed": False,
+        "root_cause_analyzer_removed": False,
+        "other_boba_artifacts_removed": False,
+        "source_code_deleted": False,
+        "isolated_worktree_deleted": False,
+        "branches_deleted": False,
+        "main_modified": False,
+        "push_used": False,
+        "remote_pr_created": False,
+        "merge_used": False,
+        "tag_used": False,
+        "deployment_used": False,
+        "package_installation_used": False,
+        "service_restart_used": False,
+        "destructive_git_used": False,
     }
 
 
