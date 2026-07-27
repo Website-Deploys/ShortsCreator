@@ -78,6 +78,8 @@ import type {
   BobaErrorDoctorSetV1,
   BobaObserverGenerateInputV1,
   BobaObserverSetV1,
+  BobaRepairPlannerGenerateInputV1,
+  BobaRepairPlannerSetV1,
   BobaRootCauseAnalyzerGenerateInputV1,
   BobaRootCauseAnalyzerSetV1,
   BobaRightsPermissionGateGenerateInputV1,
@@ -453,6 +455,50 @@ export const api = {
       fallback_tools_executed: false;
       workflow_resume_authorized: false;
     }>(`/boba/projects/${projectId}/root-cause-analyzer`, {
+      method: "DELETE",
+    }),
+  getBobaRepairPlanner: (projectId: string) =>
+    request<BobaRepairPlannerSetV1>(
+      `/boba/projects/${projectId}/repair-planner`,
+    ),
+  generateBobaRepairPlanner: (
+    projectId: string,
+    input: BobaRepairPlannerGenerateInputV1 = {},
+  ) =>
+    request<BobaRepairPlannerSetV1>(
+      `/boba/projects/${projectId}/repair-planner`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  exportBobaRepairPlanner: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-planner/export`,
+    ),
+  resetBobaRepairPlanner: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      repair_planner_removed: boolean;
+      root_cause_analyzer_removed: false;
+      error_doctor_removed: false;
+      observer_removed: false;
+      other_boba_artifacts_removed: false;
+      unrelated_files_deleted: false;
+      validators_executed: false;
+      commands_executed: false;
+      code_modified: false;
+      artifacts_modified: false;
+      media_downloaded: false;
+      media_ingested: false;
+      rendering_triggered: false;
+      repairs_applied: false;
+      fallback_tools_executed: false;
+      workflow_resumed: false;
+      services_restarted: false;
+      packages_installed: false;
+    }>(`/boba/projects/${projectId}/repair-planner`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>

@@ -57,6 +57,8 @@ import type {
   BobaErrorDoctorSetV1,
   BobaObserverGenerateInputV1,
   BobaObserverSetV1,
+  BobaRepairPlannerGenerateInputV1,
+  BobaRepairPlannerSetV1,
   BobaRootCauseAnalyzerGenerateInputV1,
   BobaRootCauseAnalyzerSetV1,
   BobaRightsPermissionGateGenerateInputV1,
@@ -122,6 +124,8 @@ export const queryKeys = {
     ["boba", "projects", id, "error-doctor"] as const,
   bobaRootCauseAnalyzer: (id: string) =>
     ["boba", "projects", id, "root-cause-analyzer"] as const,
+  bobaRepairPlanner: (id: string) =>
+    ["boba", "projects", id, "repair-planner"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -674,6 +678,53 @@ export function useResetBobaRootCauseAnalyzer(projectId: string) {
         queryKeys.bobaRootCauseAnalyzer(projectId),
         null,
       );
+    },
+  });
+}
+
+export function useBobaRepairPlanner(projectId: string) {
+  return useQuery<BobaRepairPlannerSetV1 | null>({
+    queryKey: queryKeys.bobaRepairPlanner(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaRepairPlanner(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useGenerateBobaRepairPlanner(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaRepairPlannerGenerateInputV1 = {}) =>
+      api.generateBobaRepairPlanner(projectId, input),
+    onSuccess: (result, input) => {
+      if (!input?.dry_run) {
+        queryClient.setQueryData(
+          queryKeys.bobaRepairPlanner(projectId),
+          result,
+        );
+      }
+    },
+  });
+}
+
+export function useExportBobaRepairPlanner(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaRepairPlanner(projectId),
+  });
+}
+
+export function useResetBobaRepairPlanner(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaRepairPlanner(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(queryKeys.bobaRepairPlanner(projectId), null);
     },
   });
 }

@@ -3118,6 +3118,546 @@ export interface BobaRootCauseAnalyzerGenerateInputV1 {
   dry_run?: boolean;
 }
 
+export type BobaRepairPlanningStatusV1 =
+  | "plan_ready"
+  | "conditional_plan"
+  | "needs_more_evidence"
+  | "conflicting_causes"
+  | "intentional_safety_block"
+  | "human_decision_required"
+  | "repair_not_required"
+  | "blocked"
+  | "unknown";
+
+export type BobaRepairScopeV1 =
+  | "no_repair"
+  | "artifact"
+  | "checkpoint"
+  | "workflow"
+  | "configuration"
+  | "environment"
+  | "tool"
+  | "dependency"
+  | "data_input"
+  | "validation"
+  | "rendering"
+  | "code"
+  | "rights_permission"
+  | "human_decision"
+  | "unknown";
+
+export type BobaRepairStrategyTypeV1 =
+  | "no_action"
+  | "collect_more_evidence"
+  | "regenerate_artifact"
+  | "restore_checkpoint"
+  | "resume_from_checkpoint"
+  | "retry_same_tool"
+  | "retry_with_safe_settings"
+  | "reduce_resource_usage"
+  | "use_registered_tool_fallback"
+  | "switch_safe_workflow_path"
+  | "repair_generated_state"
+  | "repair_configuration"
+  | "repair_environment"
+  | "replace_invalid_input"
+  | "rerun_validation"
+  | "isolate_failure"
+  | "propose_code_patch"
+  | "seek_permission"
+  | "human_manual_action"
+  | "stop_processing"
+  | "unknown";
+
+export type BobaRepairStepTypeV1 =
+  | "inspect"
+  | "backup"
+  | "checkpoint"
+  | "collect_evidence"
+  | "validate_precondition"
+  | "regenerate"
+  | "retry"
+  | "adjust_safe_setting"
+  | "switch_tool"
+  | "switch_workflow"
+  | "restore"
+  | "configure"
+  | "install_dependency"
+  | "restart_service"
+  | "propose_patch"
+  | "apply_patch"
+  | "validate_result"
+  | "compare_quality"
+  | "resume_workflow"
+  | "stop"
+  | "human_review"
+  | "unknown";
+
+export type BobaRepairReversibilityV1 =
+  | "fully_reversible"
+  | "mostly_reversible"
+  | "partially_reversible"
+  | "difficult_to_reverse"
+  | "irreversible"
+  | "unknown";
+
+export type BobaRepairDestructivenessV1 =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "blocked"
+  | "unknown";
+
+export type BobaRepairAutomationEligibilityV1 =
+  | "safe_advisory_only"
+  | "potentially_automatable_after_approval"
+  | "human_execution_required"
+  | "blocked"
+  | "unknown";
+
+export type BobaRepairRiskLevelV1 =
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "critical"
+  | "blocked"
+  | "unknown";
+
+export type BobaRepairComplexityV1 =
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "very_high"
+  | "unknown";
+
+export type BobaRepairCheckpointTypeV1 =
+  | "none"
+  | "artifact_snapshot"
+  | "generated_state_snapshot"
+  | "workflow_checkpoint"
+  | "configuration_snapshot"
+  | "repository_branch"
+  | "database_backup"
+  | "media_reference_only"
+  | "unknown";
+
+export type BobaRepairRollbackScopeV1 =
+  | "none"
+  | "artifact"
+  | "workflow"
+  | "configuration"
+  | "environment"
+  | "tool_selection"
+  | "code_branch"
+  | "database"
+  | "unknown";
+
+export type BobaRepairValidationPhaseV1 =
+  | "pre_repair"
+  | "during_repair"
+  | "post_repair"
+  | "rollback"
+  | "resume"
+  | "unknown";
+
+export type BobaRepairValidationCategoryV1 =
+  | "artifact_integrity"
+  | "schema"
+  | "dependency"
+  | "checkpoint"
+  | "rendering"
+  | "audio_video_sync"
+  | "media_probe"
+  | "captions"
+  | "framing"
+  | "output_quality"
+  | "performance"
+  | "resource_usage"
+  | "safety"
+  | "rights_permission"
+  | "regression"
+  | "workflow"
+  | "code_quality"
+  | "frontend"
+  | "api"
+  | "unknown";
+
+export type BobaRepairApprovalStatusV1 =
+  | "planning_only"
+  | "awaiting_human_review"
+  | "blocked"
+  | "not_required_for_no_action"
+  | "unknown";
+
+export type BobaRepairHandoffTargetV1 =
+  | "tool_recovery_brain"
+  | "code_surgeon"
+  | "validator_runner"
+  | "artifact_inspector"
+  | "report_reader"
+  | "safety_gate"
+  | "rights_permission_gate"
+  | "workflow_controller"
+  | "checkpoint_recovery_manager"
+  | "output_quality_reviewer"
+  | "human_operator"
+  | "unknown";
+
+export interface BobaRepairStepV1 {
+  repair_step_id: string;
+  repair_strategy_id: string;
+  order: number;
+  step_type: BobaRepairStepTypeV1;
+  description: string;
+  target: string;
+  read_only: boolean;
+  reversible: boolean;
+  requires_human_approval: true;
+  requires_command_execution: boolean;
+  requires_code_change: boolean;
+  requires_external_access: boolean;
+  safety_precondition: string;
+  success_condition: string;
+  failure_condition: string;
+  stop_condition: string;
+  rollback_step_reference: string;
+  suggested_owner_module: string;
+  warnings: string[];
+}
+
+export interface BobaRepairStrategyV1 {
+  repair_strategy_id: string;
+  repair_case_id: string;
+  title: string;
+  strategy_type: BobaRepairStrategyTypeV1;
+  target_module: string;
+  target_artifact: string;
+  description: string;
+  rationale: string;
+  easy_explanation: string;
+  root_cause_candidate_ids: string[];
+  prerequisites: string[];
+  proposed_steps: BobaRepairStepV1[];
+  expected_result: string;
+  expected_quality_effect: string;
+  expected_workflow_effect: string;
+  reversibility: BobaRepairReversibilityV1;
+  destructiveness: BobaRepairDestructivenessV1;
+  automation_eligibility: BobaRepairAutomationEligibilityV1;
+  human_approval_required: true;
+  requires_checkpoint: boolean;
+  requires_backup: boolean;
+  requires_command_execution: boolean;
+  requires_validator_execution: boolean;
+  requires_code_change: boolean;
+  requires_configuration_change: boolean;
+  requires_tool_fallback: boolean;
+  requires_service_restart: boolean;
+  requires_package_installation: boolean;
+  requires_external_access: boolean;
+  requires_paid_service: boolean;
+  requires_rights_review: boolean;
+  estimated_risk: BobaRepairRiskLevelV1;
+  estimated_complexity: BobaRepairComplexityV1;
+  estimated_confidence: number;
+  strategy_score: number;
+  rank: number;
+  recommended: boolean;
+  maximum_attempts: number | null;
+  maximum_recovery_duration_seconds: number | null;
+  previously_attempted_strategies: string[];
+  escalation_condition: string;
+  prohibited_actions: string[];
+  stop_conditions: string[];
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRepairStrategyRiskV1 {
+  strategy_id: string;
+  risk_level: BobaRepairRiskLevelV1;
+  risk_reasons: string[];
+  mitigations: string[];
+  residual_risk: string;
+  acceptable_only_if: string[];
+  blocked: boolean;
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaRepairRiskAssessmentV1 {
+  risk_assessment_id: string;
+  repair_case_id: string;
+  strategy_risks: BobaRepairStrategyRiskV1[];
+  overall_risk: BobaRepairRiskLevelV1;
+  source_data_risk: BobaRepairRiskLevelV1;
+  artifact_loss_risk: BobaRepairRiskLevelV1;
+  output_quality_risk: BobaRepairRiskLevelV1;
+  workflow_corruption_risk: BobaRepairRiskLevelV1;
+  configuration_risk: BobaRepairRiskLevelV1;
+  environment_risk: BobaRepairRiskLevelV1;
+  security_risk: BobaRepairRiskLevelV1;
+  rights_safety_risk: BobaRepairRiskLevelV1;
+  external_dependency_risk: BobaRepairRiskLevelV1;
+  rollback_failure_risk: BobaRepairRiskLevelV1;
+  human_error_risk: BobaRepairRiskLevelV1;
+  blockers: string[];
+  mitigations: string[];
+  residual_risks: string[];
+  human_review_notes: string[];
+  warnings: string[];
+}
+
+export interface BobaRepairCheckpointPlanV1 {
+  checkpoint_plan_id: string;
+  repair_case_id: string;
+  checkpoint_required: boolean;
+  checkpoint_type: BobaRepairCheckpointTypeV1;
+  artifacts_to_preserve: string[];
+  state_to_preserve: string[];
+  source_media_must_remain_untouched: true;
+  checkpoint_validation_required: boolean;
+  checkpoint_success_conditions: string[];
+  checkpoint_failure_conditions: string[];
+  storage_requirements: string[];
+  retention_notes: string[];
+  human_approval_required: true;
+  warnings: string[];
+}
+
+export interface BobaRepairRollbackPlanV1 {
+  rollback_plan_id: string;
+  repair_case_id: string;
+  rollback_required: boolean;
+  rollback_scope: BobaRepairRollbackScopeV1;
+  rollback_trigger_conditions: string[];
+  rollback_steps: string[];
+  preserved_state_required: string[];
+  rollback_validation: string[];
+  rollback_owner_module: string;
+  destructive_rollback_blocked: true;
+  human_approval_required: true;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRepairValidationCheckV1 {
+  validation_check_id: string;
+  phase: BobaRepairValidationPhaseV1;
+  category: BobaRepairValidationCategoryV1;
+  description: string;
+  validator_name: string;
+  expected_result: string;
+  required: boolean;
+  blocks_acceptance_on_failure: boolean;
+  requires_command_execution: boolean;
+  requires_human_review: true;
+  warnings: string[];
+}
+
+export interface BobaRepairValidationPlanV1 {
+  validation_plan_id: string;
+  repair_case_id: string;
+  pre_repair_checks: BobaRepairValidationCheckV1[];
+  post_repair_checks: BobaRepairValidationCheckV1[];
+  required_validators: string[];
+  acceptance_criteria: string[];
+  rejection_criteria: string[];
+  comparison_baseline: string[];
+  regression_checks: string[];
+  safety_checks: string[];
+  rights_checks: string[];
+  output_quality_checks: string[];
+  workflow_resume_checks: string[];
+  requires_validator_runner: boolean;
+  requires_human_review: true;
+  warnings: string[];
+}
+
+export interface BobaQualityPreservationPlanV1 {
+  quality_preservation_plan_id: string;
+  repair_case_id: string;
+  original_requirements: string[];
+  non_negotiable_requirements: string[];
+  acceptable_degradations: string[];
+  unacceptable_degradations: string[];
+  comparison_metrics: string[];
+  creative_quality_checks: string[];
+  technical_quality_checks: string[];
+  rights_safety_checks: string[];
+  fallback_acceptance_rules: string[];
+  human_review_required: true;
+  warnings: string[];
+}
+
+export interface BobaRepairApprovalGateV1 {
+  approval_gate_id: string;
+  repair_case_id: string;
+  approval_status: BobaRepairApprovalStatusV1;
+  required_approvals: string[];
+  actions_allowed_without_approval: string[];
+  actions_requiring_approval: string[];
+  prohibited_actions: string[];
+  rights_gate_required: boolean;
+  safety_gate_required: boolean;
+  code_review_required: boolean;
+  rollback_plan_required: boolean;
+  validation_plan_required: boolean;
+  output_quality_review_required: boolean;
+  final_human_approval_required: true;
+  warnings: string[];
+}
+
+export interface BobaRepairExecutionHandoffV1 {
+  handoff_id: string;
+  repair_case_id: string;
+  repair_strategy_id: string;
+  target_module: BobaRepairHandoffTargetV1;
+  reason: string;
+  required_inputs: string[];
+  required_capability: string;
+  required_quality_properties: string[];
+  constraints: string[];
+  prohibited_actions: string[];
+  checkpoint_plan_id: string;
+  rollback_plan_id: string;
+  validation_plan_id: string;
+  approval_gate_id: string;
+  apply_automatically: false;
+  human_approval_required: true;
+  priority: "low" | "medium" | "high" | "urgent";
+  warnings: string[];
+}
+
+export interface BobaRepairRejectedStrategyV1 {
+  rejected_strategy_id: string;
+  repair_case_id: string;
+  title: string;
+  strategy_type: BobaRepairStrategyTypeV1;
+  rejection_reason: string;
+  safety_reason: string;
+  quality_reason: string;
+  rights_reason: string;
+  reversibility_reason: string;
+  evidence_reason: string;
+  warnings: string[];
+}
+
+export interface BobaRepairPlanningCaseV1 {
+  repair_case_id: string;
+  source_analysis_case_id: string;
+  title: string;
+  primary_module: string;
+  primary_artifact: string;
+  workflow_stage: string;
+  root_cause_candidate_ids: string[];
+  selected_root_cause_candidate_id: string;
+  selected_root_cause_summary: string;
+  planning_status: BobaRepairPlanningStatusV1;
+  repair_needed: boolean;
+  repair_scope: BobaRepairScopeV1;
+  blocked_reason: string;
+  strategy_ids: string[];
+  recommended_strategy_id: string;
+  alternative_strategy_ids: string[];
+  rejected_strategy_ids: string[];
+  risk_assessment_id: string;
+  checkpoint_plan_id: string;
+  rollback_plan_id: string;
+  validation_plan_id: string;
+  quality_preservation_plan_id: string;
+  approval_gate_id: string;
+  execution_handoff_ids: string[];
+  expected_workflow_impact: string;
+  human_review_required: true;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRepairPlannerSummaryV1 {
+  total_analysis_cases: number;
+  total_repair_cases: number;
+  plan_ready_count: number;
+  conditional_plan_count: number;
+  needs_more_evidence_count: number;
+  safety_block_count: number;
+  human_decision_count: number;
+  repair_not_required_count: number;
+  blocked_count: number;
+  tool_recovery_handoff_count: number;
+  code_surgeon_handoff_count: number;
+  validator_handoff_count: number;
+  highest_risk_case: string;
+  safest_repair_strategy: string;
+  most_reversible_strategy: string;
+  strongest_quality_preservation_plan: string;
+  highest_priority_handoff: string;
+  unresolved_questions: string[];
+  human_review_notes: string[];
+}
+
+export interface BobaRepairPlannerSignalUsageV1 {
+  root_cause_analyzer_used: boolean;
+  root_cause_artifact_read: boolean;
+  failure_timelines_used: boolean;
+  causal_graphs_used: boolean;
+  root_cause_candidates_used: boolean;
+  verification_plans_used: boolean;
+  workflow_impacts_used: boolean;
+  rights_safety_evidence_used: boolean;
+  checkpoint_system_inspected: boolean;
+  validation_registry_inspected: boolean;
+  bounded_manual_context_used: boolean;
+  external_api_used: false;
+  url_fetching_used: false;
+  scraping_used: false;
+  downloading_used: false;
+  command_execution_used: false;
+  validator_execution_used: false;
+  code_modification_used: false;
+  artifact_modification_used: false;
+  repair_execution_used: false;
+  tool_fallback_execution_used: false;
+  workflow_resume_used: false;
+  service_restart_used: false;
+  package_installation_used: false;
+  destructive_action_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaRepairPlannerSetV1 {
+  schema_version: "boba_repair_planner_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  root_cause_analyzer_source: string;
+  repair_cases: BobaRepairPlanningCaseV1[];
+  repair_strategies: BobaRepairStrategyV1[];
+  risk_assessments: BobaRepairRiskAssessmentV1[];
+  checkpoint_plans: BobaRepairCheckpointPlanV1[];
+  rollback_plans: BobaRepairRollbackPlanV1[];
+  validation_plans: BobaRepairValidationPlanV1[];
+  quality_preservation_plans: BobaQualityPreservationPlanV1[];
+  approval_gates: BobaRepairApprovalGateV1[];
+  execution_handoffs: BobaRepairExecutionHandoffV1[];
+  rejected_strategies: BobaRepairRejectedStrategyV1[];
+  planner_summary: BobaRepairPlannerSummaryV1;
+  signal_usage: BobaRepairPlannerSignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRepairPlannerGenerateInputV1 {
+  planning_context?: Record<string, unknown>;
+  dry_run?: boolean;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;

@@ -69,6 +69,7 @@ from olympus.boba.performance_feedback import (
     BobaPerformanceFeedbackEventV1,
     BobaPerformanceFeedbackSetV1,
 )
+from olympus.boba.repair_planner import BobaRepairPlannerSetV1
 from olympus.boba.research_brain import BobaResearchBrainSetV1
 from olympus.boba.rights_permission_gate import (
     BobaRightsPermissionGateSetV1,
@@ -1665,6 +1666,106 @@ class BobaMemoryStore:
 
     def reset_boba_root_cause_analyzer(self, project_id: str) -> bool:
         path = self.root_cause_analyzer_path(project_id)
+        removed = False
+        with self._lock:
+            if path.exists():
+                path.unlink()
+                removed = True
+            directory = path.parent
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+        return removed
+
+    def repair_planner_path(self, project_id: str) -> Path:
+        return self._path(project_id, "repair_planner/index.json")
+
+    def save_boba_repair_planner(
+        self,
+        report: BobaRepairPlannerSetV1,
+    ) -> BobaRepairPlannerSetV1:
+        with self._lock:
+            safe = sanitize_memory_payload(
+                report.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+            )
+            self._atomic_write(
+                self.repair_planner_path(report.project_id),
+                safe,
+            )
+        return report
+
+    def load_boba_repair_planner(
+        self,
+        project_id: str,
+    ) -> BobaRepairPlannerSetV1 | None:
+        try:
+            raw = self._read(self.repair_planner_path(project_id), None)
+            return (
+                BobaRepairPlannerSetV1.model_validate(raw)
+                if isinstance(raw, dict)
+                else None
+            )
+        except (PydanticValidationError, ValidationError):
+            return None
+
+    def export_boba_repair_planner(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        report = self.load_boba_repair_planner(project_id)
+        if report is None:
+            raise ValidationError(
+                "BOBA Repair Planner V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = report.model_dump(mode="json")
+        for strategy in payload.get("repair_strategies", []):
+            if isinstance(strategy, dict):
+                strategy.pop("previously_attempted_strategies", None)
+        export = {
+            "schema_version": "boba_repair_planner_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "repair_planner": payload,
+            "privacy": {
+                "private_paths_excluded": True,
+                "sensitive_evidence_excluded": True,
+                "manual_context_excluded": True,
+                "root_cause_analyzer_report_excluded": True,
+                "error_doctor_report_excluded": True,
+                "observer_report_excluded": True,
+                "raw_logs_excluded": True,
+                "full_transcripts_excluded": True,
+                "media_files_excluded": True,
+                "credentials_excluded": True,
+                "external_api_used": False,
+                "url_fetching_used": False,
+                "scraping_used": False,
+                "downloading_used": False,
+                "command_execution_used": False,
+                "validator_execution_used": False,
+                "code_modification_used": False,
+                "artifact_modification_used": False,
+                "repair_execution_used": False,
+                "tool_fallback_execution_used": False,
+                "workflow_resume_used": False,
+                "service_restart_used": False,
+                "package_installation_used": False,
+                "destructive_action_used": False,
+                "rendering_used": False,
+                "media_ingestion_used": False,
+            },
+        }
+        safe = sanitize_memory_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_500),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Repair Planner V1 export is invalid.")
+        return safe
+
+    def reset_boba_repair_planner(self, project_id: str) -> bool:
+        path = self.repair_planner_path(project_id)
         removed = False
         with self._lock:
             if path.exists():

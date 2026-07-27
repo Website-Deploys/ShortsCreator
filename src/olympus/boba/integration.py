@@ -101,6 +101,10 @@ from olympus.boba.performance_feedback import (
 from olympus.boba.project_memory import build_and_save_project_memory
 from olympus.boba.ranking import rank_candidates
 from olympus.boba.reasoning import explain_clip_selection, summarize_project_understanding
+from olympus.boba.repair_planner import (
+    BobaRepairPlannerSetV1,
+    BobaRepairPlannerV1,
+)
 from olympus.boba.research_brain import (
     BobaResearchBrainSetV1,
     BobaResearchBrainV1,
@@ -174,6 +178,7 @@ class BobaIntegration:
         )
         self.error_doctor = BobaErrorDoctorV1()
         self.root_cause_analyzer = BobaRootCauseAnalyzerV1()
+        self.repair_planner = BobaRepairPlannerV1()
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1767,6 +1772,45 @@ class BobaIntegration:
 
     def reset_boba_root_cause_analyzer(self, project_id: str) -> bool:
         return self.store.reset_boba_root_cause_analyzer(project_id)
+
+    async def generate_boba_repair_planner(
+        self,
+        project_id: str,
+        *,
+        planning_context: dict[str, Any] | None = None,
+        dry_run: bool = False,
+    ) -> BobaRepairPlannerSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError(
+                "Project was not found.",
+                details={"id": project_id},
+            )
+        report = self.repair_planner.plan(
+            project_id,
+            self.store.load_boba_root_cause_analyzer(project_id),
+            source_id=project.link_ingestion_id or project_id,
+            manual_context=planning_context,
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return report
+        return self.store.save_boba_repair_planner(report)
+
+    def load_boba_repair_planner(
+        self,
+        project_id: str,
+    ) -> BobaRepairPlannerSetV1 | None:
+        return self.store.load_boba_repair_planner(project_id)
+
+    def export_boba_repair_planner(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        return self.store.export_boba_repair_planner(project_id)
+
+    def reset_boba_repair_planner(self, project_id: str) -> bool:
+        return self.store.reset_boba_repair_planner(project_id)
 
     async def generate_performance_feedback(
         self,

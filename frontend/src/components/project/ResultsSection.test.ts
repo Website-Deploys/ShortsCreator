@@ -467,4 +467,37 @@ describe("V2 output flow UI contracts", () => {
     expect(resultsSection).not.toContain("autoRunRootCauseValidator");
     expect(resultsSection).not.toContain("autoActivateFallbackTool");
   });
+
+  it("shows advisory BOBA Repair Planner V1 boundaries", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+
+    expect(resultsSection).toContain("BOBA Repair Planner V1");
+    expect(resultsSection).toContain(
+      "BOBA Repair Planner V1 creates repair plans only. It does not execute commands, edit code, modify files, install tools, restart services, activate fallback tools, or resume workflows.",
+    );
+    expect(resultsSection).toContain(
+      "A repair plan is not proof that the repair will succeed.",
+    );
+    expect(resultsSection).toContain(
+      "Approved repairs must pass validation and output-quality review before Olympus continues.",
+    );
+    expect(resultsSection).toContain("RECOMMENDED PLAN");
+    expect(resultsSection).toContain("ALTERNATIVE PLANS");
+    expect(resultsSection).toContain("WHY THIS PLAN");
+    expect(resultsSection).toContain("RISKS");
+    expect(resultsSection).toContain("CHECKPOINT");
+    expect(resultsSection).toContain("ROLLBACK");
+    expect(resultsSection).toContain("VALIDATION REQUIRED");
+    expect(resultsSection).toContain("QUALITY REQUIREMENTS");
+    expect(resultsSection).toContain("APPROVAL REQUIRED");
+    expect(resultsSection).toContain("BLOCKED ACTIONS");
+    expect(resultsSection).toContain(
+      "Create plans from saved Root Cause Analyzer",
+    );
+    expect(resultsSection).toContain("Export safe repair plan");
+    expect(resultsSection).toContain("Reset Repair Planner V1");
+    expect(resultsSection).not.toContain("autoExecuteRepairPlan");
+    expect(resultsSection).not.toContain("autoApplyRepairPatch");
+    expect(resultsSection).not.toContain("autoResumeRepairWorkflow");
+  });
 });
