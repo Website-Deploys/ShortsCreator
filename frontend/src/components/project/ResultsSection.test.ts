@@ -525,4 +525,37 @@ describe("V2 output flow UI contracts", () => {
       "Code Surgeon does not push, merge, deploy, install packages, or",
     );
   });
+
+  it("shows BOBA Tool Recovery V1 approval and truth boundaries", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+    const apiClient = source("../../lib/apiClient.ts");
+
+    expect(resultsSection).toContain("BOBA Tool Recovery Brain V1");
+    expect(resultsSection).toContain(
+      "Tool Recovery Brain can execute only approved local recovery",
+    );
+    expect(resultsSection).toContain(
+      "It does not install software, use paid services, access external",
+    );
+    expect(resultsSection).toContain(
+      "A recovered output is not accepted until required validation and",
+    );
+    expect(resultsSection).toContain("WHAT FAILED");
+    expect(resultsSection).toContain("WHAT CAPABILITY IS NEEDED");
+    expect(resultsSection).toContain("RECOVERY OPTIONS");
+    expect(resultsSection).toContain("WHY THIS OPTION");
+    expect(resultsSection).toContain("QUALITY REQUIREMENTS");
+    expect(resultsSection).toContain("APPROVAL REQUIRED");
+    expect(resultsSection).toContain("CURRENT ATTEMPT");
+    expect(resultsSection).toContain("VALIDATION");
+    expect(resultsSection).toContain("ROLLBACK");
+    expect(resultsSection).toContain("WHAT HAPPENS NEXT");
+    expect(resultsSection).toContain(
+      "I approve this exact recovery strategy, registered tool, settings, retry budget, time budget, checkpoint reference, and quality requirements.",
+    );
+    expect(resultsSection).not.toContain("Fix everything");
+    expect(apiClient).toContain("/tool-recovery/execute-approved");
+    expect(apiClient).toContain("/tool-recovery/validate-output");
+    expect(apiClient).toContain("/tool-recovery/rollback");
+  });
 });

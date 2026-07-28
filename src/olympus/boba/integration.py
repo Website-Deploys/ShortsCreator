@@ -126,6 +126,11 @@ from olympus.boba.root_cause_analyzer import (
 )
 from olympus.boba.scout import BobaScout
 from olympus.boba.store import BobaMemoryStore
+from olympus.boba.tool_recovery import (
+    BobaToolRecoveryApprovalV1,
+    BobaToolRecoveryBrainSetV1,
+    BobaToolRecoveryBrainV1,
+)
 from olympus.boba.trend_topic_watcher import (
     BobaTrendTopicWatcherSetV1,
     BobaTrendTopicWatcherV1,
@@ -194,6 +199,14 @@ class BobaIntegration:
             else source_repository_root
         )
         self.code_surgeon = BobaCodeSurgeonV1(repository_root)
+        runtime_settings = get_settings()
+        self.tool_recovery = BobaToolRecoveryBrainV1(
+            repository_root,
+            workspace_root=store.root / "tool_recovery" / "workspaces",
+            ffmpeg_binary=runtime_settings.rendering.ffmpeg_binary,
+            ffprobe_binary=runtime_settings.rendering.ffprobe_binary,
+            transcription_provider=runtime_settings.ai.transcription_provider,
+        )
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -1943,6 +1956,116 @@ class BobaIntegration:
 
     def reset_boba_code_surgeon(self, project_id: str) -> bool:
         return self.store.reset_boba_code_surgeon(project_id)
+
+    async def generate_boba_tool_recovery_plan(
+        self,
+        project_id: str,
+        *,
+        selected_handoff_id: str | None = None,
+        selected_repair_strategy_id: str | None = None,
+        failure_context: dict[str, Any] | None = None,
+        run_health_checks: bool | None = None,
+    ) -> BobaToolRecoveryBrainSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        report = self.tool_recovery.plan(
+            project_id,
+            self.store.load_boba_repair_planner(project_id),
+            source_id=project.link_ingestion_id or project_id,
+            selected_handoff_id=selected_handoff_id,
+            selected_repair_strategy_id=selected_repair_strategy_id,
+            failure_context=failure_context,
+            run_health_checks=run_health_checks,
+        )
+        return self.store.save_boba_tool_recovery(report)
+
+    async def run_boba_tool_health_checks(
+        self,
+        project_id: str,
+        *,
+        tool_ids: list[str] | None = None,
+    ) -> BobaToolRecoveryBrainSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        report = self.store.load_boba_tool_recovery(project_id)
+        if report is None:
+            raise ValidationError("BOBA Tool Recovery plan is not available.")
+        updated = self.tool_recovery.run_health_checks(report, tool_ids=tool_ids)
+        return self.store.save_boba_tool_recovery(updated)
+
+    async def execute_approved_boba_tool_recovery(
+        self,
+        project_id: str,
+        *,
+        recovery_plan_id: str,
+        recovery_strategy_id: str,
+        approval: BobaToolRecoveryApprovalV1,
+    ) -> BobaToolRecoveryBrainSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        report = self.store.load_boba_tool_recovery(project_id)
+        if report is None:
+            raise ValidationError("BOBA Tool Recovery plan is not available.")
+        updated = self.tool_recovery.execute_approved(
+            report,
+            recovery_plan_id=recovery_plan_id,
+            recovery_strategy_id=recovery_strategy_id,
+            approval=approval,
+        )
+        return self.store.save_boba_tool_recovery(updated)
+
+    async def validate_boba_recovered_output(
+        self,
+        project_id: str,
+        *,
+        recovery_attempt_id: str,
+    ) -> BobaToolRecoveryBrainSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        report = self.store.load_boba_tool_recovery(project_id)
+        if report is None:
+            raise ValidationError("BOBA Tool Recovery report is not available.")
+        updated = self.tool_recovery.validate_output(
+            report,
+            recovery_attempt_id=recovery_attempt_id,
+        )
+        return self.store.save_boba_tool_recovery(updated)
+
+    async def rollback_boba_tool_recovery(
+        self,
+        project_id: str,
+        *,
+        recovery_attempt_id: str,
+        trigger: str,
+    ) -> BobaToolRecoveryBrainSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        report = self.store.load_boba_tool_recovery(project_id)
+        if report is None:
+            raise ValidationError("BOBA Tool Recovery report is not available.")
+        updated = self.tool_recovery.rollback(
+            report,
+            recovery_attempt_id=recovery_attempt_id,
+            trigger=trigger,
+        )
+        return self.store.save_boba_tool_recovery(updated)
+
+    def load_boba_tool_recovery(
+        self,
+        project_id: str,
+    ) -> BobaToolRecoveryBrainSetV1 | None:
+        return self.store.load_boba_tool_recovery(project_id)
+
+    def export_boba_tool_recovery(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_boba_tool_recovery(project_id)
+
+    def reset_boba_tool_recovery(self, project_id: str) -> bool:
+        return self.store.reset_boba_tool_recovery(project_id)
 
     async def generate_performance_feedback(
         self,

@@ -55,6 +55,12 @@ import type {
   BobaCodeSurgeonExecuteInputV1,
   BobaCodeSurgeonProposalInputV1,
   BobaCodeSurgeonSetV1,
+  BobaToolRecoveryBrainSetV1,
+  BobaToolRecoveryExecuteInputV1,
+  BobaToolRecoveryHealthInputV1,
+  BobaToolRecoveryPlanInputV1,
+  BobaToolRecoveryRollbackInputV1,
+  BobaToolRecoveryValidationInputV1,
   BobaCandidateVideoScorerGenerateInputV1,
   BobaCandidateVideoScorerSetV1,
   BobaErrorDoctorGenerateInputV1,
@@ -132,6 +138,8 @@ export const queryKeys = {
     ["boba", "projects", id, "repair-planner"] as const,
   bobaCodeSurgeon: (id: string) =>
     ["boba", "projects", id, "code-surgeon"] as const,
+  bobaToolRecovery: (id: string) =>
+    ["boba", "projects", id, "tool-recovery"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -806,6 +814,92 @@ export function useResetBobaCodeSurgeon(projectId: string) {
     mutationFn: () => api.resetBobaCodeSurgeon(projectId),
     onSuccess: () => {
       queryClient.setQueryData(queryKeys.bobaCodeSurgeon(projectId), null);
+    },
+  });
+}
+
+export function useBobaToolRecovery(projectId: string) {
+  return useQuery<BobaToolRecoveryBrainSetV1 | null>({
+    queryKey: queryKeys.bobaToolRecovery(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaToolRecovery(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useGenerateBobaToolRecoveryPlan(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaToolRecoveryPlanInputV1 = {}) =>
+      api.generateBobaToolRecoveryPlan(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaToolRecovery(projectId), result);
+    },
+  });
+}
+
+export function useRunBobaToolRecoveryHealthChecks(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaToolRecoveryHealthInputV1 = {}) =>
+      api.runBobaToolRecoveryHealthChecks(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaToolRecovery(projectId), result);
+    },
+  });
+}
+
+export function useExecuteBobaToolRecovery(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaToolRecoveryExecuteInputV1) =>
+      api.executeApprovedBobaToolRecovery(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaToolRecovery(projectId), result);
+    },
+  });
+}
+
+export function useValidateBobaToolRecoveryOutput(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaToolRecoveryValidationInputV1) =>
+      api.validateBobaToolRecoveryOutput(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaToolRecovery(projectId), result);
+    },
+  });
+}
+
+export function useRollbackBobaToolRecovery(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaToolRecoveryRollbackInputV1) =>
+      api.rollbackBobaToolRecovery(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaToolRecovery(projectId), result);
+    },
+  });
+}
+
+export function useExportBobaToolRecovery(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaToolRecovery(projectId),
+  });
+}
+
+export function useResetBobaToolRecovery(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaToolRecovery(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(queryKeys.bobaToolRecovery(projectId), null);
     },
   });
 }

@@ -4043,6 +4043,379 @@ export interface BobaCodeSurgeonCommitInputV1 {
   approval: BobaCodeApprovalRecordV1;
 }
 
+export interface BobaToolHealthCheckV1 {
+  health_check_id: string;
+  tool_id: string;
+  check_type: string;
+  executable: string;
+  arguments: string[];
+  timeout_seconds: number;
+  shell_used: false;
+  network_required: false;
+  read_only: boolean;
+  expected_exit_codes: number[];
+  output_limit_bytes: number;
+  warnings: string[];
+}
+
+export interface BobaToolCapabilityV1 {
+  capability_id: string;
+  name: string;
+  description: string;
+  required_input_properties: string[];
+  required_output_properties: string[];
+  non_negotiable_quality_properties: string[];
+  acceptable_degradations: string[];
+  unacceptable_degradations: string[];
+  safety_constraints: string[];
+  rights_constraints: string[];
+  registered_tool_ids: string[];
+  warnings: string[];
+}
+
+export interface BobaRegisteredRecoveryToolV1 {
+  tool_id: string;
+  display_name: string;
+  provider_type: string;
+  capability_ids: string[];
+  executable: string;
+  package_name: string;
+  local_only: boolean;
+  installed: boolean;
+  available: boolean;
+  health_status: string;
+  version: string;
+  supported_inputs: string[];
+  supported_outputs: string[];
+  quality_tier: string;
+  resource_profile: string;
+  fallback_priority: number;
+  known_limitations: string[];
+  prohibited_uses: string[];
+  health_check: BobaToolHealthCheckV1 | null;
+  warnings: string[];
+}
+
+export interface BobaToolHealthResultV1 {
+  health_result_id: string;
+  health_check_id: string;
+  tool_id: string;
+  status: string;
+  exit_code: number | null;
+  duration_seconds: number;
+  version_detected: string;
+  bounded_stdout_summary: string;
+  bounded_stderr_summary: string;
+  output_truncated: boolean;
+  secrets_redacted: boolean;
+  checked_at: string;
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaToolRecoveryCaseV1 {
+  recovery_case_id: string;
+  source_repair_case_id: string;
+  source_repair_strategy_ids: string[];
+  title: string;
+  target_module: string;
+  workflow_stage: string;
+  required_capability: string;
+  failing_tool_id: string;
+  failure_class: string;
+  failure_evidence: string[];
+  rights_status: string;
+  safety_status: string;
+  checkpoint_required: boolean;
+  checkpoint_ready: boolean;
+  rollback_ready: boolean;
+  quality_requirements: string[];
+  approved_strategy_ids: string[];
+  recovery_eligible: boolean;
+  blocked_reason: string;
+  human_approval_required: true;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaToolRecoveryStrategyV1 {
+  recovery_strategy_id: string;
+  recovery_plan_id: string;
+  order: number;
+  strategy_type: string;
+  tool_id: string;
+  capability_id: string;
+  description: string;
+  rationale: string;
+  configuration_overrides: Record<string, unknown>;
+  expected_result: string;
+  expected_quality_effect: string;
+  expected_resource_effect: string;
+  reversible: boolean;
+  requires_checkpoint: boolean;
+  requires_tool_switch: boolean;
+  requires_quality_review: true;
+  requires_human_approval: true;
+  execution_allowed: boolean;
+  maximum_attempts: number;
+  timeout_seconds: number;
+  failure_stop_condition: string;
+  success_condition: string;
+  rollback_reference: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaToolRecoveryPlanV1 {
+  recovery_plan_id: string;
+  recovery_case_id: string;
+  approved_repair_strategy_id: string;
+  required_capability: string;
+  primary_tool_id: string;
+  candidate_fallback_tool_ids: string[];
+  ordered_strategies: BobaToolRecoveryStrategyV1[];
+  retry_budget: Record<string, number>;
+  time_budget_seconds: number;
+  checkpoint_requirements: Record<string, unknown>;
+  rollback_requirements: Record<string, unknown>;
+  quality_requirements: string[];
+  validation_requirements: string[];
+  approval_status: string;
+  execution_status: string;
+  prohibited_actions: string[];
+  stop_conditions: string[];
+  escalation_conditions: string[];
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaToolRecoveryApprovalV1 {
+  approval_id: string;
+  recovery_case_id: string;
+  recovery_plan_id: string;
+  approved: boolean;
+  approved_at: string | null;
+  approved_by: string;
+  approved_strategy_ids: string[];
+  approved_tool_ids: string[];
+  approved_configuration_overrides: Record<string, unknown>;
+  approved_retry_budget: Record<string, number>;
+  approved_time_budget_seconds: number;
+  approved_quality_requirements: string[];
+  approved_checkpoint_reference: string;
+  approval_expires_at: string | null;
+  explicit_confirmation: string;
+  warnings: string[];
+}
+
+export interface BobaRecoveryCommandV1 {
+  recovery_command_id: string;
+  tool_id: string;
+  executable: string;
+  arguments: string[];
+  working_directory_scope: string;
+  category: string;
+  approved: boolean;
+  shell_used: false;
+  network_forbidden: true;
+  timeout_seconds: number;
+  expected_exit_codes: number[];
+  output_limit_bytes: number;
+  environment_policy: string;
+  warnings: string[];
+}
+
+export interface BobaToolRecoveryAttemptV1 {
+  recovery_attempt_id: string;
+  recovery_case_id: string;
+  recovery_plan_id: string;
+  recovery_strategy_id: string;
+  attempt_number: number;
+  tool_id: string;
+  capability_id: string;
+  execution_started_at: string | null;
+  execution_completed_at: string | null;
+  working_directory_reference: string;
+  command_records: BobaRecoveryCommandV1[];
+  status: string;
+  exit_code: number | null;
+  timeout_occurred: boolean;
+  output_artifact_refs: string[];
+  temporary_artifact_refs: string[];
+  failure_class: string;
+  failure_summary: string;
+  quality_change_disclosed: boolean;
+  source_media_untouched: boolean;
+  completed_outputs_untouched: boolean;
+  validation_required: boolean;
+  next_strategy_allowed: boolean;
+  stop_reason: string;
+  warnings: string[];
+}
+
+export interface BobaRecoveredOutputValidationV1 {
+  output_validation_id: string;
+  recovery_attempt_id: string;
+  output_artifact_ref: string;
+  artifact_exists: boolean;
+  artifact_non_empty: boolean;
+  checksum_valid: boolean | null;
+  media_probe_valid: boolean | null;
+  duration_valid: boolean | null;
+  resolution_valid: boolean | null;
+  frame_rate_valid: boolean | null;
+  audio_presence_valid: boolean | null;
+  audio_video_sync_valid: boolean | null;
+  caption_timing_status: string;
+  framing_status: string;
+  source_window_status: string;
+  schema_valid: boolean | null;
+  required_checks_passed: boolean;
+  failed_required_checks: string[];
+  unavailable_required_checks: string[];
+  quality_review_required: true;
+  accepted_for_quality_review: boolean;
+  rejected_reason: string;
+  warnings: string[];
+}
+
+export interface BobaToolRecoveryRollbackV1 {
+  rollback_record_id: string;
+  recovery_attempt_id: string;
+  trigger: string;
+  scope: string;
+  temporary_outputs_removed: boolean;
+  prior_generated_state_restored: boolean;
+  original_outputs_preserved: boolean;
+  source_media_preserved: boolean;
+  checkpoint_unchanged: boolean;
+  rollback_validation_passed: boolean;
+  status: string;
+  human_review_required: boolean;
+  warnings: string[];
+}
+
+export interface BobaToolRecoveryHandoffV1 {
+  handoff_id: string;
+  recovery_case_id: string;
+  recovery_plan_id: string;
+  recovery_attempt_id: string;
+  target_module: string;
+  reason: string;
+  required_inputs: string[];
+  required_quality_checks: string[];
+  blocked_actions: string[];
+  allowed_advisory_actions: string[];
+  apply_automatically: false;
+  human_approval_required: true;
+  priority: string;
+  warnings: string[];
+}
+
+export interface BobaToolRecoverySummaryV1 {
+  total_recovery_cases: number;
+  eligible_case_count: number;
+  blocked_case_count: number;
+  health_check_count: number;
+  healthy_tool_count: number;
+  unavailable_tool_count: number;
+  recovery_plan_count: number;
+  recovery_attempt_count: number;
+  successful_pending_quality_count: number;
+  failed_attempt_count: number;
+  timeout_count: number;
+  rollback_count: number;
+  fallback_switch_count: number;
+  checkpoint_block_count: number;
+  quality_rejection_count: number;
+  current_highest_priority_case: string;
+  safest_available_strategy: string;
+  required_human_actions: string[];
+  limitations: string[];
+}
+
+export interface BobaToolRecoverySignalUsageV1 {
+  repair_planner_used: boolean;
+  repair_planner_artifact_read: boolean;
+  root_cause_references_used: boolean;
+  approval_record_used: boolean;
+  capability_registry_used: boolean;
+  local_health_checks_executed: boolean;
+  recovery_commands_executed: boolean;
+  local_fallback_used: boolean;
+  checkpoint_reference_used: boolean;
+  output_validation_used: boolean;
+  rollback_used: boolean;
+  source_media_modified: false;
+  completed_outputs_modified: false;
+  workflow_resume_used: false;
+  code_modification_used: false;
+  package_installation_used: false;
+  service_restart_used: false;
+  process_kill_used: false;
+  external_api_used: false;
+  network_access_used: false;
+  url_fetching_used: false;
+  scraping_used: false;
+  downloading_used: false;
+  uploading_used: false;
+  paid_service_used: false;
+  rights_bypass_used: false;
+  safety_bypass_used: false;
+  destructive_action_used: false;
+  fallback_used: boolean;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaToolRecoveryBrainSetV1 {
+  schema_version: "boba_tool_recovery_brain_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  repair_planner_source: string;
+  recovery_cases: BobaToolRecoveryCaseV1[];
+  capability_registry: BobaToolCapabilityV1[];
+  registered_tools: BobaRegisteredRecoveryToolV1[];
+  tool_health_results: BobaToolHealthResultV1[];
+  recovery_plans: BobaToolRecoveryPlanV1[];
+  recovery_attempts: BobaToolRecoveryAttemptV1[];
+  output_validations: BobaRecoveredOutputValidationV1[];
+  rollback_records: BobaToolRecoveryRollbackV1[];
+  recovery_handoffs: BobaToolRecoveryHandoffV1[];
+  recovery_summary: BobaToolRecoverySummaryV1;
+  signal_usage: BobaToolRecoverySignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaToolRecoveryPlanInputV1 {
+  selected_handoff_id?: string;
+  selected_repair_strategy_id?: string;
+  failure_context?: Record<string, unknown>;
+  run_health_checks?: boolean;
+}
+
+export interface BobaToolRecoveryHealthInputV1 {
+  tool_ids?: string[];
+}
+
+export interface BobaToolRecoveryExecuteInputV1 {
+  recovery_plan_id: string;
+  recovery_strategy_id: string;
+  approval: BobaToolRecoveryApprovalV1;
+}
+
+export interface BobaToolRecoveryValidationInputV1 {
+  recovery_attempt_id: string;
+}
+
+export interface BobaToolRecoveryRollbackInputV1 {
+  recovery_attempt_id: string;
+  trigger: string;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;
