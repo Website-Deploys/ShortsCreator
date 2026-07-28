@@ -12,6 +12,13 @@ from olympus.boba.approval_rejection_learning import (
     BobaApprovalRejectionModuleGuidanceV1,
 )
 from olympus.boba.approvals import BobaApprovalService
+from olympus.boba.autopilot_controller import (
+    BobaAutopilotActionV1,
+    BobaAutopilotControllerSetV1,
+    BobaAutopilotControllerV1,
+    BobaAutopilotControlModeV1,
+    BobaAutopilotTriggerV1,
+)
 from olympus.boba.brain import BobaBrain
 from olympus.boba.candidate_video_scorer import (
     BobaCandidateVideoScorerSetV1,
@@ -243,6 +250,11 @@ class BobaIntegration:
         self.editorial_decision = BobaEditorialDecisionEngine()
         self.explanation = BobaExplanationEngine()
         self.approvals = BobaApprovalService(store)
+        self.autopilot_controller = BobaAutopilotControllerV1(
+            store,
+            context_provider=self._autopilot_context,
+            module_invoker=self._invoke_autopilot_typed_module,
+        )
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
 
@@ -2644,6 +2656,313 @@ class BobaIntegration:
                 )[:800]
         self.store.save_candidate_ranking(ranking)
         return ranking
+
+    async def _autopilot_context(self, project_id: str) -> dict[str, Any]:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        manifest_resolution = await resolve_render_manifest(self.storage, project_id)
+        manifest = manifest_resolution.manifest or {}
+        accepted_output_ids = [
+            str(item.get("clip_id") or item.get("storage_key") or "")
+            for item in _list(manifest.get("renders"))
+            if isinstance(item, dict)
+        ]
+        return {
+            "current_workflow_stage": project.status.value,
+            "accepted_output_ids": [
+                item for item in accepted_output_ids if item
+            ][:128],
+            "source_media_references": [project.storage_key],
+            "source_media_read_only": True,
+            "rights_status": "unknown",
+            "safety_status": "clear_for_local_analysis",
+            "active_external_operations": [],
+        }
+
+    async def _invoke_autopilot_typed_module(
+        self,
+        module_name: str,
+        operation_name: str,
+        parameters: Any,
+    ) -> dict[str, Any]:
+        values = dict(parameters) if isinstance(parameters, dict) else {}
+        project_id = str(values.get("project_id") or "")
+        if not project_id:
+            raise ValidationError("Autopilot typed invocation requires a project id.")
+        result: object
+        if module_name == "observer" and operation_name == "generate":
+            result = await self.generate_observer_report(project_id)
+        elif module_name == "error_doctor" and operation_name == "generate":
+            result = await self.generate_boba_error_doctor(project_id)
+        elif module_name == "root_cause_analyzer" and operation_name == "generate":
+            result = await self.generate_boba_root_cause_analyzer(project_id)
+        elif module_name == "repair_planner" and operation_name == "generate":
+            result = await self.generate_boba_repair_planner(project_id)
+        elif module_name == "code_surgeon" and operation_name in {
+            "proposal_only",
+            "validate_proposal",
+        }:
+            call = (
+                self.validate_boba_code_surgeon_patch
+                if operation_name == "validate_proposal"
+                else self.generate_boba_code_surgeon_proposal
+            )
+            result = await call(
+                project_id,
+                repair_case_id=str(values.get("repair_case_id") or "") or None,
+                repair_strategy_id=(
+                    str(values.get("repair_strategy_id") or "") or None
+                ),
+                unified_diff=str(values.get("unified_diff") or "") or None,
+            )
+        elif module_name == "code_surgeon" and operation_name == "execute_approved":
+            approval = values.get("approval")
+            if not isinstance(approval, BobaCodeApprovalRecordV1):
+                raise ValidationError("Exact Code Surgeon approval is required.")
+            result = await self.execute_approved_boba_code_surgeon_patch(
+                project_id,
+                patch_proposal_id=str(values.get("patch_proposal_id") or ""),
+                approval=approval,
+                approved_validation_commands=[
+                    str(item)
+                    for item in values.get("approved_validation_commands") or []
+                ],
+            )
+        elif module_name == "code_surgeon" and operation_name == "prepare_local_commit":
+            approval = values.get("approval")
+            if not isinstance(approval, BobaCodeApprovalRecordV1):
+                raise ValidationError("Exact Code Surgeon approval is required.")
+            result = await self.prepare_boba_code_surgeon_local_commit(
+                project_id,
+                isolated_run_id=str(values.get("isolated_run_id") or ""),
+                approval=approval,
+            )
+        elif module_name == "tool_recovery_brain" and operation_name == "plan":
+            result = await self.generate_boba_tool_recovery_plan(
+                project_id,
+                selected_handoff_id=(
+                    str(values.get("selected_handoff_id") or "") or None
+                ),
+                selected_repair_strategy_id=(
+                    str(values.get("selected_repair_strategy_id") or "") or None
+                ),
+            )
+        elif module_name == "tool_recovery_brain" and operation_name == "health_check":
+            result = await self.run_boba_tool_health_checks(
+                project_id,
+                tool_ids=[str(item) for item in values.get("tool_ids") or []] or None,
+            )
+        elif module_name == "tool_recovery_brain" and operation_name == "execute_approved":
+            approval = values.get("approval")
+            if not isinstance(approval, BobaToolRecoveryApprovalV1):
+                raise ValidationError("Exact Tool Recovery approval is required.")
+            result = await self.execute_approved_boba_tool_recovery(
+                project_id,
+                recovery_plan_id=str(values.get("recovery_plan_id") or ""),
+                recovery_strategy_id=str(
+                    values.get("recovery_strategy_id") or ""
+                ),
+                approval=approval,
+            )
+        elif module_name == "tool_recovery_brain" and operation_name == "validate_output":
+            result = await self.validate_boba_recovered_output(
+                project_id,
+                recovery_attempt_id=str(values.get("recovery_attempt_id") or ""),
+            )
+        elif module_name == "tool_recovery_brain" and operation_name == "rollback":
+            result = await self.rollback_boba_tool_recovery(
+                project_id,
+                recovery_attempt_id=str(values.get("recovery_attempt_id") or ""),
+                trigger=str(
+                    values.get("rollback_trigger")
+                    or "Autopilot coordinated approved rollback."
+                ),
+            )
+        elif (
+            module_name == "output_quality_reviewer"
+            and operation_name == "artifact_review"
+        ):
+            result = await self.generate_boba_output_quality_review(
+                project_id,
+                output_reference=str(values.get("output_reference") or ""),
+                review_mode="artifact_only",
+                rights_status=str(values.get("rights_status") or "unknown"),
+                safety_status=str(values.get("safety_status") or "unknown"),
+            )
+        elif (
+            module_name == "output_quality_reviewer"
+            and operation_name == "technical_review"
+        ):
+            result = await self.run_boba_output_technical_review(
+                project_id,
+                output_reference=str(values.get("output_reference") or ""),
+                rights_status=str(values.get("rights_status") or "unknown"),
+                safety_status=str(values.get("safety_status") or "unknown"),
+            )
+        elif (
+            module_name == "output_quality_reviewer"
+            and operation_name == "baseline_compare"
+        ):
+            result = await self.compare_boba_output_quality_baseline(
+                project_id,
+                output_reference=str(values.get("output_reference") or ""),
+                baseline_reference=str(values.get("baseline_reference") or ""),
+                rights_status=str(values.get("rights_status") or "unknown"),
+                safety_status=str(values.get("safety_status") or "unknown"),
+            )
+        else:
+            raise ValidationError(
+                "Autopilot rejected an arbitrary module or operation.",
+                details={
+                    "module_name": module_name,
+                    "operation_name": operation_name,
+                },
+            )
+        return self._model_payload(result)
+
+    async def create_boba_autopilot_run(
+        self,
+        project_id: str,
+        *,
+        control_mode: BobaAutopilotControlModeV1 = "safe_read_only_automatic",
+        trigger: BobaAutopilotTriggerV1 = "manual",
+        source_event_id: str | None = None,
+        recovery_budget: dict[str, Any] | None = None,
+    ) -> BobaAutopilotControllerSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        return await self.autopilot_controller.create_run(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+            control_mode=control_mode,
+            trigger=trigger,
+            source_event_id=source_event_id,
+            recovery_budget=recovery_budget,
+        )
+
+    def inspect_boba_autopilot_run(
+        self,
+        project_id: str,
+        run_id: str,
+    ) -> BobaAutopilotControllerSetV1:
+        return self.autopilot_controller.inspect_run(project_id, run_id)
+
+    async def plan_boba_autopilot_next_action(
+        self,
+        project_id: str,
+        run_id: str,
+    ) -> BobaAutopilotActionV1:
+        return await self.autopilot_controller.plan_next_action(project_id, run_id)
+
+    async def advance_boba_autopilot_safe_read_only(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        maximum_steps: int = 12,
+    ) -> BobaAutopilotControllerSetV1:
+        return await self.autopilot_controller.advance_safe_read_only(
+            project_id,
+            run_id,
+            maximum_steps=maximum_steps,
+        )
+
+    async def coordinate_approved_boba_autopilot_action(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        action_id: str,
+        approval_record: dict[str, Any],
+    ) -> BobaAutopilotControllerSetV1:
+        return await self.autopilot_controller.coordinate_approved_action(
+            project_id,
+            run_id,
+            action_id=action_id,
+            approval_record=approval_record,
+        )
+
+    def pause_boba_autopilot_run(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        reason: str = "Human requested a controller pause.",
+    ) -> BobaAutopilotControllerSetV1:
+        return self.autopilot_controller.pause_run(
+            project_id,
+            run_id,
+            reason=reason,
+        )
+
+    def continue_boba_autopilot_run(
+        self,
+        project_id: str,
+        run_id: str,
+    ) -> BobaAutopilotControllerSetV1:
+        return self.autopilot_controller.continue_run(project_id, run_id)
+
+    def cancel_boba_autopilot_run(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        reason: str = "Human cancelled future Autopilot actions.",
+    ) -> BobaAutopilotControllerSetV1:
+        return self.autopilot_controller.cancel_run(
+            project_id,
+            run_id,
+            reason=reason,
+        )
+
+    def record_boba_autopilot_human_decision(
+        self,
+        project_id: str,
+        run_id: str,
+        **kwargs: Any,
+    ) -> BobaAutopilotControllerSetV1:
+        return self.autopilot_controller.record_human_decision(
+            project_id,
+            run_id,
+            **kwargs,
+        )
+
+    def request_boba_autopilot_budget_reset(
+        self,
+        project_id: str,
+        run_id: str,
+        *,
+        reason: str,
+    ) -> BobaAutopilotControllerSetV1:
+        return self.autopilot_controller.request_budget_reset(
+            project_id,
+            run_id,
+            reason=reason,
+        )
+
+    def load_boba_autopilot_controller(
+        self,
+        project_id: str,
+    ) -> BobaAutopilotControllerSetV1 | None:
+        return self.store.load_boba_autopilot_controller(project_id)
+
+    def export_boba_autopilot_controller(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        return self.store.export_boba_autopilot_controller(project_id)
+
+    def export_boba_autopilot_run(
+        self,
+        project_id: str,
+        run_id: str,
+    ) -> dict[str, Any]:
+        return self.autopilot_controller.export_run(project_id, run_id)
+
+    def reset_boba_autopilot_controller(self, project_id: str) -> bool:
+        return self.autopilot_controller.reset_run_metadata(project_id)
 
     async def generate_boba_for_clip(
         self, project_id: str, clip_id: str

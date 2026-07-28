@@ -583,4 +583,37 @@ describe("V2 output flow UI contracts", () => {
     expect(apiClient).toContain("/output-quality-reviewer/human-review");
     expect(apiClient).toContain("/output-quality-reviewer/export");
   });
+
+  it("shows BOBA Autopilot Controller V1 truth and bounded controls", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+    const apiClient = source("../../lib/apiClient.ts");
+
+    expect(resultsSection).toContain("BOBA Autopilot Controller V1");
+    expect(resultsSection).toContain(
+      "BOBA Autopilot coordinates approved self-healing actions. It does",
+    );
+    expect(resultsSection).toContain(
+      "BOBA will stop for rights, safety, approval, checkpoint, budget or",
+    );
+    expect(resultsSection).toContain(
+      "Autopilot completion does not mean Olympus resumed, uploaded content",
+    );
+    expect(resultsSection).toContain("CURRENT STATE");
+    expect(resultsSection).toContain("WHAT BOBA IS DOING");
+    expect(resultsSection).toContain("WHAT BOBA FINISHED");
+    expect(resultsSection).toContain("Pending states/actions");
+    expect(resultsSection).toContain("WHAT BOBA FOUND");
+    expect(resultsSection).toContain("APPROVAL REQUIRED");
+    expect(resultsSection).toContain("RECOVERY BUDGET");
+    expect(resultsSection).toContain("CHECKPOINT AND ROLLBACK");
+    expect(resultsSection).toContain("QUALITY REVIEW");
+    expect(resultsSection).toContain("WHAT HAPPENS NEXT");
+    expect(resultsSection).toContain("LIVE BOBA FEED");
+    expect(resultsSection).toContain("Continue safe read-only steps");
+    expect(resultsSection).toContain("Coordinate exact approved action");
+    expect(apiClient).toContain("/autopilot/runs");
+    expect(apiClient).toContain("/advance-safe");
+    expect(apiClient).toContain("/coordinate-approved");
+    expect(apiClient).toContain("/autopilot/export");
+  });
 });

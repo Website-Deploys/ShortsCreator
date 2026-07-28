@@ -13,6 +13,10 @@ from olympus.api.dependencies import (
     SettingsDep,
 )
 from olympus.boba.approvals import BobaApprovalDecision
+from olympus.boba.autopilot_controller import (
+    BobaAutopilotControlModeV1,
+    BobaAutopilotTriggerV1,
+)
 from olympus.boba.code_surgeon import (
     BobaCodeApprovalRecordV1,
     BobaCodeProposalSourceV1,
@@ -422,6 +426,54 @@ class CreativeBriefDecisionRequest(BaseModel):
 
     reason: str = Field(default="", max_length=500)
     creator_profile_id: str | None = Field(default=None, max_length=80)
+
+
+class AutopilotCreateRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    control_mode: BobaAutopilotControlModeV1 = "safe_read_only_automatic"
+    trigger: BobaAutopilotTriggerV1 = "manual"
+    source_event_id: str | None = Field(default=None, max_length=180)
+    recovery_budget: dict[str, Any] = Field(default_factory=dict, max_length=16)
+
+
+class AutopilotAdvanceSafeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    maximum_steps: int = Field(default=12, ge=1, le=30)
+
+
+class AutopilotCoordinateApprovedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str = Field(min_length=1, max_length=180)
+    approval_record: dict[str, Any]
+
+
+class AutopilotReasonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="", max_length=900)
+
+
+class AutopilotHumanDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal[
+        "reject_proposed_action",
+        "select_repair_alternative",
+        "request_more_evidence",
+        "pause_autopilot",
+        "cancel_autopilot",
+        "approve_disclosed_quality_limitation",
+        "reject_output",
+        "approve_budget_reset",
+        "acknowledge_uncertain_project_state",
+    ]
+    reason: str = Field(min_length=1, max_length=900)
+    reviewer_identity: str = Field(min_length=1, max_length=160)
+    action_id: str | None = Field(default=None, max_length=180)
+    selected_alternative_id: str | None = Field(default=None, max_length=180)
 
 
 def _require_enabled(settings: SettingsDep) -> None:
@@ -2161,6 +2213,255 @@ async def reset_output_quality_reviewer(
         "uploading_used": False,
         "publication_used": False,
         "destructive_action_used": False,
+    }
+
+
+@router.post("/projects/{project_id}/autopilot/runs")
+async def create_autopilot_run(
+    project_id: str,
+    body: AutopilotCreateRunRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    controller = await boba.create_boba_autopilot_run(
+        project_id,
+        control_mode=body.control_mode,
+        trigger=body.trigger,
+        source_event_id=body.source_event_id,
+        recovery_budget=body.recovery_budget or None,
+    )
+    return controller.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/autopilot/runs/{run_id}/plan-next")
+async def plan_autopilot_next_action(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    action = await boba.plan_boba_autopilot_next_action(project_id, run_id)
+    return action.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/autopilot/runs/{run_id}/advance-safe")
+async def advance_autopilot_safe_read_only(
+    project_id: str,
+    run_id: str,
+    body: AutopilotAdvanceSafeRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    controller = await boba.advance_boba_autopilot_safe_read_only(
+        project_id,
+        run_id,
+        maximum_steps=body.maximum_steps,
+    )
+    return controller.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/autopilot/runs/{run_id}/coordinate-approved")
+async def coordinate_autopilot_approved_action(
+    project_id: str,
+    run_id: str,
+    body: AutopilotCoordinateApprovedRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    controller = await boba.coordinate_approved_boba_autopilot_action(
+        project_id,
+        run_id,
+        action_id=body.action_id,
+        approval_record=body.approval_record,
+    )
+    return controller.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/autopilot/runs/{run_id}/pause")
+async def pause_autopilot_run(
+    project_id: str,
+    run_id: str,
+    body: AutopilotReasonRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    controller = boba.pause_boba_autopilot_run(
+        project_id,
+        run_id,
+        reason=body.reason or "Human requested a controller pause.",
+    )
+    return controller.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/autopilot/runs/{run_id}/continue")
+async def continue_autopilot_run(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.continue_boba_autopilot_run(
+        project_id,
+        run_id,
+    ).model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/autopilot/runs/{run_id}/cancel")
+async def cancel_autopilot_run(
+    project_id: str,
+    run_id: str,
+    body: AutopilotReasonRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    controller = boba.cancel_boba_autopilot_run(
+        project_id,
+        run_id,
+        reason=body.reason or "Human cancelled future Autopilot actions.",
+    )
+    return controller.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/autopilot/runs/{run_id}/human-decision")
+async def record_autopilot_human_decision(
+    project_id: str,
+    run_id: str,
+    body: AutopilotHumanDecisionRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    controller = boba.record_boba_autopilot_human_decision(
+        project_id,
+        run_id,
+        decision=body.decision,
+        reason=body.reason,
+        reviewer_identity=body.reviewer_identity,
+        action_id=body.action_id,
+        selected_alternative_id=body.selected_alternative_id,
+    )
+    return controller.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/autopilot/runs/{run_id}/budget-reset-request")
+async def request_autopilot_budget_reset(
+    project_id: str,
+    run_id: str,
+    body: AutopilotReasonRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    controller = boba.request_boba_autopilot_budget_reset(
+        project_id,
+        run_id,
+        reason=body.reason or "Additional bounded recovery attempts were requested.",
+    )
+    return controller.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/autopilot")
+async def get_autopilot_controller(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    controller = boba.load_boba_autopilot_controller(project_id)
+    if controller is None:
+        raise NotFoundError(
+            "BOBA Autopilot Controller V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return controller.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/autopilot/runs/{run_id}")
+async def get_autopilot_run(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    record = boba.store.load_boba_autopilot_run(project_id, run_id)
+    if record is None:
+        raise NotFoundError(
+            "BOBA Autopilot run was not found.",
+            details={"run_id": run_id},
+        )
+    return record
+
+
+@router.get("/projects/{project_id}/autopilot/runs/{run_id}/events")
+async def get_autopilot_events(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    boba.inspect_boba_autopilot_run(project_id, run_id)
+    events = boba.store.load_boba_autopilot_events(project_id, run_id)
+    return {
+        "schema_version": "boba_autopilot_event_stream_v1",
+        "project_id": project_id,
+        "run_id": run_id,
+        "events": [item.model_dump(mode="json") for item in events],
+    }
+
+
+@router.get("/projects/{project_id}/autopilot/export")
+async def export_autopilot_controller(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_autopilot_controller(project_id)
+
+
+@router.delete("/projects/{project_id}/autopilot")
+async def reset_autopilot_controller(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_boba_autopilot_controller(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "autopilot_metadata_removed": removed,
+        "upstream_boba_artifacts_deleted": False,
+        "source_media_deleted": False,
+        "accepted_outputs_deleted": False,
+        "code_surgeon_worktrees_deleted": False,
+        "tool_recovery_workspaces_deleted": False,
+        "checkpoints_deleted": False,
+        "workflow_resumed": False,
+        "publication_used": False,
     }
 
 

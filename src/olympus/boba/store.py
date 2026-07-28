@@ -7,7 +7,8 @@ import os
 import re
 import shutil
 import threading
-from datetime import UTC, datetime
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TypeVar
 from uuid import uuid4
@@ -19,6 +20,12 @@ from olympus.boba.approval_rejection_learning import (
     BobaApprovalRejectionLearningSetV1,
 )
 from olympus.boba.approvals import BobaApprovalEventV1, BobaApprovalTargetType
+from olympus.boba.autopilot_controller import (
+    BobaAutopilotControllerSetV1,
+    BobaAutopilotEventV1,
+    BobaAutopilotProjectLockV1,
+    sanitize_autopilot_export,
+)
 from olympus.boba.candidate_video_scorer import BobaCandidateVideoScorerSetV1
 from olympus.boba.caption_motion import BobaCaptionMotionRecommendationSetV1
 from olympus.boba.clip_brief import BobaClipBriefSetV1
@@ -2392,6 +2399,467 @@ class BobaMemoryStore:
             or directory.name != "output_quality_reviewer"
         ):
             raise ValidationError("Invalid BOBA Output Quality Reviewer reset path.")
+        with self._lock:
+            if not directory.exists():
+                return False
+            shutil.rmtree(directory)
+        return True
+
+    def boba_autopilot_controller_path(self, project_id: str) -> Path:
+        return self._path(project_id, "autopilot_controller/index.json")
+
+    def boba_autopilot_run_path(self, project_id: str, run_id: str) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,180}", run_id):
+            raise ValidationError("Invalid BOBA Autopilot run id.")
+        return self._path(
+            project_id,
+            f"autopilot_controller/runs/{run_id}/index.json",
+        )
+
+    def boba_autopilot_events_path(self, project_id: str, run_id: str) -> Path:
+        return self.boba_autopilot_run_path(project_id, run_id).with_name(
+            "events.jsonl"
+        )
+
+    def boba_autopilot_lock_path(self, project_id: str) -> Path:
+        return self._path(project_id, "autopilot_controller/active.lock.json")
+
+    @staticmethod
+    def _autopilot_time(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+
+    def load_boba_autopilot_lock(
+        self,
+        project_id: str,
+    ) -> BobaAutopilotProjectLockV1 | None:
+        path = self.boba_autopilot_lock_path(project_id)
+        raw = self._read(path, None)
+        if raw is None:
+            return None
+        if not isinstance(raw, dict):
+            raise ValidationError("BOBA Autopilot lock metadata is malformed.")
+        try:
+            lock = BobaAutopilotProjectLockV1.model_validate(raw)
+        except PydanticValidationError as exc:
+            raise ValidationError(
+                "BOBA Autopilot lock metadata is malformed."
+            ) from exc
+        expires_at = self._autopilot_time(lock.expires_at)
+        lock.stale = expires_at is None or expires_at <= datetime.now(UTC)
+        if lock.stale and "Lease is stale and requires explicit confirmation." not in (
+            lock.warnings
+        ):
+            lock.warnings.append(
+                "Lease is stale and requires explicit confirmation."
+            )
+        return lock
+
+    def acquire_boba_autopilot_lock(
+        self,
+        project_id: str,
+        *,
+        run_id: str,
+        owner_identifier: str,
+        mode: str,
+        lease_seconds: int = 300,
+        confirm_stale: bool = False,
+    ) -> BobaAutopilotProjectLockV1:
+        path = self.boba_autopilot_lock_path(project_id)
+        lease_seconds = max(30, min(int(lease_seconds), 900))
+        with self._lock:
+            existing = self.load_boba_autopilot_lock(project_id)
+            if existing is not None and not existing.stale:
+                if (
+                    existing.run_id == run_id
+                    and existing.owner_identifier == owner_identifier
+                ):
+                    return self.refresh_boba_autopilot_lock(
+                        project_id,
+                        run_id=run_id,
+                        owner_identifier=owner_identifier,
+                        lease_seconds=lease_seconds,
+                    )
+                raise ValidationError(
+                    "A BOBA Autopilot project lease is already active.",
+                    details={"active_run_id": existing.run_id},
+                )
+            stale_warning: list[str] = []
+            if existing is not None:
+                if not confirm_stale:
+                    raise ValidationError(
+                        "A stale BOBA Autopilot lease requires explicit confirmation.",
+                        details={"stale_run_id": existing.run_id},
+                    )
+                stale_copy = path.with_name(
+                    f"active.lock.stale.{uuid4().hex}.json"
+                )
+                with suppress(FileNotFoundError):
+                    os.replace(path, stale_copy)
+                stale_warning = [
+                    f"Confirmed stale lease from run {existing.run_id} was preserved."
+                ]
+            now = datetime.now(UTC)
+            lock = BobaAutopilotProjectLockV1(
+                project_id=project_id,
+                run_id=run_id,
+                acquired_at=now.isoformat(),
+                refreshed_at=now.isoformat(),
+                expires_at=(now + timedelta(seconds=lease_seconds)).isoformat(),
+                owner_identifier=owner_identifier,
+                mode=mode,
+                warnings=stale_warning,
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with path.open("x", encoding="utf-8", newline="\n") as handle:
+                    json.dump(
+                        lock.model_dump(mode="json"),
+                        handle,
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except FileExistsError as exc:
+                raise ValidationError(
+                    "A BOBA Autopilot project lease was acquired concurrently."
+                ) from exc
+            return lock
+
+    def refresh_boba_autopilot_lock(
+        self,
+        project_id: str,
+        *,
+        run_id: str,
+        owner_identifier: str,
+        lease_seconds: int = 300,
+        confirm_stale: bool = False,
+    ) -> BobaAutopilotProjectLockV1:
+        with self._lock:
+            lock = self.load_boba_autopilot_lock(project_id)
+            if lock is None:
+                raise ValidationError("BOBA Autopilot project lease is missing.")
+            if lock.run_id != run_id or lock.owner_identifier != owner_identifier:
+                raise ValidationError(
+                    "BOBA Autopilot project lease belongs to another run or owner."
+                )
+            if lock.stale and not confirm_stale:
+                raise ValidationError(
+                    "A stale BOBA Autopilot lease requires explicit confirmation."
+                )
+            now = datetime.now(UTC)
+            lock.refreshed_at = now.isoformat()
+            lock.expires_at = (
+                now + timedelta(seconds=max(30, min(int(lease_seconds), 900)))
+            ).isoformat()
+            lock.stale = False
+            self._atomic_write(
+                self.boba_autopilot_lock_path(project_id),
+                lock.model_dump(mode="json"),
+            )
+            return lock
+
+    def release_boba_autopilot_lock(
+        self,
+        project_id: str,
+        *,
+        run_id: str,
+        owner_identifier: str,
+    ) -> bool:
+        path = self.boba_autopilot_lock_path(project_id)
+        with self._lock:
+            lock = self.load_boba_autopilot_lock(project_id)
+            if lock is None:
+                return False
+            if lock.run_id != run_id or lock.owner_identifier != owner_identifier:
+                raise ValidationError(
+                    "BOBA Autopilot lease release did not match its run and owner."
+                )
+            path.unlink(missing_ok=True)
+            return True
+
+    def _append_boba_autopilot_events(
+        self,
+        project_id: str,
+        run_id: str,
+        events: list[BobaAutopilotEventV1],
+    ) -> None:
+        path = self.boba_autopilot_events_path(project_id, run_id)
+        existing_ids: set[str] = set()
+        if path.exists():
+            try:
+                for line in path.read_text(encoding="utf-8-sig").splitlines():
+                    try:
+                        raw = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(raw, dict) and raw.get("event_id"):
+                        existing_ids.add(str(raw["event_id"]))
+            except OSError as exc:
+                raise ValidationError(
+                    "BOBA Autopilot event stream is unreadable."
+                ) from exc
+        new_events = [item for item in events if item.event_id not in existing_ids]
+        if not new_events:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            for event in new_events:
+                safe = sanitize_autopilot_export(event.model_dump(mode="json"))
+                handle.write(
+                    json.dumps(
+                        safe,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def load_boba_autopilot_events(
+        self,
+        project_id: str,
+        run_id: str,
+    ) -> list[BobaAutopilotEventV1]:
+        path = self.boba_autopilot_events_path(project_id, run_id)
+        if not path.exists():
+            controller = self.load_boba_autopilot_controller(project_id)
+            return (
+                [
+                    item
+                    for item in controller.event_stream
+                    if item.run_id == run_id
+                ]
+                if controller is not None
+                else []
+            )
+        events: list[BobaAutopilotEventV1] = []
+        try:
+            for line in path.read_text(encoding="utf-8-sig").splitlines():
+                try:
+                    raw = json.loads(line)
+                    events.append(BobaAutopilotEventV1.model_validate(raw))
+                except (json.JSONDecodeError, PydanticValidationError):
+                    continue
+        except OSError as exc:
+            raise ValidationError(
+                "BOBA Autopilot event stream is unreadable."
+            ) from exc
+        return sorted(events, key=lambda item: item.sequence)
+
+    @staticmethod
+    def _autopilot_run_payload(
+        controller: BobaAutopilotControllerSetV1,
+        run_id: str,
+    ) -> dict[str, Any]:
+        budget_ids = {
+            item.budget_id
+            for item in controller.recovery_budgets
+            if item.run_id == run_id
+        }
+        return {
+            "schema_version": "boba_autopilot_run_record_v1",
+            "project_id": controller.project_id,
+            "run": next(
+                (
+                    item.model_dump(mode="json")
+                    for item in controller.runs
+                    if item.run_id == run_id
+                ),
+                None,
+            ),
+            "project_snapshots": [
+                item.model_dump(mode="json")
+                for item in controller.project_snapshots
+                if any(
+                    run.run_id == run_id
+                    and run.project_snapshot_id == item.project_snapshot_id
+                    for run in controller.runs
+                )
+            ],
+            "state_transitions": [
+                item.model_dump(mode="json")
+                for item in controller.state_transitions
+                if item.run_id == run_id
+            ],
+            "planned_actions": [
+                item.model_dump(mode="json")
+                for item in controller.planned_actions
+                if item.run_id == run_id
+            ],
+            "module_invocations": [
+                item.model_dump(mode="json")
+                for item in controller.module_invocations
+                if item.run_id == run_id
+            ],
+            "approval_bindings": [
+                item.model_dump(mode="json")
+                for item in controller.approval_bindings
+                if item.run_id == run_id
+            ],
+            "recovery_budgets": [
+                item.model_dump(mode="json")
+                for item in controller.recovery_budgets
+                if item.run_id == run_id
+            ],
+            "budget_usages": [
+                item.model_dump(mode="json")
+                for item in controller.budget_usages
+                if item.budget_id in budget_ids
+            ],
+            "checkpoint_requirements": [
+                item.model_dump(mode="json")
+                for item in controller.checkpoint_requirements
+                if item.run_id == run_id
+            ],
+            "incidents": [
+                item.model_dump(mode="json")
+                for item in controller.incidents
+                if item.run_id == run_id
+            ],
+            "decisions": [
+                item.model_dump(mode="json")
+                for item in controller.decisions
+                if item.run_id == run_id
+            ],
+            "handoffs": [
+                item.model_dump(mode="json")
+                for item in controller.handoffs
+                if item.run_id == run_id
+            ],
+            "signal_usage": controller.signal_usage.model_dump(mode="json"),
+        }
+
+    def save_boba_autopilot_controller(
+        self,
+        controller: BobaAutopilotControllerSetV1,
+    ) -> BobaAutopilotControllerSetV1:
+        with self._lock:
+            payload = {
+                "schema_version": "boba_autopilot_controller_record_v1",
+                "autopilot_controller": controller.model_dump(mode="json"),
+            }
+            safe = sanitize_autopilot_export(payload)
+            self._atomic_write_compact(
+                self.boba_autopilot_controller_path(controller.project_id),
+                safe,
+            )
+            for run in controller.runs:
+                run_payload = sanitize_autopilot_export(
+                    self._autopilot_run_payload(controller, run.run_id)
+                )
+                self._atomic_write_compact(
+                    self.boba_autopilot_run_path(
+                        controller.project_id,
+                        run.run_id,
+                    ),
+                    run_payload,
+                )
+                self._append_boba_autopilot_events(
+                    controller.project_id,
+                    run.run_id,
+                    [
+                        item
+                        for item in controller.event_stream
+                        if item.run_id == run.run_id
+                    ],
+                )
+        return controller
+
+    def load_boba_autopilot_controller(
+        self,
+        project_id: str,
+    ) -> BobaAutopilotControllerSetV1 | None:
+        try:
+            raw = self._read(self.boba_autopilot_controller_path(project_id), None)
+        except ValidationError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        payload = raw.get("autopilot_controller", raw)
+        if not isinstance(payload, dict):
+            return None
+        try:
+            controller = BobaAutopilotControllerSetV1.model_validate(payload)
+        except PydanticValidationError:
+            return None
+        lock = self.load_boba_autopilot_lock(project_id)
+        controller.lock_metadata = lock
+        return controller
+
+    def load_boba_autopilot_run(
+        self,
+        project_id: str,
+        run_id: str,
+    ) -> dict[str, Any] | None:
+        try:
+            raw = self._read(self.boba_autopilot_run_path(project_id, run_id), None)
+        except ValidationError:
+            return None
+        return raw if isinstance(raw, dict) else None
+
+    def export_boba_autopilot_controller(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        controller = self.load_boba_autopilot_controller(project_id)
+        if controller is None:
+            raise ValidationError(
+                "BOBA Autopilot Controller V1 is not available for export."
+            )
+        payload = {
+            "schema_version": "boba_autopilot_controller_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "autopilot_controller": controller.model_dump(mode="json"),
+            "privacy": {
+                "private_paths_excluded": True,
+                "secrets_excluded": True,
+                "credentials_excluded": True,
+                "raw_media_excluded": True,
+                "full_command_output_excluded": True,
+                "source_media_modified": False,
+                "accepted_outputs_modified": False,
+                "workflow_resume_used": False,
+                "publication_used": False,
+            },
+        }
+        safe = sanitize_autopilot_export(payload)
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Autopilot export is invalid.")
+        return safe
+
+    def reset_boba_autopilot_controller(self, project_id: str) -> bool:
+        directory = self.boba_autopilot_controller_path(project_id).parent.resolve()
+        project_directory = self._project_dir(project_id).resolve()
+        if directory.parent != project_directory or directory.name != (
+            "autopilot_controller"
+        ):
+            raise ValidationError("Invalid BOBA Autopilot reset path.")
+        controller = self.load_boba_autopilot_controller(project_id)
+        if controller is not None and any(
+            run.run_status
+            in {
+                "created",
+                "active",
+                "awaiting_approval",
+                "awaiting_human_review",
+                "paused",
+            }
+            for run in controller.runs
+        ):
+            raise ValidationError(
+                "Active Autopilot runs must be safely cancelled before reset."
+            )
         with self._lock:
             if not directory.exists():
                 return False
