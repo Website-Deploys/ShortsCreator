@@ -18,6 +18,7 @@ import {
   useBobaRepairPlanner,
   useBobaRootCauseAnalyzer,
   useBobaRightsPermissionGate,
+  useBobaToolRecovery,
   useBobaCandidates,
   useBobaClipBriefs,
   useBobaClipRanking,
@@ -54,6 +55,7 @@ import {
   useExportBobaRepairPlanner,
   useExportBobaRootCauseAnalyzer,
   useExportBobaRightsPermissionGate,
+  useExportBobaToolRecovery,
   useExportBobaContentScoutV2,
   useExportBobaCreatorLearning,
   useExportBobaExperimentation,
@@ -71,6 +73,7 @@ import {
   useGenerateBobaRepairPlanner,
   useGenerateBobaRootCauseAnalyzer,
   useGenerateBobaRightsPermissionGate,
+  useGenerateBobaToolRecoveryPlan,
   useGenerateBobaContentScoutV2,
   useGenerateBobaCreatorLearning,
   useGenerateBobaExperimentation,
@@ -79,6 +82,7 @@ import {
   useGenerateBobaTrendTopicWatcher,
   useGenerateBobaWholeVideoUnderstanding,
   useExecuteBobaCodeSurgeonPatch,
+  useExecuteBobaToolRecovery,
   usePlans,
   useRenderManifest,
   useResetCreatorProfile,
@@ -90,6 +94,7 @@ import {
   useResetBobaRepairPlanner,
   useResetBobaRootCauseAnalyzer,
   useResetBobaRightsPermissionGate,
+  useResetBobaToolRecovery,
   useResetBobaContentScoutV2,
   useResetBobaExperimentation,
   useResetBobaPerformanceFeedback,
@@ -105,6 +110,9 @@ import {
   useSubmitClipFeedback,
   useUpdateCreatorProfile,
   useValidateBobaCodeSurgeonPatch,
+  useValidateBobaToolRecoveryOutput,
+  useRollbackBobaToolRecovery,
+  useRunBobaToolRecoveryHealthChecks,
 } from "@/lib/queries";
 import { formatBytes, formatDuration, isTerminal } from "@/lib/rendering";
 import type {
@@ -131,6 +139,7 @@ import type {
   BobaPerformanceOutcomeLabel,
   BobaPerformanceTargetType,
   BobaProjectMemoryV1,
+  BobaToolRecoveryApprovalV1,
   BobaWholeVideoUnderstandingV1,
   ClipPlan,
   CreatorProfileV2,
@@ -9262,6 +9271,733 @@ function BobaCodeSurgeonPanel({ projectId }: { projectId: string }) {
   );
 }
 
+const TOOL_RECOVERY_APPROVAL_TEXT =
+  "I approve this exact recovery strategy, registered tool, settings, retry budget, time budget, checkpoint reference, and quality requirements.";
+
+function BobaToolRecoveryPanel({ projectId }: { projectId: string }) {
+  const plannerQuery = useBobaRepairPlanner(projectId);
+  const recoveryQuery = useBobaToolRecovery(projectId);
+  const generateRecovery = useGenerateBobaToolRecoveryPlan(projectId);
+  const runHealthChecks = useRunBobaToolRecoveryHealthChecks(projectId);
+  const executeRecovery = useExecuteBobaToolRecovery(projectId);
+  const validateOutput = useValidateBobaToolRecoveryOutput(projectId);
+  const rollbackRecovery = useRollbackBobaToolRecovery(projectId);
+  const exportRecovery = useExportBobaToolRecovery(projectId);
+  const resetRecovery = useResetBobaToolRecovery(projectId);
+  const [selectedHandoffId, setSelectedHandoffId] = useState("");
+  const [selectedStrategyId, setSelectedStrategyId] = useState("");
+  const [rightsStatus, setRightsStatus] = useState("unknown");
+  const [safetyStatus, setSafetyStatus] = useState("review_required");
+  const [checkpointReady, setCheckpointReady] = useState(false);
+  const [inputArtifactRef, setInputArtifactRef] = useState("");
+  const [outputFilename, setOutputFilename] = useState("recovered.mp4");
+  const [expectedDuration, setExpectedDuration] = useState("1");
+  const [expectedWidth, setExpectedWidth] = useState("1080");
+  const [expectedHeight, setExpectedHeight] = useState("1920");
+  const [expectedFps, setExpectedFps] = useState("30");
+  const [reviewer, setReviewer] = useState("local-human-reviewer");
+  const [approvalChecked, setApprovalChecked] = useState(false);
+  const [status, setStatus] = useState("");
+  const planner = plannerQuery.data;
+  const report = recoveryQuery.data;
+  const plannerHandoffs =
+    planner?.execution_handoffs.filter(
+      (handoff) => handoff.target_module === "tool_recovery_brain",
+    ) ?? [];
+  const effectiveHandoffId =
+    selectedHandoffId || plannerHandoffs[0]?.handoff_id || "";
+  const plan =
+    report?.recovery_plans.find((item) =>
+      item.ordered_strategies.some(
+        (strategy) => strategy.recovery_strategy_id === selectedStrategyId,
+      ),
+    ) ?? report?.recovery_plans[0];
+  const recoveryCase = plan
+    ? report?.recovery_cases.find(
+        (item) => item.recovery_case_id === plan.recovery_case_id,
+      )
+    : report?.recovery_cases[0];
+  const strategy =
+    plan?.ordered_strategies.find(
+      (item) => item.recovery_strategy_id === selectedStrategyId,
+    ) ??
+    plan?.ordered_strategies.find((item) => item.execution_allowed) ??
+    plan?.ordered_strategies.find(
+      (item) =>
+        !["health_check", "stop_processing", "human_manual_action"].includes(
+          item.strategy_type,
+        ),
+    );
+  const attempt =
+    report?.recovery_attempts[(report?.recovery_attempts.length ?? 0) - 1];
+  const validation = attempt
+    ? report?.output_validations.find(
+        (item) => item.recovery_attempt_id === attempt.recovery_attempt_id,
+      )
+    : undefined;
+  const rollback = attempt
+    ? report?.rollback_records.find(
+        (item) => item.recovery_attempt_id === attempt.recovery_attempt_id,
+      )
+    : undefined;
+  const nextHandoffs =
+    report?.recovery_handoffs.filter(
+      (item) =>
+        !attempt ||
+        !item.recovery_attempt_id ||
+        item.recovery_attempt_id === attempt.recovery_attempt_id,
+    ) ?? [];
+  const busy =
+    generateRecovery.isPending ||
+    runHealthChecks.isPending ||
+    executeRecovery.isPending ||
+    validateOutput.isPending ||
+    rollbackRecovery.isPending ||
+    exportRecovery.isPending ||
+    resetRecovery.isPending;
+  const companionMessage =
+    validation?.accepted_for_quality_review
+      ? "The recovered file passed its technical checks. BOBA has not accepted it as final yet. It is now ready for Output Quality Reviewer."
+      : rollback || attempt?.status === "rolled_back"
+        ? "The recovery attempt failed a required check. BOBA rejected the generated output and rolled back recovery-owned state. Olympus remains paused."
+        : executeRecovery.isPending || attempt?.status === "running"
+          ? "BOBA is retrying only the approved local capability. Your original video and completed clips remain untouched."
+          : report
+            ? `${recoveryCase?.failure_class.replace(/_/g, " ") ?? "A local tool failure"} was identified. BOBA found ${plan?.ordered_strategies.length ?? 0} bounded option(s). Nothing will execute without exact approval.`
+            : "Tool Recovery needs a saved Repair Planner handoff. It can plan and run harmless local health checks before any recovery approval.";
+
+  function numberOrDefault(value: string, fallback: number) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  function createPlan() {
+    const handoff = plannerHandoffs.find(
+      (item) => item.handoff_id === effectiveHandoffId,
+    );
+    if (!handoff) {
+      setStatus("Create a Repair Planner Tool Recovery handoff first.");
+      return;
+    }
+    const configurationOverrides: Record<string, unknown> = {
+      output_filename: outputFilename.trim() || "recovered.mp4",
+      expected_duration_seconds: numberOrDefault(expectedDuration, 1),
+      expected_width: numberOrDefault(expectedWidth, 1080),
+      expected_height: numberOrDefault(expectedHeight, 1920),
+      expected_fps: numberOrDefault(expectedFps, 30),
+      require_audio: true,
+      encoder_threads: 1,
+      filter_threads: 1,
+      parallel_tasks: 1,
+    };
+    if (inputArtifactRef.trim()) {
+      configurationOverrides.input_artifact_ref = inputArtifactRef.trim();
+    }
+    setStatus("");
+    generateRecovery.mutate(
+      {
+        selected_handoff_id: handoff.handoff_id,
+        selected_repair_strategy_id: handoff.repair_strategy_id,
+        failure_context: {
+          rights_status: rightsStatus,
+          safety_status: safetyStatus,
+          checkpoint_ready: checkpointReady,
+          configuration_overrides: configurationOverrides,
+        },
+        run_health_checks: true,
+      },
+      {
+        onSuccess: (result) => {
+          const firstPlan = result.recovery_plans[0];
+          const firstStrategy =
+            firstPlan?.ordered_strategies.find(
+              (item) => item.execution_allowed,
+            ) ??
+            firstPlan?.ordered_strategies.find(
+              (item) =>
+                ![
+                  "health_check",
+                  "stop_processing",
+                  "human_manual_action",
+                ].includes(item.strategy_type),
+            );
+          setSelectedStrategyId(
+            firstStrategy?.recovery_strategy_id ?? "",
+          );
+          setApprovalChecked(false);
+          setStatus(
+            result.recovery_summary.eligible_case_count > 0
+              ? "Recovery plan saved. Review one exact strategy before approval."
+              : "Recovery remains blocked. Review the displayed reason.",
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function runHealth() {
+    runHealthChecks.mutate(
+      {},
+      {
+        onSuccess: (result) =>
+          setStatus(
+            `Health checks completed: ${result.recovery_summary.healthy_tool_count} healthy, ${result.recovery_summary.unavailable_tool_count} unavailable or blocked.`,
+          ),
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function approvalRecord(): BobaToolRecoveryApprovalV1 | null {
+    if (!plan || !strategy) return null;
+    const now = new Date();
+    const expires = new Date(now.getTime() + 15 * 60 * 1000);
+    return {
+      approval_id: `tool_recovery_approval_${Date.now()}`,
+      recovery_case_id: plan.recovery_case_id,
+      recovery_plan_id: plan.recovery_plan_id,
+      approved: true,
+      approved_at: now.toISOString(),
+      approved_by: reviewer.trim() || "local-human-reviewer",
+      approved_strategy_ids: [strategy.recovery_strategy_id],
+      approved_tool_ids: [strategy.tool_id],
+      approved_configuration_overrides: strategy.configuration_overrides,
+      approved_retry_budget: plan.retry_budget,
+      approved_time_budget_seconds: plan.time_budget_seconds,
+      approved_quality_requirements: plan.quality_requirements,
+      approved_checkpoint_reference: String(
+        plan.checkpoint_requirements.reference ?? "",
+      ),
+      approval_expires_at: expires.toISOString(),
+      explicit_confirmation: TOOL_RECOVERY_APPROVAL_TEXT,
+      warnings: [],
+    };
+  }
+
+  function executeApproved() {
+    const approval = approvalRecord();
+    if (!plan || !strategy || !approval || !approvalChecked) {
+      setStatus("Exact recovery approval is required.");
+      return;
+    }
+    executeRecovery.mutate(
+      {
+        recovery_plan_id: plan.recovery_plan_id,
+        recovery_strategy_id: strategy.recovery_strategy_id,
+        approval,
+      },
+      {
+        onSuccess: (result) => {
+          const latest =
+            result.recovery_attempts[result.recovery_attempts.length - 1];
+          setApprovalChecked(false);
+          setStatus(
+            latest
+              ? `Recovery attempt: ${latest.status.replace(/_/g, " ")}. Olympus remains paused.`
+              : "Recovery did not start.",
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function revalidate() {
+    if (!attempt) return;
+    validateOutput.mutate(
+      { recovery_attempt_id: attempt.recovery_attempt_id },
+      {
+        onSuccess: (result) => {
+          const latest =
+            result.output_validations[
+              result.output_validations.length - 1
+            ];
+          setStatus(
+            latest?.accepted_for_quality_review
+              ? "Technical validation passed; final quality review is still required."
+              : "Technical validation rejected the generated recovery output.",
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function rollbackAttempt() {
+    if (!attempt) return;
+    if (
+      !window.confirm(
+        "Rollback recovery-owned generated output only? Source media, accepted outputs, and checkpoints remain untouched.",
+      )
+    ) {
+      return;
+    }
+    rollbackRecovery.mutate(
+      {
+        recovery_attempt_id: attempt.recovery_attempt_id,
+        trigger: "Explicit human-requested Tool Recovery rollback.",
+      },
+      {
+        onSuccess: () =>
+          setStatus(
+            "Recovery-owned generated output rolled back. Olympus remains paused.",
+          ),
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportRecovery.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(`boba-tool-recovery-v1-${projectId}.json`, payload);
+        setStatus("Sanitized Tool Recovery report downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset Tool Recovery metadata only? Recovery workspaces, source media, accepted outputs, Repair Planner, and Code Surgeon remain untouched.",
+      )
+    ) {
+      return;
+    }
+    resetRecovery.mutate(undefined, {
+      onSuccess: () =>
+        setStatus(
+          "Tool Recovery metadata reset. No media or accepted output was deleted.",
+        ),
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  return (
+    <section className="rounded-xl border border-orange-300/20 bg-orange-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-4xl">
+          <p className="text-sm font-semibold text-white">
+            BOBA Tool Recovery Brain V1
+          </p>
+          <p className="text-xs text-muted">
+            Tool Recovery Brain can execute only approved local recovery
+            actions.
+          </p>
+          <p className="text-xs text-muted">
+            It does not install software, use paid services, access external
+            media, edit code, or resume Olympus automatically.
+          </p>
+          <p className="text-xs text-amber-100">
+            A recovered output is not accepted until required validation and
+            output quality review pass.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !report}
+            onClick={exportArtifact}
+            className="rounded border border-orange-200/30 px-2.5 py-1.5 text-[11px] text-orange-100 disabled:opacity-50"
+          >
+            Export safe report
+          </button>
+          <button
+            type="button"
+            disabled={busy || !report}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset recovery metadata
+          </button>
+        </div>
+      </div>
+
+      <p className="mt-3 rounded border border-sky-300/20 bg-sky-300/[0.04] p-3 text-xs text-sky-100">
+        {companionMessage}
+      </p>
+
+      <details className="mt-4 rounded border border-white/10 p-3" open={!report}>
+        <summary className="cursor-pointer text-xs font-semibold text-white">
+          PLAN AND HEALTH CHECK
+        </summary>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <label className="text-xs text-muted">
+            Saved Repair Planner Tool Recovery handoff
+            <select
+              value={effectiveHandoffId}
+              onChange={(event) => setSelectedHandoffId(event.target.value)}
+              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+            >
+              {plannerHandoffs.length === 0 && (
+                <option value="">No Tool Recovery handoff available</option>
+              )}
+              {plannerHandoffs.map((handoff) => (
+                <option key={handoff.handoff_id} value={handoff.handoff_id}>
+                  {handoff.reason}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-muted">
+            Repository-relative approved local input reference
+            <input
+              value={inputArtifactRef}
+              onChange={(event) => setInputArtifactRef(event.target.value)}
+              placeholder="storage_data/.../generated-input.mp4"
+              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-white"
+            />
+          </label>
+          <label className="text-xs text-muted">
+            Rights status
+            <select
+              value={rightsStatus}
+              onChange={(event) => setRightsStatus(event.target.value)}
+              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+            >
+              <option value="unknown">Unknown — block recovery</option>
+              <option value="not_required">Not required by saved gate</option>
+              <option value="clear">Cleared</option>
+              <option value="blocked">Blocked</option>
+            </select>
+          </label>
+          <label className="text-xs text-muted">
+            Safety status
+            <select
+              value={safetyStatus}
+              onChange={(event) => setSafetyStatus(event.target.value)}
+              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+            >
+              <option value="review_required">Review required</option>
+              <option value="clear">Cleared</option>
+              <option value="blocked">Blocked</option>
+            </select>
+          </label>
+        </div>
+        <label className="mt-3 flex items-start gap-2 text-xs text-muted">
+          <input
+            type="checkbox"
+            checked={checkpointReady}
+            onChange={(event) => setCheckpointReady(event.target.checked)}
+          />
+          Required checkpoint exists and has been validated. Leave unchecked
+          when unknown.
+        </label>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {[
+            ["Output", outputFilename, setOutputFilename],
+            ["Seconds", expectedDuration, setExpectedDuration],
+            ["Width", expectedWidth, setExpectedWidth],
+            ["Height", expectedHeight, setExpectedHeight],
+            ["FPS", expectedFps, setExpectedFps],
+          ].map(([label, value, setter]) => (
+            <label key={String(label)} className="text-[11px] text-muted">
+              {String(label)}
+              <input
+                value={String(value)}
+                onChange={(event) =>
+                  (setter as (value: string) => void)(event.target.value)
+                }
+                className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2 py-1.5 text-white"
+              />
+            </label>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !effectiveHandoffId}
+            onClick={createPlan}
+            className="rounded border border-orange-200/30 px-3 py-2 text-xs text-orange-100 disabled:opacity-50"
+          >
+            Create bounded recovery plan
+          </button>
+          <button
+            type="button"
+            disabled={busy || !report}
+            onClick={runHealth}
+            className="rounded border border-sky-200/30 px-3 py-2 text-xs text-sky-100 disabled:opacity-50"
+          >
+            Run local read-only health checks
+          </button>
+        </div>
+      </details>
+
+      {status && <p className="mt-3 text-xs text-orange-100">{status}</p>}
+      {recoveryQuery.isError && (
+        <p className="mt-3 text-xs text-rose-100">
+          Tool Recovery report could not be loaded.
+        </p>
+      )}
+
+      {report && (
+        <>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ["Cases", report.recovery_summary.total_recovery_cases],
+              ["Eligible", report.recovery_summary.eligible_case_count],
+              ["Healthy tools", report.recovery_summary.healthy_tool_count],
+              ["Attempts", report.recovery_summary.recovery_attempt_count],
+              [
+                "Quality review",
+                report.recovery_summary.successful_pending_quality_count,
+              ],
+              ["Rollbacks", report.recovery_summary.rollback_count],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="rounded border border-white/10 p-2 text-xs text-muted"
+              >
+                <p className="font-semibold text-white">{value}</p>
+                <p>{label}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-rose-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-rose-100">WHAT FAILED</p>
+              <p className="mt-1 text-white">
+                {recoveryCase?.title ?? "Not available"}
+              </p>
+              <p className="mt-1">
+                Class:{" "}
+                {recoveryCase?.failure_class.replace(/_/g, " ") ?? "unknown"}{" "}
+                · Tool: {recoveryCase?.failing_tool_id || "unknown"} · Stage:{" "}
+                {recoveryCase?.workflow_stage || "unknown"}
+              </p>
+              {recoveryCase?.blocked_reason && (
+                <p className="mt-2 text-rose-100">
+                  Blocked: {recoveryCase.blocked_reason}
+                </p>
+              )}
+              <RepairPlannerList
+                items={recoveryCase?.failure_evidence ?? []}
+                empty="No bounded failure evidence is available."
+              />
+            </div>
+            <div className="rounded border border-sky-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-sky-100">
+                WHAT CAPABILITY IS NEEDED
+              </p>
+              <p className="mt-1 text-white">
+                {recoveryCase?.required_capability || "Not available"}
+              </p>
+              <p className="mt-1">
+                Rights: {recoveryCase?.rights_status ?? "unknown"} · Safety:{" "}
+                {recoveryCase?.safety_status ?? "unknown"} · Checkpoint:{" "}
+                {recoveryCase?.checkpoint_required
+                  ? recoveryCase.checkpoint_ready
+                    ? "Ready"
+                    : "Blocked"
+                  : "Not required"}
+              </p>
+              {report.registered_tools
+                .filter((tool) =>
+                  tool.capability_ids.includes(
+                    recoveryCase?.required_capability ?? "",
+                  ),
+                )
+                .map((tool) => (
+                  <p key={tool.tool_id}>
+                    {tool.display_name}: {tool.health_status.replace(/_/g, " ")}
+                    {tool.installed ? "" : " · not installed"}
+                  </p>
+                ))}
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">RECOVERY OPTIONS</p>
+              <select
+                value={strategy?.recovery_strategy_id ?? ""}
+                onChange={(event) => {
+                  setSelectedStrategyId(event.target.value);
+                  setApprovalChecked(false);
+                }}
+                className="mt-2 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+              >
+                {plan?.ordered_strategies.map((item) => (
+                  <option
+                    key={item.recovery_strategy_id}
+                    value={item.recovery_strategy_id}
+                  >
+                    {item.strategy_type.replace(/_/g, " ")} · {item.tool_id} ·{" "}
+                    {item.execution_allowed ? "ready" : "not executable"}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-2">
+                Retry budget:{" "}
+                {plan
+                  ? JSON.stringify(plan.retry_budget)
+                  : "Not available"}{" "}
+                · Total time: {plan?.time_budget_seconds ?? 0}s
+              </p>
+            </div>
+            <div className="rounded border border-violet-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-violet-100">WHY THIS OPTION</p>
+              <p className="mt-1">
+                {strategy?.rationale ?? "No strategy selected."}
+              </p>
+              <p className="mt-2">
+                Quality: {strategy?.expected_quality_effect ?? "Not available"}
+              </p>
+              <p className="mt-1">
+                Resources:{" "}
+                {strategy?.expected_resource_effect ?? "Not available"}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 rounded border border-emerald-300/20 p-3 text-xs text-muted">
+            <p className="font-semibold text-emerald-100">
+              QUALITY REQUIREMENTS
+            </p>
+            <RepairPlannerList items={plan?.quality_requirements ?? []} />
+            <p className="mt-2 text-[11px] text-amber-100">
+              Required unavailable checks reject the generated output. A
+              technical pass is only pending quality review.
+            </p>
+          </div>
+
+          <div className="mt-3 rounded border border-orange-300/20 p-3 text-xs text-muted">
+            <p className="font-semibold text-orange-100">APPROVAL REQUIRED</p>
+            <label className="mt-2 block">
+              Reviewer identifier
+              <input
+                value={reviewer}
+                onChange={(event) => setReviewer(event.target.value)}
+                className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+              />
+            </label>
+            <label className="mt-3 flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={approvalChecked}
+                onChange={(event) => setApprovalChecked(event.target.checked)}
+              />
+              <span>{TOOL_RECOVERY_APPROVAL_TEXT}</span>
+            </label>
+            <button
+              type="button"
+              disabled={
+                busy ||
+                !strategy?.execution_allowed ||
+                !approvalChecked ||
+                !plan
+              }
+              onClick={executeApproved}
+              className="mt-3 rounded border border-orange-200/30 px-3 py-2 text-xs text-orange-100 disabled:opacity-50"
+            >
+              Execute this exact approved local strategy
+            </button>
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">CURRENT ATTEMPT</p>
+              <p className="mt-1">
+                {attempt
+                  ? `${attempt.status.replace(/_/g, " ")} · Attempt ${attempt.attempt_number} · ${attempt.tool_id}`
+                  : "No recovery attempt has run."}
+              </p>
+              {attempt && (
+                <p className="mt-1">
+                  Source untouched:{" "}
+                  {attempt.source_media_untouched ? "Yes" : "No"} · Completed
+                  outputs untouched:{" "}
+                  {attempt.completed_outputs_untouched ? "Yes" : "No"} ·
+                  Workflow resumed: No
+                </p>
+              )}
+              {attempt?.stop_reason && (
+                <p className="mt-1 text-amber-100">
+                  Stop reason: {attempt.stop_reason}
+                </p>
+              )}
+            </div>
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">VALIDATION</p>
+              <p className="mt-1">
+                {validation
+                  ? `Required checks: ${validation.required_checks_passed ? "Passed" : "Failed"} · Quality-review handoff: ${validation.accepted_for_quality_review ? "Ready" : "No"}`
+                  : "Technical validation has not run."}
+              </p>
+              <RepairPlannerList
+                items={[
+                  ...(validation?.failed_required_checks ?? []),
+                  ...(validation?.unavailable_required_checks ?? []),
+                ]}
+                empty="No failed or unavailable required checks are recorded."
+              />
+              <button
+                type="button"
+                disabled={busy || !attempt}
+                onClick={revalidate}
+                className="mt-2 rounded border border-sky-200/30 px-2.5 py-1.5 text-[11px] text-sky-100 disabled:opacity-50"
+              >
+                Re-run technical output validation
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold text-white">ROLLBACK</p>
+              <p className="mt-1">
+                {rollback
+                  ? `${rollback.status.replace(/_/g, " ")} · Temporary output removed: ${rollback.temporary_outputs_removed ? "Yes" : "No"} · Source preserved: ${rollback.source_media_preserved ? "Yes" : "No"}`
+                  : "No rollback has been required."}
+              </p>
+              <button
+                type="button"
+                disabled={busy || !attempt}
+                onClick={rollbackAttempt}
+                className="mt-2 rounded border border-rose-200/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+              >
+                Roll back recovery-owned output
+              </button>
+            </div>
+            <div className="rounded border border-fuchsia-300/20 p-3 text-xs text-muted">
+              <p className="font-semibold text-fuchsia-100">
+                WHAT HAPPENS NEXT
+              </p>
+              {nextHandoffs.length > 0 ? (
+                nextHandoffs.slice(-6).map((handoff) => (
+                  <p key={handoff.handoff_id} className="mt-1">
+                    {handoff.target_module.replace(/_/g, " ")}: {handoff.reason}
+                  </p>
+                ))
+              ) : (
+                <p className="mt-1">
+                  Human approval or a safe downstream review is required.
+                </p>
+              )}
+              <p className="mt-2 text-[11px] text-amber-100">
+                Tool Recovery never resumes Olympus directly.
+              </p>
+            </div>
+          </div>
+
+          {(report.warnings.length > 0 || report.limitations.length > 0) && (
+            <p className="mt-4 text-xs text-amber-100">
+              Tool Recovery warnings and limitations:{" "}
+              {[...report.warnings, ...report.limitations]
+                .filter(Boolean)
+                .slice(0, 24)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -10102,6 +10838,7 @@ export function ResultsSection({
   );
   const repairPlannerPanel = <BobaRepairPlannerPanel projectId={projectId} />;
   const codeSurgeonPanel = <BobaCodeSurgeonPanel projectId={projectId} />;
+  const toolRecoveryPanel = <BobaToolRecoveryPanel projectId={projectId} />;
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -10132,6 +10869,7 @@ export function ResultsSection({
         {rootCauseAnalyzerPanel}
         {repairPlannerPanel}
         {codeSurgeonPanel}
+        {toolRecoveryPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -10174,6 +10912,7 @@ export function ResultsSection({
         {rootCauseAnalyzerPanel}
         {repairPlannerPanel}
         {codeSurgeonPanel}
+        {toolRecoveryPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -10212,6 +10951,7 @@ export function ResultsSection({
         {rootCauseAnalyzerPanel}
         {repairPlannerPanel}
         {codeSurgeonPanel}
+        {toolRecoveryPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -10250,6 +10990,7 @@ export function ResultsSection({
       {rootCauseAnalyzerPanel}
       {repairPlannerPanel}
       {codeSurgeonPanel}
+      {toolRecoveryPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

@@ -76,6 +76,12 @@ import type {
   BobaCodeSurgeonExecuteInputV1,
   BobaCodeSurgeonProposalInputV1,
   BobaCodeSurgeonSetV1,
+  BobaToolRecoveryBrainSetV1,
+  BobaToolRecoveryExecuteInputV1,
+  BobaToolRecoveryHealthInputV1,
+  BobaToolRecoveryPlanInputV1,
+  BobaToolRecoveryRollbackInputV1,
+  BobaToolRecoveryValidationInputV1,
   BobaCandidateVideoScorerGenerateInputV1,
   BobaCandidateVideoScorerSetV1,
   BobaErrorDoctorGenerateInputV1,
@@ -578,6 +584,89 @@ export const api = {
       service_restart_used: false;
       destructive_git_used: false;
     }>(`/boba/projects/${projectId}/code-surgeon`, {
+      method: "DELETE",
+    }),
+  getBobaToolRecovery: (projectId: string) =>
+    request<BobaToolRecoveryBrainSetV1>(
+      `/boba/projects/${projectId}/tool-recovery`,
+    ),
+  generateBobaToolRecoveryPlan: (
+    projectId: string,
+    input: BobaToolRecoveryPlanInputV1 = {},
+  ) =>
+    request<BobaToolRecoveryBrainSetV1>(
+      `/boba/projects/${projectId}/tool-recovery/plan`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  runBobaToolRecoveryHealthChecks: (
+    projectId: string,
+    input: BobaToolRecoveryHealthInputV1 = {},
+  ) =>
+    request<BobaToolRecoveryBrainSetV1>(
+      `/boba/projects/${projectId}/tool-recovery/health-check`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  executeApprovedBobaToolRecovery: (
+    projectId: string,
+    input: BobaToolRecoveryExecuteInputV1,
+  ) =>
+    request<BobaToolRecoveryBrainSetV1>(
+      `/boba/projects/${projectId}/tool-recovery/execute-approved`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  validateBobaToolRecoveryOutput: (
+    projectId: string,
+    input: BobaToolRecoveryValidationInputV1,
+  ) =>
+    request<BobaToolRecoveryBrainSetV1>(
+      `/boba/projects/${projectId}/tool-recovery/validate-output`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  rollbackBobaToolRecovery: (
+    projectId: string,
+    input: BobaToolRecoveryRollbackInputV1,
+  ) =>
+    request<BobaToolRecoveryBrainSetV1>(
+      `/boba/projects/${projectId}/tool-recovery/rollback`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  exportBobaToolRecovery: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/tool-recovery/export`,
+    ),
+  resetBobaToolRecovery: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      tool_recovery_removed: boolean;
+      repair_planner_removed: false;
+      code_surgeon_removed: false;
+      source_media_deleted: false;
+      accepted_outputs_deleted: false;
+      recovery_workspace_deleted: false;
+      commands_executed: false;
+      network_access_used: false;
+      packages_installed: false;
+      services_restarted: false;
+      processes_killed: false;
+      workflow_resumed: false;
+      code_modified: false;
+    }>(`/boba/projects/${projectId}/tool-recovery`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>

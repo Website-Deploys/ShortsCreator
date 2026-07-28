@@ -77,6 +77,7 @@ from olympus.boba.rights_permission_gate import (
 )
 from olympus.boba.root_cause_analyzer import BobaRootCauseAnalyzerSetV1
 from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
+from olympus.boba.tool_recovery import BobaToolRecoveryBrainSetV1
 from olympus.boba.trend_topic_watcher import BobaTrendTopicWatcherSetV1
 from olympus.boba.whole_video import BobaWholeVideoUnderstandingV1
 from olympus.platform.errors import ValidationError
@@ -106,6 +107,30 @@ def _sanitize_code_surgeon_payload(value: Any, *, max_excerpt_chars: int) -> Any
         value,
         max_excerpt_chars=max_excerpt_chars,
         path="boba.code_surgeon.value",
+    )
+
+
+def _sanitize_tool_recovery_payload(value: Any, *, max_excerpt_chars: int) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_tool_recovery_payload(
+                item,
+                max_excerpt_chars=max_excerpt_chars,
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list | tuple | set):
+        return [
+            _sanitize_tool_recovery_payload(
+                item,
+                max_excerpt_chars=max_excerpt_chars,
+            )
+            for item in value
+        ]
+    return sanitize_memory_payload(
+        value,
+        max_excerpt_chars=max_excerpt_chars,
+        path="boba.tool_recovery.value",
     )
 
 
@@ -1984,6 +2009,150 @@ class BobaMemoryStore:
         project_directory = self._project_dir(project_id).resolve()
         if directory.parent != project_directory or directory.name != "code_surgeon":
             raise ValidationError("Invalid BOBA Code Surgeon reset path.")
+        with self._lock:
+            if not directory.exists():
+                return False
+            shutil.rmtree(directory)
+        return True
+
+    def tool_recovery_path(self, project_id: str) -> Path:
+        return self._path(project_id, "tool_recovery/index.json")
+
+    def tool_recovery_run_path(self, project_id: str, run_id: str) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", run_id):
+            raise ValidationError("Invalid BOBA Tool Recovery run id.")
+        return self._path(project_id, f"tool_recovery/runs/{run_id}/index.json")
+
+    def save_boba_tool_recovery(
+        self,
+        report: BobaToolRecoveryBrainSetV1,
+    ) -> BobaToolRecoveryBrainSetV1:
+        with self._lock:
+            safe = _sanitize_tool_recovery_payload(
+                report.model_dump(mode="json"),
+                max_excerpt_chars=max(self.max_excerpt_chars, 2_000),
+            )
+            self._atomic_write(self.tool_recovery_path(report.project_id), safe)
+            if report.recovery_attempts:
+                attempt = report.recovery_attempts[-1]
+                run_payload = {
+                    "schema_version": "boba_tool_recovery_run_v1",
+                    "project_id": report.project_id,
+                    "recovery_attempt": attempt.model_dump(mode="json"),
+                    "output_validation": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in reversed(report.output_validations)
+                            if item.recovery_attempt_id
+                            == attempt.recovery_attempt_id
+                        ),
+                        None,
+                    ),
+                    "rollback_record": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in reversed(report.rollback_records)
+                            if item.recovery_attempt_id
+                            == attempt.recovery_attempt_id
+                        ),
+                        None,
+                    ),
+                    "recovery_handoffs": [
+                        item.model_dump(mode="json")
+                        for item in report.recovery_handoffs
+                        if item.recovery_attempt_id
+                        == attempt.recovery_attempt_id
+                    ],
+                }
+                self._atomic_write(
+                    self.tool_recovery_run_path(
+                        report.project_id,
+                        attempt.recovery_attempt_id,
+                    ),
+                    _sanitize_tool_recovery_payload(
+                        run_payload,
+                        max_excerpt_chars=max(self.max_excerpt_chars, 2_000),
+                    ),
+                )
+        return report
+
+    def load_boba_tool_recovery(
+        self,
+        project_id: str,
+    ) -> BobaToolRecoveryBrainSetV1 | None:
+        try:
+            raw = self._read(self.tool_recovery_path(project_id), None)
+            return (
+                BobaToolRecoveryBrainSetV1.model_validate(raw)
+                if isinstance(raw, dict)
+                else None
+            )
+        except (PydanticValidationError, ValidationError):
+            return None
+
+    def export_boba_tool_recovery(self, project_id: str) -> dict[str, Any]:
+        report = self.load_boba_tool_recovery(project_id)
+        if report is None:
+            raise ValidationError(
+                "BOBA Tool Recovery Brain V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        payload = report.model_dump(mode="json")
+        for attempt in payload.get("recovery_attempts", []):
+            if not isinstance(attempt, dict):
+                continue
+            attempt["failure_summary"] = str(
+                attempt.get("failure_summary") or ""
+            )[:500]
+            for command in attempt.get("command_records", []):
+                if isinstance(command, dict):
+                    command["arguments"] = [
+                        str(item)[:300]
+                        for item in command.get("arguments", [])[:128]
+                    ]
+        export = {
+            "schema_version": "boba_tool_recovery_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "tool_recovery": payload,
+            "privacy": {
+                "private_absolute_paths_excluded": True,
+                "unbounded_command_output_excluded": True,
+                "credentials_excluded": True,
+                "raw_source_media_excluded": True,
+                "generated_media_excluded": True,
+                "repair_planner_report_excluded": True,
+                "network_access_used": False,
+                "external_api_used": False,
+                "package_installation_used": False,
+                "service_restart_used": False,
+                "process_kill_used": False,
+                "code_modification_used": False,
+                "workflow_resume_used": False,
+                "source_media_modified": False,
+                "completed_outputs_modified": False,
+            },
+        }
+        safe = _sanitize_tool_recovery_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 2_000),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Tool Recovery Brain V1 export is invalid.")
+        return safe
+
+    def reset_boba_tool_recovery(self, project_id: str) -> bool:
+        report = self.load_boba_tool_recovery(project_id)
+        if report and any(
+            attempt.status == "running" for attempt in report.recovery_attempts
+        ):
+            raise ValidationError(
+                "Tool Recovery metadata cannot be reset while an attempt is running."
+            )
+        directory = self.tool_recovery_path(project_id).parent.resolve()
+        project_directory = self._project_dir(project_id).resolve()
+        if directory.parent != project_directory or directory.name != "tool_recovery":
+            raise ValidationError("Invalid BOBA Tool Recovery reset path.")
         with self._lock:
             if not directory.exists():
                 return False

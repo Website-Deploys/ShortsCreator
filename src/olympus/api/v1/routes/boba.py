@@ -34,6 +34,7 @@ from olympus.boba.performance_feedback import (
     BobaPerformanceTargetType,
 )
 from olympus.boba.scout import BobaCandidateV1
+from olympus.boba.tool_recovery import BobaToolRecoveryApprovalV1
 from olympus.platform.errors import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/boba", tags=["boba"])
@@ -297,6 +298,42 @@ class CodeSurgeonCommitRequest(BaseModel):
 
     isolated_run_id: str = Field(min_length=1, max_length=160)
     approval: BobaCodeApprovalRecordV1
+
+
+class ToolRecoveryPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selected_handoff_id: str | None = Field(default=None, max_length=160)
+    selected_repair_strategy_id: str | None = Field(default=None, max_length=160)
+    failure_context: dict[str, Any] = Field(default_factory=dict, max_length=32)
+    run_health_checks: bool | None = None
+
+
+class ToolRecoveryHealthRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool_ids: list[str] = Field(default_factory=list, max_length=32)
+
+
+class ToolRecoveryExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recovery_plan_id: str = Field(min_length=1, max_length=160)
+    recovery_strategy_id: str = Field(min_length=1, max_length=160)
+    approval: BobaToolRecoveryApprovalV1
+
+
+class ToolRecoveryValidationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recovery_attempt_id: str = Field(min_length=1, max_length=160)
+
+
+class ToolRecoveryRollbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recovery_attempt_id: str = Field(min_length=1, max_length=160)
+    trigger: str = Field(min_length=1, max_length=900)
 
 
 class ScoutScoreRequest(BaseModel):
@@ -1778,6 +1815,153 @@ async def reset_code_surgeon_report(
         "package_installation_used": False,
         "service_restart_used": False,
         "destructive_git_used": False,
+    }
+
+
+@router.post("/projects/{project_id}/tool-recovery/plan")
+async def create_tool_recovery_plan(
+    project_id: str,
+    body: ToolRecoveryPlanRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.generate_boba_tool_recovery_plan(
+        project_id,
+        selected_handoff_id=body.selected_handoff_id,
+        selected_repair_strategy_id=body.selected_repair_strategy_id,
+        failure_context=body.failure_context,
+        run_health_checks=body.run_health_checks,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/tool-recovery/health-check")
+async def run_tool_recovery_health_checks(
+    project_id: str,
+    body: ToolRecoveryHealthRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.run_boba_tool_health_checks(
+        project_id,
+        tool_ids=body.tool_ids or None,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/tool-recovery/execute-approved")
+async def execute_approved_tool_recovery(
+    project_id: str,
+    body: ToolRecoveryExecuteRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.execute_approved_boba_tool_recovery(
+        project_id,
+        recovery_plan_id=body.recovery_plan_id,
+        recovery_strategy_id=body.recovery_strategy_id,
+        approval=body.approval,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/tool-recovery/validate-output")
+async def validate_tool_recovery_output(
+    project_id: str,
+    body: ToolRecoveryValidationRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.validate_boba_recovered_output(
+        project_id,
+        recovery_attempt_id=body.recovery_attempt_id,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/tool-recovery/rollback")
+async def rollback_tool_recovery(
+    project_id: str,
+    body: ToolRecoveryRollbackRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.rollback_boba_tool_recovery(
+        project_id,
+        recovery_attempt_id=body.recovery_attempt_id,
+        trigger=body.trigger,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/tool-recovery")
+async def get_tool_recovery_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = boba.load_boba_tool_recovery(project_id)
+    if report is None:
+        raise NotFoundError(
+            "BOBA Tool Recovery Brain V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/tool-recovery/export")
+async def export_tool_recovery_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_boba_tool_recovery(project_id) is None:
+        raise NotFoundError(
+            "BOBA Tool Recovery Brain V1 is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_boba_tool_recovery(project_id)
+
+
+@router.delete("/projects/{project_id}/tool-recovery")
+async def reset_tool_recovery_report(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_boba_tool_recovery(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "tool_recovery_removed": removed,
+        "repair_planner_removed": False,
+        "code_surgeon_removed": False,
+        "source_media_deleted": False,
+        "accepted_outputs_deleted": False,
+        "recovery_workspace_deleted": False,
+        "commands_executed": False,
+        "network_access_used": False,
+        "packages_installed": False,
+        "services_restarted": False,
+        "processes_killed": False,
+        "workflow_resumed": False,
+        "code_modified": False,
     }
 
 
