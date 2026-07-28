@@ -82,6 +82,10 @@ import type {
   BobaToolRecoveryPlanInputV1,
   BobaToolRecoveryRollbackInputV1,
   BobaToolRecoveryValidationInputV1,
+  BobaOutputHumanReviewInputV1,
+  BobaOutputQualityCompareInputV1,
+  BobaOutputQualityReviewerSetV1,
+  BobaOutputQualityReviewInputV1,
   BobaCandidateVideoScorerGenerateInputV1,
   BobaCandidateVideoScorerSetV1,
   BobaErrorDoctorGenerateInputV1,
@@ -667,6 +671,69 @@ export const api = {
       workflow_resumed: false;
       code_modified: false;
     }>(`/boba/projects/${projectId}/tool-recovery`, {
+      method: "DELETE",
+    }),
+  getBobaOutputQualityReviewer: (projectId: string) =>
+    request<BobaOutputQualityReviewerSetV1>(
+      `/boba/projects/${projectId}/output-quality-reviewer`,
+    ),
+  reviewBobaOutputQuality: (
+    projectId: string,
+    input: BobaOutputQualityReviewInputV1,
+  ) =>
+    request<BobaOutputQualityReviewerSetV1>(
+      `/boba/projects/${projectId}/output-quality-reviewer/review`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  compareBobaOutputQuality: (
+    projectId: string,
+    input: BobaOutputQualityCompareInputV1,
+  ) =>
+    request<BobaOutputQualityReviewerSetV1>(
+      `/boba/projects/${projectId}/output-quality-reviewer/compare`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  recordBobaOutputHumanReview: (
+    projectId: string,
+    input: BobaOutputHumanReviewInputV1,
+  ) =>
+    request<BobaOutputQualityReviewerSetV1>(
+      `/boba/projects/${projectId}/output-quality-reviewer/human-review`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  exportBobaOutputQualityReviewer: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/output-quality-reviewer/export`,
+    ),
+  resetBobaOutputQualityReviewer: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      output_quality_reviewer_removed: boolean;
+      reviewed_output_deleted: false;
+      source_media_deleted: false;
+      tool_recovery_artifact_deleted: false;
+      code_surgeon_artifact_deleted: false;
+      render_manifest_deleted: false;
+      sample_evidence_deleted: false;
+      commands_executed: false;
+      rendering_used: false;
+      fallback_execution_used: false;
+      workflow_resumed: false;
+      network_access_used: false;
+      uploading_used: false;
+      publication_used: false;
+      destructive_action_used: false;
+    }>(`/boba/projects/${projectId}/output-quality-reviewer`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>

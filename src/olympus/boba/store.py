@@ -66,6 +66,10 @@ from olympus.boba.memory_contracts import (
 from olympus.boba.memory_validation import validate_memory_export, validate_memory_record
 from olympus.boba.music_mood import BobaMusicMoodRecommendationSetV1
 from olympus.boba.observer import BobaObserverSetV1
+from olympus.boba.output_quality_reviewer import (
+    BobaOutputQualityReviewerSetV1,
+    sanitize_review_export,
+)
 from olympus.boba.performance_feedback import (
     BobaPerformanceFeedbackEventV1,
     BobaPerformanceFeedbackSetV1,
@@ -131,6 +135,18 @@ def _sanitize_tool_recovery_payload(value: Any, *, max_excerpt_chars: int) -> An
         value,
         max_excerpt_chars=max_excerpt_chars,
         path="boba.tool_recovery.value",
+    )
+
+
+def _sanitize_output_quality_payload(
+    value: Any,
+    *,
+    max_excerpt_chars: int,
+) -> Any:
+    return sanitize_memory_payload(
+        sanitize_review_export(value),
+        max_excerpt_chars=max_excerpt_chars,
+        path="boba.output_quality_reviewer.value",
     )
 
 
@@ -202,6 +218,24 @@ class BobaMemoryStore:
         try:
             with temp.open("w", encoding="utf-8", newline="\n") as handle:
                 handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
+
+    @staticmethod
+    def _atomic_write_compact(path: Path, payload: Any) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        try:
+            with temp.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump(
+                    payload,
+                    handle,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp, path)
@@ -2153,6 +2187,211 @@ class BobaMemoryStore:
         project_directory = self._project_dir(project_id).resolve()
         if directory.parent != project_directory or directory.name != "tool_recovery":
             raise ValidationError("Invalid BOBA Tool Recovery reset path.")
+        with self._lock:
+            if not directory.exists():
+                return False
+            shutil.rmtree(directory)
+        return True
+
+    def output_quality_reviewer_path(self, project_id: str) -> Path:
+        return self._path(project_id, "output_quality_reviewer/index.json")
+
+    def output_quality_reviewer_review_path(
+        self,
+        project_id: str,
+        review_id: str,
+    ) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", review_id):
+            raise ValidationError("Invalid BOBA Output Quality Reviewer review id.")
+        return self._path(
+            project_id,
+            f"output_quality_reviewer/reviews/{review_id}/index.json",
+        )
+
+    def save_boba_output_quality_reviewer(
+        self,
+        report: BobaOutputQualityReviewerSetV1,
+    ) -> BobaOutputQualityReviewerSetV1:
+        payload = report.model_dump(mode="json")
+        safe = _sanitize_output_quality_payload(
+            payload,
+            max_excerpt_chars=max(self.max_excerpt_chars, 2_000),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Output Quality Reviewer V1 report is invalid.")
+        with self._lock:
+            self._atomic_write_compact(
+                self.output_quality_reviewer_path(report.project_id),
+                safe,
+            )
+            if report.review_cases:
+                review_case = report.review_cases[-1]
+                review_id = review_case.review_case_id
+                review_payload = {
+                    "schema_version": "boba_output_quality_review_record_v1",
+                    "project_id": report.project_id,
+                    "source_id": report.source_id,
+                    "review_case": review_case.model_dump(mode="json"),
+                    "output_artifacts": [
+                        item.model_dump(mode="json")
+                        for item in report.output_artifacts
+                        if item.output_artifact_id
+                        in {
+                            review_case.output_artifact_id,
+                            review_case.baseline_artifact_id,
+                        }
+                    ],
+                    "quality_evidence": [
+                        item.model_dump(mode="json")
+                        for item in report.quality_evidence
+                        if item.source_id == review_id
+                        or item.evidence_id
+                        in {
+                            evidence_id
+                            for check in report.technical_assessments
+                            if check.review_case_id == review_id
+                            for item in check.checks
+                            for evidence_id in item.evidence_ids
+                        }
+                    ],
+                    "technical_assessment": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in reversed(report.technical_assessments)
+                            if item.review_case_id == review_id
+                        ),
+                        None,
+                    ),
+                    "creative_assessment": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in reversed(report.creative_assessments)
+                            if item.review_case_id == review_id
+                        ),
+                        None,
+                    ),
+                    "baseline_comparison": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in reversed(report.baseline_comparisons)
+                            if item.review_case_id == review_id
+                        ),
+                        None,
+                    ),
+                    "quality_regressions": [
+                        item.model_dump(mode="json")
+                        for item in report.quality_regressions
+                        if item.review_case_id == review_id
+                    ],
+                    "quality_issues": [
+                        item.model_dump(mode="json")
+                        for item in report.quality_issues
+                        if item.review_case_id == review_id
+                    ],
+                    "acceptance_decision": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in reversed(report.acceptance_decisions)
+                            if item.review_case_id == review_id
+                        ),
+                        None,
+                    ),
+                    "human_review_package": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in reversed(report.human_review_packages)
+                            if item.review_case_id == review_id
+                        ),
+                        None,
+                    ),
+                    "review_handoffs": [
+                        item.model_dump(mode="json")
+                        for item in report.review_handoffs
+                        if item.review_case_id == review_id
+                    ],
+                    "signal_usage": report.signal_usage.model_dump(mode="json"),
+                    "warnings": review_case.warnings,
+                    "limitations": review_case.limitations,
+                }
+                safe_review = _sanitize_output_quality_payload(
+                    review_payload,
+                    max_excerpt_chars=max(self.max_excerpt_chars, 2_000),
+                )
+                self._atomic_write_compact(
+                    self.output_quality_reviewer_review_path(
+                        report.project_id,
+                        review_id,
+                    ),
+                    safe_review,
+                )
+        return report
+
+    def load_boba_output_quality_reviewer(
+        self,
+        project_id: str,
+    ) -> BobaOutputQualityReviewerSetV1 | None:
+        try:
+            raw = self._read(self.output_quality_reviewer_path(project_id), None)
+            return (
+                BobaOutputQualityReviewerSetV1.model_validate(raw)
+                if isinstance(raw, dict)
+                else None
+            )
+        except (PydanticValidationError, ValidationError):
+            return None
+
+    def export_boba_output_quality_reviewer(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        report = self.load_boba_output_quality_reviewer(project_id)
+        if report is None:
+            raise ValidationError(
+                "BOBA Output Quality Reviewer V1 is not available for export.",
+                details={"project_id": project_id},
+            )
+        export = {
+            "schema_version": "boba_output_quality_reviewer_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "output_quality_reviewer": report.model_dump(mode="json"),
+            "privacy": {
+                "private_absolute_paths_excluded": True,
+                "sensitive_evidence_excluded": True,
+                "full_command_logs_excluded": True,
+                "credentials_excluded": True,
+                "raw_source_media_excluded": True,
+                "generated_media_excluded": True,
+                "output_modified": False,
+                "source_media_modified": False,
+                "workflow_resume_used": False,
+                "rendering_used": False,
+                "fallback_execution_used": False,
+                "external_api_used": False,
+                "network_access_used": False,
+                "uploading_used": False,
+                "publication_used": False,
+                "rights_bypass_used": False,
+                "safety_bypass_used": False,
+                "destructive_action_used": False,
+            },
+        }
+        safe = _sanitize_output_quality_payload(
+            export,
+            max_excerpt_chars=max(self.max_excerpt_chars, 2_000),
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Output Quality Reviewer V1 export is invalid.")
+        return safe
+
+    def reset_boba_output_quality_reviewer(self, project_id: str) -> bool:
+        directory = self.output_quality_reviewer_path(project_id).parent.resolve()
+        project_directory = self._project_dir(project_id).resolve()
+        if (
+            directory.parent != project_directory
+            or directory.name != "output_quality_reviewer"
+        ):
+            raise ValidationError("Invalid BOBA Output Quality Reviewer reset path.")
         with self._lock:
             if not directory.exists():
                 return False

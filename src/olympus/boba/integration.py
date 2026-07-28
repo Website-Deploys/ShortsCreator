@@ -96,6 +96,16 @@ from olympus.boba.music_mood import (
     music_manifest_awareness,
 )
 from olympus.boba.observer import BobaObserverSetV1, BobaObserverV1
+from olympus.boba.output_quality_reviewer import (
+    BobaOutputComparisonBasisV1,
+    BobaOutputQualityReviewerSetV1,
+    BobaOutputQualityReviewerV1,
+    BobaOutputReviewModeV1,
+    compare_boba_output_quality_baseline,
+    generate_boba_output_quality_review,
+    record_boba_output_human_review,
+    run_boba_output_technical_review,
+)
 from olympus.boba.performance_feedback import (
     BobaManualPerformanceMetricsV1,
     BobaPerformanceEventType,
@@ -148,6 +158,7 @@ from olympus.music import load_music_assets
 from olympus.personalization import apply as personalization
 from olympus.platform.config import get_settings
 from olympus.platform.errors import NotFoundError, ValidationError
+from olympus.rendering.artifacts import resolve_render_manifest
 from olympus.utils import new_id
 
 
@@ -206,6 +217,15 @@ class BobaIntegration:
             ffmpeg_binary=runtime_settings.rendering.ffmpeg_binary,
             ffprobe_binary=runtime_settings.rendering.ffprobe_binary,
             transcription_provider=runtime_settings.ai.transcription_provider,
+        )
+        self.output_quality_reviewer = BobaOutputQualityReviewerV1(
+            repository_root,
+            storage_root=runtime_settings.storage.local_root,
+            evidence_root=(
+                store.root / "output_quality_reviewer" / "samples"
+            ),
+            ffmpeg_binary=runtime_settings.rendering.ffmpeg_binary,
+            ffprobe_binary=runtime_settings.rendering.ffprobe_binary,
         )
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
@@ -408,6 +428,204 @@ class BobaIntegration:
 
     async def _stage(self, engine: str, project_id: str, stage: str) -> dict[str, Any]:
         return await self._json(f"{engine}/{project_id}/stages/{stage}.json")
+
+    @staticmethod
+    def _model_payload(value: object | None) -> dict[str, Any]:
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            payload = model_dump(mode="json")
+            return payload if isinstance(payload, dict) else {}
+        return value if isinstance(value, dict) else {}
+
+    async def _output_quality_inputs(
+        self,
+        project_id: str,
+    ) -> tuple[
+        dict[str, Any],
+        list[dict[str, Any]],
+        dict[str, Any],
+        dict[str, Any],
+    ]:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+
+        artifacts_by_reference: dict[str, dict[str, Any]] = {}
+        manifest_resolution = await resolve_render_manifest(self.storage, project_id)
+        manifest = manifest_resolution.manifest or {}
+        render_id = str(manifest.get("render_id") or "")
+        for raw_render in _list(manifest.get("renders")):
+            render = _dict(raw_render)
+            reference = str(render.get("storage_key") or "").replace("\\", "/")
+            if not reference:
+                continue
+            metadata = _dict(render.get("metadata"))
+            clip_id = str(
+                render.get("clip_id")
+                or metadata.get("candidate_id")
+                or metadata.get("clip_id")
+                or ""
+            )
+            checksum = str(render.get("checksum") or "")
+            artifacts_by_reference[reference] = {
+                "artifact_id": (
+                    f"render_output_{clip_id}"
+                    if clip_id
+                    else f"render_output_{checksum[-24:] or len(artifacts_by_reference)}"
+                ),
+                "project_id": project_id,
+                "reference": reference,
+                "path_scope": "storage",
+                "source_type": "normal_render",
+                "origin_module": "rendering",
+                "origin_run_id": render_id,
+                "clip_id": clip_id,
+                "manifest_entry": render,
+                "render_entry": render,
+                "accepted_output_protected": True,
+                "warnings": manifest_resolution.warnings,
+            }
+
+        tool_recovery = self.store.load_boba_tool_recovery(project_id)
+        tool_payload = self._model_payload(tool_recovery)
+        strategies = {
+            str(item.get("recovery_strategy_id") or ""): item
+            for plan in _list(tool_payload.get("recovery_plans"))
+            for item in _list(_dict(plan).get("ordered_strategies"))
+            if isinstance(item, dict)
+        }
+        validations = {
+            str(item.get("output_artifact_ref") or "").replace("\\", "/"): item
+            for item in _list(tool_payload.get("output_validations"))
+            if isinstance(item, dict)
+        }
+        for raw_attempt in _list(tool_payload.get("recovery_attempts")):
+            attempt = _dict(raw_attempt)
+            strategy = _dict(
+                strategies.get(str(attempt.get("recovery_strategy_id") or ""))
+            )
+            source_type = (
+                "fallback_output"
+                if "fallback" in str(strategy.get("strategy_type") or "").casefold()
+                else "tool_recovery_output"
+            )
+            for raw_reference in _list(attempt.get("output_artifact_refs")):
+                reference = str(raw_reference or "").strip().replace("\\", "/")
+                if not reference or "://" in reference:
+                    continue
+                path_scope = (
+                    "repository"
+                    if reference.startswith("work/boba/tool_recovery/workspaces/")
+                    else "storage"
+                )
+                validation = _dict(validations.get(reference))
+                artifacts_by_reference[reference] = {
+                    "artifact_id": (
+                        f"recovered_output_"
+                        f"{str(attempt.get('recovery_attempt_id') or '')[-80:]}"
+                    ),
+                    "project_id": project_id,
+                    "reference": reference,
+                    "path_scope": path_scope,
+                    "source_type": source_type,
+                    "origin_module": "tool_recovery_brain",
+                    "origin_run_id": str(attempt.get("recovery_plan_id") or ""),
+                    "origin_attempt_id": str(
+                        attempt.get("recovery_attempt_id") or ""
+                    ),
+                    "source_record_id": str(
+                        validation.get("output_validation_id")
+                        or attempt.get("recovery_attempt_id")
+                        or ""
+                    ),
+                    "expected_checksum": validation.get("checksum"),
+                    "tool_recovery_validation": validation,
+                    "quality_requirements": _list(
+                        strategy.get("quality_requirements")
+                    ),
+                    "accepted_output_protected": True,
+                    "warnings": [
+                        *_list(attempt.get("warnings")),
+                        *_list(validation.get("warnings")),
+                    ],
+                }
+
+        code_surgeon = self.store.load_boba_code_surgeon(project_id)
+        code_payload = self._model_payload(code_surgeon)
+        runs = {
+            str(item.get("isolated_run_id") or ""): item
+            for item in _list(code_payload.get("isolated_runs"))
+            if isinstance(item, dict)
+        }
+        for raw_validation in _list(code_payload.get("validation_runs")):
+            validation = _dict(raw_validation)
+            isolated_run_id = str(validation.get("isolated_run_id") or "")
+            if not isolated_run_id:
+                continue
+            run_path = self.store.code_surgeon_run_path(
+                project_id,
+                isolated_run_id,
+            )
+            try:
+                reference = run_path.resolve().relative_to(
+                    self.output_quality_reviewer.repository_root
+                ).as_posix()
+            except ValueError:
+                continue
+            artifacts_by_reference[reference] = {
+                "artifact_id": str(
+                    validation.get("validation_run_id")
+                    or f"code_validation_{isolated_run_id}"
+                ),
+                "project_id": project_id,
+                "reference": reference,
+                "path_scope": "repository",
+                "artifact_type": "JSON",
+                "source_type": "code_surgeon_behavior_validation",
+                "origin_module": "code_surgeon",
+                "origin_run_id": isolated_run_id,
+                "source_record_id": str(
+                    validation.get("validation_run_id") or ""
+                ),
+                "code_surgeon_validation": validation,
+                "isolated_run": _dict(runs.get(isolated_run_id)),
+                "accepted_output_protected": True,
+                "warnings": _list(validation.get("warnings")),
+            }
+
+        creative_artifacts = {
+            "whole_video_understanding": self._model_payload(
+                self.store.load_whole_video_understanding(project_id)
+            ),
+            "clip_ranking": self._model_payload(
+                self.store.load_clip_ranking(project_id)
+            ),
+            "editorial_decision": self._model_payload(
+                self.store.load_editorial_decisions(project_id)
+            ),
+            "creative_direction": self._model_payload(
+                self.store.load_creative_direction_v2(project_id)
+            ),
+            "clip_brief": self._model_payload(
+                self.store.load_clip_briefs(project_id)
+            ),
+            "hook_retention": self._model_payload(
+                self.store.load_hook_retention(project_id)
+            ),
+            "caption_motion": self._model_payload(
+                self.store.load_caption_motion(project_id)
+            ),
+            "music_mood": self._model_payload(
+                self.store.load_music_mood(project_id)
+            ),
+        }
+        validation_artifacts: dict[str, Any] = {}
+        return (
+            project.to_dict(),
+            list(artifacts_by_reference.values()),
+            creative_artifacts,
+            validation_artifacts,
+        )
 
     async def collect_project_signals(self, project_id: str) -> dict[str, Any]:
         project = await self.projects.get(project_id)
@@ -2066,6 +2284,226 @@ class BobaIntegration:
 
     def reset_boba_tool_recovery(self, project_id: str) -> bool:
         return self.store.reset_boba_tool_recovery(project_id)
+
+    async def generate_boba_output_quality_review(
+        self,
+        project_id: str,
+        *,
+        output_reference: str,
+        baseline_reference: str | None = None,
+        review_mode: BobaOutputReviewModeV1 = (
+            "full_available_evidence_review"
+        ),
+        rights_status: str = "unknown",
+        safety_status: str = "unknown",
+        workflow_stage: str = "quality_review",
+        comparison_basis: BobaOutputComparisonBasisV1 = "unknown",
+        required_quality_properties: list[str] | None = None,
+        non_negotiable_requirements: list[str] | None = None,
+        output_modification_requested: bool = False,
+        source_modification_requested: bool = False,
+        network_review_requested: bool = False,
+    ) -> BobaOutputQualityReviewerSetV1:
+        (
+            project,
+            known_output_artifacts,
+            creative_artifacts,
+            validation_artifacts,
+        ) = await self._output_quality_inputs(project_id)
+        selected = next(
+            (
+                item
+                for item in known_output_artifacts
+                if output_reference
+                in {
+                    str(item.get("reference") or ""),
+                    str(item.get("artifact_id") or ""),
+                }
+            ),
+            {},
+        )
+        render_entry = _dict(
+            selected.get("manifest_entry") or selected.get("render_entry")
+        )
+        render_metadata = _dict(render_entry.get("metadata"))
+        validation_artifacts.update(
+            {
+                key: value
+                for key, value in {
+                    "boundary_quality": render_metadata.get("boundary_quality"),
+                    "boundary_validation": render_metadata.get(
+                        "boundary_validation"
+                    ),
+                    "caption_render_validation": render_metadata.get(
+                        "caption_render_validation"
+                    ),
+                    "caption_readability_validation": render_metadata.get(
+                        "caption_readability_validation"
+                    ),
+                    "caption_events": render_metadata.get("caption_events"),
+                    "face_motion_validation": (
+                        render_metadata.get("face_motion_validation_result_v1")
+                        or render_metadata.get("motion_render_validation")
+                    ),
+                    "multi_speaker_validation": (
+                        render_metadata.get(
+                            "multi_speaker_layout_validation_result_v1"
+                        )
+                        or render_metadata.get("multi_speaker_validation")
+                    ),
+                }.items()
+                if value is not None
+            }
+        )
+        existing = self.store.load_boba_output_quality_reviewer(project_id)
+        report = generate_boba_output_quality_review(
+            reviewer=self.output_quality_reviewer,
+            project_id=project_id,
+            output_reference=output_reference,
+            baseline_reference=baseline_reference,
+            known_output_artifacts=known_output_artifacts,
+            source_id=str(project.get("link_ingestion_id") or project_id),
+            source_media_reference=str(project.get("storage_key") or ""),
+            review_mode=review_mode,
+            rights_status=rights_status,
+            safety_status=safety_status,
+            workflow_stage=workflow_stage,
+            tool_recovery_report=self.store.load_boba_tool_recovery(project_id),
+            code_surgeon_report=self.store.load_boba_code_surgeon(project_id),
+            repair_planner_report=self.store.load_boba_repair_planner(project_id),
+            creative_artifacts=creative_artifacts,
+            validation_artifacts=validation_artifacts,
+            required_quality_properties=required_quality_properties or [],
+            non_negotiable_requirements=non_negotiable_requirements or [],
+            comparison_basis=comparison_basis,
+            existing_report=existing,
+            output_modification_requested=output_modification_requested,
+            source_modification_requested=source_modification_requested,
+            network_review_requested=network_review_requested,
+        )
+        return self.store.save_boba_output_quality_reviewer(report)
+
+    async def run_boba_output_technical_review(
+        self,
+        project_id: str,
+        *,
+        output_reference: str,
+        rights_status: str = "unknown",
+        safety_status: str = "unknown",
+        required_quality_properties: list[str] | None = None,
+        non_negotiable_requirements: list[str] | None = None,
+    ) -> BobaOutputQualityReviewerSetV1:
+        (
+            project,
+            known_output_artifacts,
+            creative_artifacts,
+            validation_artifacts,
+        ) = await self._output_quality_inputs(project_id)
+        report = run_boba_output_technical_review(
+            reviewer=self.output_quality_reviewer,
+            project_id=project_id,
+            output_reference=output_reference,
+            known_output_artifacts=known_output_artifacts,
+            source_id=str(project.get("link_ingestion_id") or project_id),
+            source_media_reference=str(project.get("storage_key") or ""),
+            rights_status=rights_status,
+            safety_status=safety_status,
+            tool_recovery_report=self.store.load_boba_tool_recovery(project_id),
+            code_surgeon_report=self.store.load_boba_code_surgeon(project_id),
+            repair_planner_report=self.store.load_boba_repair_planner(project_id),
+            creative_artifacts=creative_artifacts,
+            validation_artifacts=validation_artifacts,
+            required_quality_properties=required_quality_properties or [],
+            non_negotiable_requirements=non_negotiable_requirements or [],
+            existing_report=self.store.load_boba_output_quality_reviewer(
+                project_id
+            ),
+        )
+        return self.store.save_boba_output_quality_reviewer(report)
+
+    async def compare_boba_output_quality_baseline(
+        self,
+        project_id: str,
+        *,
+        output_reference: str,
+        baseline_reference: str,
+        rights_status: str = "unknown",
+        safety_status: str = "unknown",
+        comparison_basis: BobaOutputComparisonBasisV1 = "unknown",
+        required_quality_properties: list[str] | None = None,
+        non_negotiable_requirements: list[str] | None = None,
+    ) -> BobaOutputQualityReviewerSetV1:
+        (
+            project,
+            known_output_artifacts,
+            creative_artifacts,
+            validation_artifacts,
+        ) = await self._output_quality_inputs(project_id)
+        report = compare_boba_output_quality_baseline(
+            reviewer=self.output_quality_reviewer,
+            project_id=project_id,
+            output_reference=output_reference,
+            baseline_reference=baseline_reference,
+            known_output_artifacts=known_output_artifacts,
+            source_id=str(project.get("link_ingestion_id") or project_id),
+            source_media_reference=str(project.get("storage_key") or ""),
+            rights_status=rights_status,
+            safety_status=safety_status,
+            comparison_basis=comparison_basis,
+            tool_recovery_report=self.store.load_boba_tool_recovery(project_id),
+            code_surgeon_report=self.store.load_boba_code_surgeon(project_id),
+            repair_planner_report=self.store.load_boba_repair_planner(project_id),
+            creative_artifacts=creative_artifacts,
+            validation_artifacts=validation_artifacts,
+            required_quality_properties=required_quality_properties or [],
+            non_negotiable_requirements=non_negotiable_requirements or [],
+            existing_report=self.store.load_boba_output_quality_reviewer(
+                project_id
+            ),
+        )
+        return self.store.save_boba_output_quality_reviewer(report)
+
+    async def record_boba_output_human_review(
+        self,
+        project_id: str,
+        *,
+        review_case_id: str,
+        reviewer_identity: str,
+        review_decision: str,
+        answers: dict[str, Any] | None = None,
+        notes: str = "",
+    ) -> BobaOutputQualityReviewerSetV1:
+        if await self.projects.get(project_id) is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        existing = self.store.load_boba_output_quality_reviewer(project_id)
+        if existing is None:
+            raise ValidationError(
+                "BOBA Output Quality Reviewer V1 report is not available."
+            )
+        updated = record_boba_output_human_review(
+            existing,
+            review_case_id=review_case_id,
+            reviewer_identity=reviewer_identity,
+            review_decision=review_decision,
+            answers=answers,
+            notes=notes,
+        )
+        return self.store.save_boba_output_quality_reviewer(updated)
+
+    def load_boba_output_quality_reviewer(
+        self,
+        project_id: str,
+    ) -> BobaOutputQualityReviewerSetV1 | None:
+        return self.store.load_boba_output_quality_reviewer(project_id)
+
+    def export_boba_output_quality_reviewer(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        return self.store.export_boba_output_quality_reviewer(project_id)
+
+    def reset_boba_output_quality_reviewer(self, project_id: str) -> bool:
+        return self.store.reset_boba_output_quality_reviewer(project_id)
 
     async def generate_performance_feedback(
         self,

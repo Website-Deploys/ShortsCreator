@@ -4416,6 +4416,408 @@ export interface BobaToolRecoveryRollbackInputV1 {
   trigger: string;
 }
 
+export interface BobaOutputQualityEvidenceV1 {
+  evidence_id: string;
+  source_type: string;
+  source_id: string;
+  category: string;
+  bounded_summary: string;
+  observed_value: unknown;
+  expected_value: unknown;
+  reliability: string;
+  confidence: number;
+  supports_acceptance: boolean;
+  supports_rejection: boolean;
+  requires_human_interpretation: boolean;
+  warnings: string[];
+}
+
+export interface BobaTechnicalQualityCheckV1 {
+  technical_check_id: string;
+  review_case_id: string;
+  category: string;
+  name: string;
+  required: boolean;
+  status: string;
+  observed_value: unknown;
+  expected_value: unknown;
+  tolerance: unknown;
+  evidence_ids: string[];
+  blocks_acceptance: boolean;
+  failure_summary: string;
+  human_review_needed: boolean;
+  warnings: string[];
+}
+
+export interface BobaTechnicalQualityAssessmentV1 {
+  technical_assessment_id: string;
+  review_case_id: string;
+  checks: BobaTechnicalQualityCheckV1[];
+  artifact_integrity_status: string;
+  decode_status: string;
+  stream_status: string;
+  timing_status: string;
+  video_status: string;
+  audio_status: string;
+  caption_status: string;
+  framing_status: string;
+  source_window_status: string;
+  synchronization_status: string;
+  technical_score: number;
+  required_checks_passed: boolean;
+  failed_required_checks: string[];
+  unavailable_required_checks: string[];
+  technical_acceptance_eligible: boolean;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaCreativeQualityDimensionV1 {
+  creative_dimension_id: string;
+  review_case_id: string;
+  dimension: string;
+  status: string;
+  score: number;
+  evidence_ids: string[];
+  positive_findings: string[];
+  negative_findings: string[];
+  uncertainty: string;
+  requires_human_review: boolean;
+  blocking: boolean;
+  warnings: string[];
+}
+
+export interface BobaCreativeQualityAssessmentV1 {
+  creative_assessment_id: string;
+  review_case_id: string;
+  dimensions: BobaCreativeQualityDimensionV1[];
+  hook_status: string;
+  story_completeness_status: string;
+  payoff_status: string;
+  pacing_status: string;
+  clarity_status: string;
+  caption_readability_status: string;
+  framing_quality_status: string;
+  subject_visibility_status: string;
+  motion_quality_status: string;
+  audio_balance_status: string;
+  music_fit_status: string;
+  repetition_status: string;
+  platform_fit_status: string;
+  creative_score: number;
+  evidence_coverage: number;
+  subjective_uncertainty: string[];
+  creative_acceptance_eligible: boolean;
+  human_review_required: boolean;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaReviewedOutputArtifactV1 {
+  output_artifact_id: string;
+  project_id: string;
+  clip_id: string;
+  sanitized_artifact_reference: string;
+  artifact_type: string;
+  origin_module: string;
+  origin_run_id: string;
+  origin_attempt_id: string;
+  generated_at: string | null;
+  expected_source_window: Record<string, number>;
+  expected_duration_seconds: number | null;
+  expected_resolution: Record<string, number>;
+  expected_frame_rate: number | null;
+  expected_audio: boolean | null;
+  expected_captions: boolean | null;
+  checksum: string;
+  file_size_bytes: number | null;
+  accepted_output_protected: boolean;
+  source_media_reference: string;
+  source_media_read_only: true;
+  rights_status: string;
+  warnings: string[];
+}
+
+export interface BobaOutputReviewCaseV1 {
+  review_case_id: string;
+  source_type: string;
+  source_module: string;
+  source_record_id: string;
+  output_artifact_id: string;
+  baseline_artifact_id: string;
+  title: string;
+  clip_id: string;
+  workflow_stage: string;
+  review_mode: string;
+  review_status: string;
+  rights_status: string;
+  safety_status: string;
+  technical_assessment_id: string;
+  creative_assessment_id: string;
+  baseline_comparison_id: string;
+  quality_issue_ids: string[];
+  quality_regression_ids: string[];
+  acceptance_decision_id: string;
+  human_review_package_id: string;
+  required_quality_properties: string[];
+  non_negotiable_requirements: string[];
+  unavailable_required_evidence: string[];
+  human_review_required: boolean;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaOutputBaselineComparisonV1 {
+  baseline_comparison_id: string;
+  review_case_id: string;
+  baseline_artifact_id: string;
+  reviewed_artifact_id: string;
+  comparison_basis: string;
+  technical_differences: Record<string, unknown>[];
+  creative_differences: Record<string, unknown>[];
+  quality_requirement_differences: Record<string, unknown>[];
+  preserved_properties: string[];
+  improved_properties: string[];
+  degraded_properties: string[];
+  unknown_properties: string[];
+  non_negotiable_regressions: string[];
+  acceptable_disclosed_regressions: string[];
+  comparison_confidence: number;
+  equivalent_for_required_capability: boolean;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaOutputQualityRegressionV1 {
+  quality_regression_id: string;
+  review_case_id: string;
+  category: string;
+  baseline_value: unknown;
+  reviewed_value: unknown;
+  severity: string;
+  non_negotiable: boolean;
+  disclosed: boolean;
+  approved: boolean;
+  evidence_ids: string[];
+  acceptance_impact: string;
+  recommended_action: string;
+  warnings: string[];
+}
+
+export interface BobaOutputQualityIssueV1 {
+  quality_issue_id: string;
+  review_case_id: string;
+  category: string;
+  title: string;
+  summary: string;
+  severity: string;
+  confirmed: boolean;
+  confidence: number;
+  evidence_ids: string[];
+  affected_requirements: string[];
+  blocks_acceptance: boolean;
+  repairable: boolean;
+  recommended_owner_module: string;
+  recommended_action: string;
+  warnings: string[];
+}
+
+export interface BobaOutputAcceptanceDecisionV1 {
+  acceptance_decision_id: string;
+  review_case_id: string;
+  decision: string;
+  decision_summary: string;
+  technical_eligible: boolean;
+  creative_eligible: boolean;
+  baseline_equivalent: boolean | null;
+  required_checks_complete: boolean;
+  rights_clear_for_processing: boolean;
+  safety_clear_for_processing: boolean;
+  human_review_required: boolean;
+  acceptance_conditions: string[];
+  rejection_reasons: string[];
+  disclosed_limitations: string[];
+  next_allowed_stage: string;
+  workflow_resume_authorized: false;
+  publication_authorized: false;
+  confidence: number;
+  warnings: string[];
+}
+
+export interface BobaOutputHumanReviewPackageV1 {
+  human_review_package_id: string;
+  review_case_id: string;
+  reason: string;
+  sanitized_output_reference: string;
+  comparison_reference: string;
+  reviewer_questions: string[];
+  critical_items: string[];
+  optional_items: string[];
+  technical_summary: string;
+  creative_summary: string;
+  regression_summary: string;
+  unavailable_evidence: string[];
+  acceptance_options: string[];
+  prohibited_actions: string[];
+  warnings: string[];
+}
+
+export interface BobaOutputQualityHandoffV1 {
+  handoff_id: string;
+  review_case_id: string;
+  acceptance_decision_id: string;
+  target_module: string;
+  reason: string;
+  required_inputs: string[];
+  quality_issues: string[];
+  failed_checks: string[];
+  unavailable_checks: string[];
+  constraints: string[];
+  blocked_actions: string[];
+  allowed_advisory_actions: string[];
+  apply_automatically: false;
+  human_approval_required: true;
+  priority: string;
+  warnings: string[];
+}
+
+export interface BobaOutputQualityReviewerSummaryV1 {
+  total_review_cases: number;
+  accepted_internal_count: number;
+  accepted_with_limitations_count: number;
+  human_review_count: number;
+  needs_more_evidence_count: number;
+  technical_rejection_count: number;
+  quality_rejection_count: number;
+  regression_rejection_count: number;
+  rights_block_count: number;
+  safety_block_count: number;
+  technical_pass_count: number;
+  technical_failure_count: number;
+  creative_eligible_count: number;
+  creative_uncertain_count: number;
+  non_negotiable_regression_count: number;
+  highest_priority_issue: string;
+  strongest_output: string;
+  weakest_output: string;
+  safest_next_action: string;
+  required_human_actions: string[];
+  limitations: string[];
+}
+
+export interface BobaOutputQualitySignalUsageV1 {
+  tool_recovery_used: boolean;
+  tool_recovery_artifact_read: boolean;
+  code_surgeon_used: boolean;
+  render_manifest_used: boolean;
+  repair_planner_quality_requirements_used: boolean;
+  clip_brief_used: boolean;
+  hook_retention_used: boolean;
+  caption_motion_used: boolean;
+  music_mood_used: boolean;
+  creative_direction_used: boolean;
+  editorial_decision_used: boolean;
+  boundary_quality_used: boolean;
+  face_motion_validation_used: boolean;
+  multi_speaker_validation_used: boolean;
+  local_ffprobe_used: boolean;
+  local_decode_check_used: boolean;
+  checksum_validation_used: boolean;
+  caption_validation_used: boolean;
+  source_window_validation_used: boolean;
+  baseline_comparison_used: boolean;
+  bounded_frame_samples_used: boolean;
+  bounded_audio_analysis_used: boolean;
+  bounded_manual_review_used: boolean;
+  output_modified: false;
+  source_media_modified: false;
+  workflow_resume_used: false;
+  rendering_used: false;
+  fallback_execution_used: false;
+  code_modification_used: false;
+  external_api_used: false;
+  network_access_used: false;
+  url_fetching_used: false;
+  scraping_used: false;
+  downloading_used: false;
+  uploading_used: false;
+  publication_used: false;
+  rights_bypass_used: false;
+  safety_bypass_used: false;
+  destructive_action_used: false;
+  unavailable_signals: string[];
+  warnings: string[];
+}
+
+export interface BobaOutputQualityReviewerSetV1 {
+  schema_version: "boba_output_quality_reviewer_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  review_cases: BobaOutputReviewCaseV1[];
+  output_artifacts: BobaReviewedOutputArtifactV1[];
+  quality_evidence: BobaOutputQualityEvidenceV1[];
+  technical_assessments: BobaTechnicalQualityAssessmentV1[];
+  creative_assessments: BobaCreativeQualityAssessmentV1[];
+  baseline_comparisons: BobaOutputBaselineComparisonV1[];
+  quality_regressions: BobaOutputQualityRegressionV1[];
+  quality_issues: BobaOutputQualityIssueV1[];
+  acceptance_decisions: BobaOutputAcceptanceDecisionV1[];
+  human_review_packages: BobaOutputHumanReviewPackageV1[];
+  review_handoffs: BobaOutputQualityHandoffV1[];
+  reviewer_summary: BobaOutputQualityReviewerSummaryV1;
+  signal_usage: BobaOutputQualitySignalUsageV1;
+  warnings: string[];
+  limitations: string[];
+}
+
+export type BobaOutputReviewModeV1 =
+  | "artifact_only"
+  | "local_technical_review"
+  | "full_available_evidence_review"
+  | "baseline_comparison"
+  | "human_review_preparation";
+
+export interface BobaOutputQualityReviewInputV1 {
+  output_reference: string;
+  baseline_reference?: string;
+  review_mode?: BobaOutputReviewModeV1;
+  rights_status: string;
+  safety_status: string;
+  workflow_stage?: string;
+  comparison_basis?: string;
+  required_quality_properties?: string[];
+  non_negotiable_requirements?: string[];
+  output_modification_requested?: false;
+  source_modification_requested?: false;
+  network_review_requested?: false;
+}
+
+export interface BobaOutputQualityCompareInputV1 {
+  output_reference: string;
+  baseline_reference: string;
+  rights_status: string;
+  safety_status: string;
+  comparison_basis?: string;
+  required_quality_properties?: string[];
+  non_negotiable_requirements?: string[];
+}
+
+export interface BobaOutputHumanReviewInputV1 {
+  review_case_id: string;
+  reviewer_identity: string;
+  review_decision:
+    | "accept_for_next_internal_stage"
+    | "accept_with_disclosed_limitation"
+    | "reject_output"
+    | "send_back_to_tool_recovery"
+    | "send_back_to_repair_planner"
+    | "request_more_evidence";
+  answers?: Record<string, unknown>;
+  notes?: string;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;

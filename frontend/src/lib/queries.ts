@@ -61,6 +61,10 @@ import type {
   BobaToolRecoveryPlanInputV1,
   BobaToolRecoveryRollbackInputV1,
   BobaToolRecoveryValidationInputV1,
+  BobaOutputHumanReviewInputV1,
+  BobaOutputQualityCompareInputV1,
+  BobaOutputQualityReviewerSetV1,
+  BobaOutputQualityReviewInputV1,
   BobaCandidateVideoScorerGenerateInputV1,
   BobaCandidateVideoScorerSetV1,
   BobaErrorDoctorGenerateInputV1,
@@ -140,6 +144,8 @@ export const queryKeys = {
     ["boba", "projects", id, "code-surgeon"] as const,
   bobaToolRecovery: (id: string) =>
     ["boba", "projects", id, "tool-recovery"] as const,
+  bobaOutputQualityReviewer: (id: string) =>
+    ["boba", "projects", id, "output-quality-reviewer"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -900,6 +906,82 @@ export function useResetBobaToolRecovery(projectId: string) {
     mutationFn: () => api.resetBobaToolRecovery(projectId),
     onSuccess: () => {
       queryClient.setQueryData(queryKeys.bobaToolRecovery(projectId), null);
+    },
+  });
+}
+
+export function useBobaOutputQualityReviewer(projectId: string) {
+  return useQuery<BobaOutputQualityReviewerSetV1 | null>({
+    queryKey: queryKeys.bobaOutputQualityReviewer(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaOutputQualityReviewer(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useReviewBobaOutputQuality(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaOutputQualityReviewInputV1) =>
+      api.reviewBobaOutputQuality(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(
+        queryKeys.bobaOutputQualityReviewer(projectId),
+        result,
+      );
+    },
+  });
+}
+
+export function useCompareBobaOutputQuality(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaOutputQualityCompareInputV1) =>
+      api.compareBobaOutputQuality(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(
+        queryKeys.bobaOutputQualityReviewer(projectId),
+        result,
+      );
+    },
+  });
+}
+
+export function useRecordBobaOutputHumanReview(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaOutputHumanReviewInputV1) =>
+      api.recordBobaOutputHumanReview(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(
+        queryKeys.bobaOutputQualityReviewer(projectId),
+        result,
+      );
+    },
+  });
+}
+
+export function useExportBobaOutputQualityReviewer(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaOutputQualityReviewer(projectId),
+  });
+}
+
+export function useResetBobaOutputQualityReviewer(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaOutputQualityReviewer(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(
+        queryKeys.bobaOutputQualityReviewer(projectId),
+        null,
+      );
     },
   });
 }

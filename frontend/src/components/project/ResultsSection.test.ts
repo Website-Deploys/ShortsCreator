@@ -558,4 +558,29 @@ describe("V2 output flow UI contracts", () => {
     expect(apiClient).toContain("/tool-recovery/validate-output");
     expect(apiClient).toContain("/tool-recovery/rollback");
   });
+
+  it("shows BOBA Output Quality Reviewer V1 truth and review sections", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+    const apiClient = source("../../lib/apiClient.ts");
+
+    expect(resultsSection).toContain("BOBA Output Quality Reviewer V1");
+    expect(resultsSection).toContain(
+      "BOBA Output Quality Reviewer does not repair or rerender files.",
+    );
+    expect(resultsSection).toContain(
+      "A technically valid output can still be rejected for quality loss",
+    );
+    expect(resultsSection).toContain("TECHNICAL CHECKS");
+    expect(resultsSection).toContain("CREATIVE REVIEW");
+    expect(resultsSection).toContain("BASELINE COMPARISON");
+    expect(resultsSection).toContain("QUALITY REGRESSIONS");
+    expect(resultsSection).toContain("DECISION");
+    expect(resultsSection).toContain("HUMAN REVIEW");
+    expect(resultsSection).toContain("WHAT HAPPENS NEXT");
+    expect(resultsSection).toContain("Reset reviewer metadata");
+    expect(apiClient).toContain("/output-quality-reviewer/review");
+    expect(apiClient).toContain("/output-quality-reviewer/compare");
+    expect(apiClient).toContain("/output-quality-reviewer/human-review");
+    expect(apiClient).toContain("/output-quality-reviewer/export");
+  });
 });
