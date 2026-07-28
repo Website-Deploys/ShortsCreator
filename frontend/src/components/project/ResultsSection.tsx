@@ -19,6 +19,7 @@ import {
   useBobaRootCauseAnalyzer,
   useBobaRightsPermissionGate,
   useBobaToolRecovery,
+  useBobaOutputQualityReviewer,
   useBobaCandidates,
   useBobaClipBriefs,
   useBobaClipRanking,
@@ -56,6 +57,7 @@ import {
   useExportBobaRootCauseAnalyzer,
   useExportBobaRightsPermissionGate,
   useExportBobaToolRecovery,
+  useExportBobaOutputQualityReviewer,
   useExportBobaContentScoutV2,
   useExportBobaCreatorLearning,
   useExportBobaExperimentation,
@@ -95,6 +97,7 @@ import {
   useResetBobaRootCauseAnalyzer,
   useResetBobaRightsPermissionGate,
   useResetBobaToolRecovery,
+  useResetBobaOutputQualityReviewer,
   useResetBobaContentScoutV2,
   useResetBobaExperimentation,
   useResetBobaPerformanceFeedback,
@@ -113,6 +116,9 @@ import {
   useValidateBobaToolRecoveryOutput,
   useRollbackBobaToolRecovery,
   useRunBobaToolRecoveryHealthChecks,
+  useReviewBobaOutputQuality,
+  useCompareBobaOutputQuality,
+  useRecordBobaOutputHumanReview,
 } from "@/lib/queries";
 import { formatBytes, formatDuration, isTerminal } from "@/lib/rendering";
 import type {
@@ -140,6 +146,7 @@ import type {
   BobaPerformanceTargetType,
   BobaProjectMemoryV1,
   BobaToolRecoveryApprovalV1,
+  BobaOutputReviewModeV1,
   BobaWholeVideoUnderstandingV1,
   ClipPlan,
   CreatorProfileV2,
@@ -9998,6 +10005,646 @@ function BobaToolRecoveryPanel({ projectId }: { projectId: string }) {
   );
 }
 
+function BobaOutputQualityReviewerPanel({
+  projectId,
+  renders,
+}: {
+  projectId: string;
+  renders: RenderedVideo[];
+}) {
+  const reviewerQuery = useBobaOutputQualityReviewer(projectId);
+  const reviewOutput = useReviewBobaOutputQuality(projectId);
+  const compareOutput = useCompareBobaOutputQuality(projectId);
+  const recordHumanReview = useRecordBobaOutputHumanReview(projectId);
+  const exportReviewer = useExportBobaOutputQualityReviewer(projectId);
+  const resetReviewer = useResetBobaOutputQualityReviewer(projectId);
+  const [outputReference, setOutputReference] = useState("");
+  const [baselineReference, setBaselineReference] = useState("");
+  const [reviewMode, setReviewMode] =
+    useState<BobaOutputReviewModeV1>("full_available_evidence_review");
+  const [rightsStatus, setRightsStatus] = useState("unknown");
+  const [safetyStatus, setSafetyStatus] = useState("unknown");
+  const [reviewerIdentity, setReviewerIdentity] = useState(
+    "local-human-reviewer",
+  );
+  const [reviewDecision, setReviewDecision] = useState<
+    | "accept_for_next_internal_stage"
+    | "accept_with_disclosed_limitation"
+    | "reject_output"
+    | "send_back_to_tool_recovery"
+    | "send_back_to_repair_planner"
+    | "request_more_evidence"
+  >("request_more_evidence");
+  const [reviewNotes, setReviewNotes] = useState("");
+  const [status, setStatus] = useState("");
+  const report = reviewerQuery.data;
+  const latestCase =
+    report?.review_cases[(report?.review_cases.length ?? 1) - 1];
+  const artifact = report?.output_artifacts.find(
+    (item) => item.output_artifact_id === latestCase?.output_artifact_id,
+  );
+  const technical = report?.technical_assessments.find(
+    (item) =>
+      item.technical_assessment_id === latestCase?.technical_assessment_id,
+  );
+  const creative = report?.creative_assessments.find(
+    (item) =>
+      item.creative_assessment_id === latestCase?.creative_assessment_id,
+  );
+  const comparison = report?.baseline_comparisons.find(
+    (item) =>
+      item.baseline_comparison_id === latestCase?.baseline_comparison_id,
+  );
+  const decision = report?.acceptance_decisions.find(
+    (item) =>
+      item.acceptance_decision_id === latestCase?.acceptance_decision_id,
+  );
+  const humanPackage = report?.human_review_packages.find(
+    (item) =>
+      item.human_review_package_id === latestCase?.human_review_package_id,
+  );
+  const regressions =
+    report?.quality_regressions.filter(
+      (item) => item.review_case_id === latestCase?.review_case_id,
+    ) ?? [];
+  const issues =
+    report?.quality_issues.filter(
+      (item) => item.review_case_id === latestCase?.review_case_id,
+    ) ?? [];
+  const handoffs =
+    report?.review_handoffs.filter(
+      (item) => item.review_case_id === latestCase?.review_case_id,
+    ) ?? [];
+  const effectiveOutputReference =
+    outputReference || renders[0]?.storage_key || "";
+  const busy =
+    reviewOutput.isPending ||
+    compareOutput.isPending ||
+    recordHumanReview.isPending ||
+    exportReviewer.isPending ||
+    resetReviewer.isPending;
+
+  function runReview() {
+    if (!effectiveOutputReference) {
+      setStatus("Choose one exact known generated output reference.");
+      return;
+    }
+    if (reviewMode === "baseline_comparison") {
+      if (!baselineReference.trim()) {
+        setStatus("Baseline comparison requires one exact known baseline.");
+        return;
+      }
+      compareOutput.mutate(
+        {
+          output_reference: effectiveOutputReference,
+          baseline_reference: baselineReference.trim(),
+          rights_status: rightsStatus,
+          safety_status: safetyStatus,
+          comparison_basis: "manual_baseline",
+        },
+        {
+          onSuccess: () =>
+            setStatus(
+              "Read-only baseline comparison saved. Olympus remains paused.",
+            ),
+          onError: (error) => setStatus(error.message),
+        },
+      );
+      return;
+    }
+    reviewOutput.mutate(
+      {
+        output_reference: effectiveOutputReference,
+        baseline_reference: baselineReference.trim() || undefined,
+        review_mode: reviewMode,
+        rights_status: rightsStatus,
+        safety_status: safetyStatus,
+        workflow_stage: "quality_review",
+      },
+      {
+        onSuccess: () =>
+          setStatus("Read-only output review saved. Olympus remains paused."),
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportReviewer.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(
+          `boba-output-quality-reviewer-v1-${projectId}.json`,
+          payload,
+        );
+        setStatus("Sanitized quality-review report downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset Output Quality Reviewer metadata only? Reviewed outputs, source media, render manifests, and upstream BOBA artifacts remain untouched.",
+      )
+    ) {
+      return;
+    }
+    resetReviewer.mutate(undefined, {
+      onSuccess: () =>
+        setStatus(
+          "Reviewer metadata reset. No output, source media, or manifest was deleted.",
+        ),
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function submitHumanReview() {
+    if (!latestCase) return;
+    recordHumanReview.mutate(
+      {
+        review_case_id: latestCase.review_case_id,
+        reviewer_identity: reviewerIdentity,
+        review_decision: reviewDecision,
+        notes: reviewNotes,
+      },
+      {
+        onSuccess: () => {
+          setReviewNotes("");
+          setStatus(
+            "Bounded human review recorded. Publication and workflow resume remain unauthorized.",
+          );
+        },
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-4xl">
+          <p className="text-sm font-semibold text-white">
+            BOBA Output Quality Reviewer V1
+          </p>
+          <p className="text-xs text-muted">
+            BOBA Output Quality Reviewer does not repair or rerender files.
+          </p>
+          <p className="text-xs text-muted">
+            A technically valid output can still be rejected for quality loss,
+            missing story meaning, or unacceptable regression.
+          </p>
+          <p className="text-xs text-muted">
+            Automated creative review is evidence-based but cannot replace
+            every human visual judgment.
+          </p>
+          <p className="text-xs text-amber-100">
+            Acceptance here does not authorize upload, publication, or workflow
+            resume.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !report}
+            onClick={exportArtifact}
+            className="rounded border border-cyan-200/30 px-2.5 py-1.5 text-[11px] text-cyan-100 disabled:opacity-50"
+          >
+            Export safe report
+          </button>
+          <button
+            type="button"
+            disabled={busy || !report}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset reviewer metadata
+          </button>
+        </div>
+      </div>
+
+      <details className="mt-4 rounded border border-white/10 p-3" open={!report}>
+        <summary className="cursor-pointer text-xs font-semibold text-white">
+          START READ-ONLY REVIEW
+        </summary>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <label className="text-xs text-muted">
+            Exact known output reference
+            <input
+              value={effectiveOutputReference}
+              onChange={(event) => setOutputReference(event.target.value)}
+              placeholder="render/project/clips/clip.mp4"
+              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-white"
+            />
+          </label>
+          <label className="text-xs text-muted">
+            Exact baseline reference, when required
+            <input
+              value={baselineReference}
+              onChange={(event) => setBaselineReference(event.target.value)}
+              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-white"
+            />
+          </label>
+          <label className="text-xs text-muted">
+            Review mode
+            <select
+              value={reviewMode}
+              onChange={(event) =>
+                setReviewMode(event.target.value as BobaOutputReviewModeV1)
+              }
+              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+            >
+              <option value="full_available_evidence_review">
+                Full available evidence
+              </option>
+              <option value="local_technical_review">
+                Local technical review
+              </option>
+              <option value="artifact_only">Artifact only</option>
+              <option value="baseline_comparison">Baseline comparison</option>
+              <option value="human_review_preparation">
+                Human review preparation
+              </option>
+            </select>
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-xs text-muted">
+              Rights
+              <select
+                value={rightsStatus}
+                onChange={(event) => setRightsStatus(event.target.value)}
+                className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+              >
+                <option value="unknown">Unknown — block</option>
+                <option value="owned">Owned</option>
+                <option value="licensed">Licensed</option>
+                <option value="permission_granted">Permission granted</option>
+                <option value="blocked">Blocked</option>
+              </select>
+            </label>
+            <label className="text-xs text-muted">
+              Safety
+              <select
+                value={safetyStatus}
+                onChange={(event) => setSafetyStatus(event.target.value)}
+                className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+              >
+                <option value="unknown">Unknown — block</option>
+                <option value="passed">Passed</option>
+                <option value="approved">Approved</option>
+                <option value="blocked">Blocked</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={busy || !effectiveOutputReference}
+          onClick={runReview}
+          className="mt-3 rounded border border-cyan-200/30 px-3 py-2 text-xs text-cyan-100 disabled:opacity-50"
+        >
+          Run registered read-only review
+        </button>
+      </details>
+
+      {status && <p className="mt-3 text-xs text-cyan-100">{status}</p>}
+      {reviewerQuery.isError && (
+        <p className="mt-3 text-xs text-rose-100">
+          Output Quality Reviewer report could not be loaded.
+        </p>
+      )}
+
+      {report && latestCase && (
+        <>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ["Decision", decision?.decision.replace(/_/g, " ") ?? "unknown"],
+              [
+                "Technical",
+                technical?.technical_acceptance_eligible ? "Eligible" : "Blocked",
+              ],
+              [
+                "Creative",
+                creative?.creative_acceptance_eligible ? "Eligible" : "Uncertain",
+              ],
+              ["Confidence", `${Math.round(latestCase.confidence * 100)}%`],
+              ["Rights", latestCase.rights_status],
+              ["Safety", latestCase.safety_status],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="rounded border border-white/10 p-2 text-xs text-muted"
+              >
+                <p className="font-semibold capitalize text-white">{value}</p>
+                <p>{label}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 rounded border border-white/10 p-3 text-xs text-muted">
+            <p className="font-semibold text-white">REVIEW CASE</p>
+            <p className="mt-1 text-white">{latestCase.title}</p>
+            <p className="mt-1">
+              Output:{" "}
+              <span className="font-mono">
+                {artifact?.sanitized_artifact_reference ?? "Not available"}
+              </span>
+            </p>
+            <p>
+              Origin: {latestCase.source_type.replace(/_/g, " ")} ·{" "}
+              {latestCase.source_module || "unknown"} · Mode:{" "}
+              {latestCase.review_mode.replace(/_/g, " ")}
+            </p>
+          </div>
+
+          <details className="mt-3 rounded border border-white/10 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              TECHNICAL CHECKS
+            </summary>
+            <p className="mt-2 text-xs text-muted">
+              Required checks:{" "}
+              {technical?.required_checks_passed ? "Passed" : "Incomplete or failed"} ·
+              Score: {Math.round((technical?.technical_score ?? 0) * 100)}%
+            </p>
+            <div className="mt-2 space-y-1">
+              {technical?.checks.map((check) => (
+                <div
+                  key={check.technical_check_id}
+                  className="flex flex-wrap justify-between gap-2 rounded border border-white/5 px-2 py-1 text-[11px] text-muted"
+                >
+                  <span>
+                    {check.name}
+                    {check.required ? " · required" : " · optional"}
+                  </span>
+                  <span
+                    className={
+                      check.status === "failed" ||
+                      check.status === "unavailable"
+                        ? "text-rose-100"
+                        : check.status === "passed"
+                          ? "text-emerald-100"
+                          : "text-amber-100"
+                    }
+                  >
+                    {check.status.replace(/_/g, " ")}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <RepairPlannerList
+              items={technical?.failed_required_checks ?? []}
+              empty="No failed required technical checks are recorded."
+            />
+            <RepairPlannerList
+              items={technical?.unavailable_required_checks ?? []}
+              empty="No unavailable required technical checks are recorded."
+            />
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              CREATIVE REVIEW
+            </summary>
+            <p className="mt-2 text-xs text-muted">
+              Evidence coverage:{" "}
+              {Math.round((creative?.evidence_coverage ?? 0) * 100)}% ·
+              Creative score is advisory:{" "}
+              {Math.round((creative?.creative_score ?? 0) * 100)}%
+            </p>
+            <div className="mt-2 grid gap-2 lg:grid-cols-2">
+              {creative?.dimensions.map((dimension) => (
+                <div
+                  key={dimension.creative_dimension_id}
+                  className="rounded border border-white/10 p-2 text-xs text-muted"
+                >
+                  <p className="font-semibold capitalize text-white">
+                    {dimension.dimension.replace(/_/g, " ")} ·{" "}
+                    {dimension.status.replace(/_/g, " ")}
+                  </p>
+                  <RepairPlannerList
+                    items={dimension.positive_findings}
+                    empty="No positive finding was proven."
+                  />
+                  <RepairPlannerList
+                    items={dimension.negative_findings}
+                    empty="No negative finding was recorded."
+                  />
+                  {dimension.uncertainty && (
+                    <p className="mt-1 text-amber-100">
+                      Uncertainty: {dimension.uncertainty}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+            <RepairPlannerList
+              items={creative?.subjective_uncertainty ?? []}
+              empty="No additional subjective uncertainty is recorded."
+            />
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              BASELINE COMPARISON
+            </summary>
+            {comparison ? (
+              <div className="mt-2 grid gap-2 text-xs text-muted lg:grid-cols-2">
+                <div>
+                  <p>
+                    Equivalent for required capability:{" "}
+                    {comparison.equivalent_for_required_capability ? "Yes" : "No"}
+                  </p>
+                  <RepairPlannerList
+                    items={comparison.preserved_properties}
+                    empty="No preserved property is recorded."
+                  />
+                  <RepairPlannerList
+                    items={comparison.improved_properties}
+                    empty="No improved property is recorded."
+                  />
+                </div>
+                <div>
+                  <RepairPlannerList
+                    items={comparison.degraded_properties}
+                    empty="No degraded property is recorded."
+                  />
+                  <RepairPlannerList
+                    items={comparison.non_negotiable_regressions}
+                    empty="No non-negotiable regression is recorded."
+                  />
+                  <RepairPlannerList
+                    items={comparison.unknown_properties}
+                    empty="No comparison property remains unknown."
+                  />
+                </div>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-muted">Not available.</p>
+            )}
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              QUALITY REGRESSIONS
+            </summary>
+            <div className="mt-2 space-y-2 text-xs text-muted">
+              {regressions.map((regression) => (
+                <p
+                  key={regression.quality_regression_id}
+                  className="rounded border border-rose-300/20 p-2"
+                >
+                  {regression.category.replace(/_/g, " ")} ·{" "}
+                  {regression.severity} · {regression.acceptance_impact}
+                  {regression.non_negotiable ? " · non-negotiable" : ""}
+                </p>
+              ))}
+              {issues.map((issue) => (
+                <p
+                  key={issue.quality_issue_id}
+                  className="rounded border border-amber-300/20 p-2"
+                >
+                  <span className="font-semibold text-white">{issue.title}</span>
+                  : {issue.summary}
+                </p>
+              ))}
+              {regressions.length === 0 && issues.length === 0 && (
+                <p>No quality regression or issue is recorded.</p>
+              )}
+            </div>
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              DECISION
+            </summary>
+            <p className="mt-2 text-sm font-semibold capitalize text-cyan-100">
+              {decision?.decision.replace(/_/g, " ") ?? "Not available"}
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              {decision?.decision_summary ?? "No decision is available."}
+            </p>
+            <RepairPlannerList
+              items={decision?.rejection_reasons ?? []}
+              empty="No rejection reason is recorded."
+            />
+            <RepairPlannerList
+              items={decision?.disclosed_limitations ?? []}
+              empty="No decision limitation is recorded."
+            />
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              HUMAN REVIEW
+            </summary>
+            <p className="mt-2 text-xs text-muted">
+              {humanPackage?.reason ??
+                "A bounded human-review package is not required for this case."}
+            </p>
+            <RepairPlannerList
+              items={humanPackage?.reviewer_questions ?? []}
+              empty="No reviewer question is recorded."
+            />
+            {humanPackage && (
+              <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                <label className="text-xs text-muted">
+                  Reviewer identifier
+                  <input
+                    value={reviewerIdentity}
+                    onChange={(event) => setReviewerIdentity(event.target.value)}
+                    className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+                  />
+                </label>
+                <label className="text-xs text-muted">
+                  Internal decision
+                  <select
+                    value={reviewDecision}
+                    onChange={(event) =>
+                      setReviewDecision(
+                        event.target.value as typeof reviewDecision,
+                      )
+                    }
+                    className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+                  >
+                    <option value="request_more_evidence">
+                      Request more evidence
+                    </option>
+                    <option value="accept_for_next_internal_stage">
+                      Accept for next internal stage
+                    </option>
+                    <option value="accept_with_disclosed_limitation">
+                      Accept with disclosed limitation
+                    </option>
+                    <option value="reject_output">Reject output</option>
+                    <option value="send_back_to_tool_recovery">
+                      Send back to Tool Recovery
+                    </option>
+                    <option value="send_back_to_repair_planner">
+                      Send back to Repair Planner
+                    </option>
+                  </select>
+                </label>
+                <label className="text-xs text-muted lg:col-span-2">
+                  Bounded notes
+                  <textarea
+                    value={reviewNotes}
+                    onChange={(event) => setReviewNotes(event.target.value)}
+                    maxLength={1000}
+                    className="mt-1 min-h-20 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={busy || !reviewerIdentity.trim()}
+                  onClick={submitHumanReview}
+                  className="rounded border border-cyan-200/30 px-3 py-2 text-xs text-cyan-100 disabled:opacity-50"
+                >
+                  Record internal human review
+                </button>
+              </div>
+            )}
+          </details>
+
+          <details className="mt-3 rounded border border-white/10 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              WHAT HAPPENS NEXT
+            </summary>
+            <div className="mt-2 space-y-2 text-xs text-muted">
+              {handoffs.map((handoff) => (
+                <div
+                  key={handoff.handoff_id}
+                  className="rounded border border-white/10 p-2"
+                >
+                  <p className="font-semibold capitalize text-white">
+                    {handoff.target_module.replace(/_/g, " ")}
+                  </p>
+                  <p>{handoff.reason}</p>
+                  <RepairPlannerList
+                    items={handoff.blocked_actions}
+                    empty="No extra blocked action is recorded."
+                  />
+                </div>
+              ))}
+              {handoffs.length === 0 && <p>No downstream handoff is available.</p>}
+            </div>
+          </details>
+
+          {(latestCase.limitations.length > 0 ||
+            report.limitations.length > 0) && (
+            <p className="mt-3 text-xs text-amber-100">
+              Limitations:{" "}
+              {[...latestCase.limitations, ...report.limitations]
+                .filter(Boolean)
+                .slice(0, 24)
+                .join("; ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipCard({
   projectId,
   render,
@@ -10839,6 +11486,9 @@ export function ResultsSection({
   const repairPlannerPanel = <BobaRepairPlannerPanel projectId={projectId} />;
   const codeSurgeonPanel = <BobaCodeSurgeonPanel projectId={projectId} />;
   const toolRecoveryPanel = <BobaToolRecoveryPanel projectId={projectId} />;
+  const outputQualityReviewerPanel = (
+    <BobaOutputQualityReviewerPanel projectId={projectId} renders={renders} />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -10870,6 +11520,7 @@ export function ResultsSection({
         {repairPlannerPanel}
         {codeSurgeonPanel}
         {toolRecoveryPanel}
+        {outputQualityReviewerPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -10913,6 +11564,7 @@ export function ResultsSection({
         {repairPlannerPanel}
         {codeSurgeonPanel}
         {toolRecoveryPanel}
+        {outputQualityReviewerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -10952,6 +11604,7 @@ export function ResultsSection({
         {repairPlannerPanel}
         {codeSurgeonPanel}
         {toolRecoveryPanel}
+        {outputQualityReviewerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -10991,6 +11644,7 @@ export function ResultsSection({
       {repairPlannerPanel}
       {codeSurgeonPanel}
       {toolRecoveryPanel}
+      {outputQualityReviewerPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

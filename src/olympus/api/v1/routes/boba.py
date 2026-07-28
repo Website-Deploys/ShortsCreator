@@ -27,6 +27,10 @@ from olympus.boba.experimentation import BobaExperimentOutcomeLabel
 from olympus.boba.global_memory import build_and_save_global_memory
 from olympus.boba.memory_contracts import BobaMemoryQueryV1
 from olympus.boba.memory_learning import BobaMemoryLearner
+from olympus.boba.output_quality_reviewer import (
+    BobaOutputComparisonBasisV1,
+    BobaOutputReviewModeV1,
+)
 from olympus.boba.performance_feedback import (
     BobaManualPerformanceMetricsV1,
     BobaPerformanceEventType,
@@ -334,6 +338,69 @@ class ToolRecoveryRollbackRequest(BaseModel):
 
     recovery_attempt_id: str = Field(min_length=1, max_length=160)
     trigger: str = Field(min_length=1, max_length=900)
+
+
+class OutputQualityReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    output_reference: str = Field(min_length=1, max_length=500)
+    baseline_reference: str | None = Field(default=None, max_length=500)
+    review_mode: BobaOutputReviewModeV1 = (
+        "full_available_evidence_review"
+    )
+    rights_status: str = Field(min_length=1, max_length=80)
+    safety_status: str = Field(min_length=1, max_length=80)
+    workflow_stage: str = Field(default="quality_review", max_length=160)
+    comparison_basis: BobaOutputComparisonBasisV1 = "unknown"
+    required_quality_properties: list[str] = Field(
+        default_factory=list,
+        max_length=64,
+    )
+    non_negotiable_requirements: list[str] = Field(
+        default_factory=list,
+        max_length=64,
+    )
+    output_modification_requested: Literal[False] = False
+    source_modification_requested: Literal[False] = False
+    network_review_requested: Literal[False] = False
+
+
+class OutputQualityCompareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    output_reference: str = Field(min_length=1, max_length=500)
+    baseline_reference: str = Field(min_length=1, max_length=500)
+    rights_status: str = Field(min_length=1, max_length=80)
+    safety_status: str = Field(min_length=1, max_length=80)
+    comparison_basis: BobaOutputComparisonBasisV1 = "unknown"
+    required_quality_properties: list[str] = Field(
+        default_factory=list,
+        max_length=64,
+    )
+    non_negotiable_requirements: list[str] = Field(
+        default_factory=list,
+        max_length=64,
+    )
+    output_modification_requested: Literal[False] = False
+    source_modification_requested: Literal[False] = False
+    network_review_requested: Literal[False] = False
+
+
+class OutputQualityHumanReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_case_id: str = Field(min_length=1, max_length=160)
+    reviewer_identity: str = Field(min_length=1, max_length=160)
+    review_decision: Literal[
+        "accept_for_next_internal_stage",
+        "accept_with_disclosed_limitation",
+        "reject_output",
+        "send_back_to_tool_recovery",
+        "send_back_to_repair_planner",
+        "request_more_evidence",
+    ]
+    answers: dict[str, Any] = Field(default_factory=dict, max_length=16)
+    notes: str = Field(default="", max_length=1_000)
 
 
 class ScoutScoreRequest(BaseModel):
@@ -1962,6 +2029,138 @@ async def reset_tool_recovery_report(
         "processes_killed": False,
         "workflow_resumed": False,
         "code_modified": False,
+    }
+
+
+@router.post("/projects/{project_id}/output-quality-reviewer/review")
+async def create_output_quality_review(
+    project_id: str,
+    body: OutputQualityReviewRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.generate_boba_output_quality_review(
+        project_id,
+        output_reference=body.output_reference,
+        baseline_reference=body.baseline_reference,
+        review_mode=body.review_mode,
+        rights_status=body.rights_status,
+        safety_status=body.safety_status,
+        workflow_stage=body.workflow_stage,
+        comparison_basis=body.comparison_basis,
+        required_quality_properties=body.required_quality_properties,
+        non_negotiable_requirements=body.non_negotiable_requirements,
+        output_modification_requested=body.output_modification_requested,
+        source_modification_requested=body.source_modification_requested,
+        network_review_requested=body.network_review_requested,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/output-quality-reviewer/compare")
+async def compare_output_quality(
+    project_id: str,
+    body: OutputQualityCompareRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.compare_boba_output_quality_baseline(
+        project_id,
+        output_reference=body.output_reference,
+        baseline_reference=body.baseline_reference,
+        rights_status=body.rights_status,
+        safety_status=body.safety_status,
+        comparison_basis=body.comparison_basis,
+        required_quality_properties=body.required_quality_properties,
+        non_negotiable_requirements=body.non_negotiable_requirements,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/output-quality-reviewer/human-review")
+async def record_output_quality_human_review(
+    project_id: str,
+    body: OutputQualityHumanReviewRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = await boba.record_boba_output_human_review(
+        project_id,
+        review_case_id=body.review_case_id,
+        reviewer_identity=body.reviewer_identity,
+        review_decision=body.review_decision,
+        answers=body.answers,
+        notes=body.notes,
+    )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/output-quality-reviewer")
+async def get_output_quality_reviewer(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    report = boba.load_boba_output_quality_reviewer(project_id)
+    if report is None:
+        raise NotFoundError(
+            "BOBA Output Quality Reviewer V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return report.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/output-quality-reviewer/export")
+async def export_output_quality_reviewer(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if boba.load_boba_output_quality_reviewer(project_id) is None:
+        raise NotFoundError(
+            "BOBA Output Quality Reviewer V1 is not available for export.",
+            details={"project_id": project_id},
+        )
+    return boba.export_boba_output_quality_reviewer(project_id)
+
+
+@router.delete("/projects/{project_id}/output-quality-reviewer")
+async def reset_output_quality_reviewer(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_boba_output_quality_reviewer(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "output_quality_reviewer_removed": removed,
+        "reviewed_output_deleted": False,
+        "source_media_deleted": False,
+        "tool_recovery_artifact_deleted": False,
+        "code_surgeon_artifact_deleted": False,
+        "render_manifest_deleted": False,
+        "sample_evidence_deleted": False,
+        "commands_executed": False,
+        "rendering_used": False,
+        "fallback_execution_used": False,
+        "workflow_resumed": False,
+        "network_access_used": False,
+        "uploading_used": False,
+        "publication_used": False,
+        "destructive_action_used": False,
     }
 
 
