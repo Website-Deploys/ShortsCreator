@@ -141,6 +141,14 @@ from olympus.boba.root_cause_analyzer import (
     BobaRootCauseAnalyzerSetV1,
     BobaRootCauseAnalyzerV1,
 )
+from olympus.boba.safety_gate import (
+    BobaSafetyActionRequestV1,
+    BobaSafetyDecisionInvalidationV1,
+    BobaSafetyDecisionV1,
+    BobaSafetyEvaluationCaseV1,
+    BobaSafetyGateSetV1,
+    BobaSafetyGateV1,
+)
 from olympus.boba.scout import BobaScout
 from olympus.boba.store import BobaMemoryStore
 from olympus.boba.tool_recovery import (
@@ -234,6 +242,10 @@ class BobaIntegration:
             ffmpeg_binary=runtime_settings.rendering.ffmpeg_binary,
             ffprobe_binary=runtime_settings.rendering.ffprobe_binary,
         )
+        self.safety_gate = BobaSafetyGateV1(
+            store,
+            context_provider=self._safety_context,
+        )
         self.creative_director = BobaCreativeDirector(store)
         self.creative_director_v2 = BobaCreativeDirectorV2Engine()
         self.clip_brief_generator = BobaClipBriefGeneratorV1()
@@ -254,6 +266,7 @@ class BobaIntegration:
             store,
             context_provider=self._autopilot_context,
             module_invoker=self._invoke_autopilot_typed_module,
+            safety_decision_validator=self.safety_gate.validate_for_autopilot,
         )
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
@@ -265,6 +278,17 @@ class BobaIntegration:
             and self.store.load_global_memory() is None
         ):
             build_and_save_global_memory(self.store)
+
+    def _safety_context(
+        self,
+        _project_id: str,
+        _request: BobaSafetyActionRequestV1,
+    ) -> dict[str, Any]:
+        available_validators = {
+            *self.repair_planner.validator_registry,
+            *self.output_quality_reviewer.validator_registry,
+        }
+        return {"available_validators": sorted(available_validators)}
 
     def _creator_learning_artifacts(self, project_id: str) -> dict[str, Any]:
         return {
@@ -2876,12 +2900,14 @@ class BobaIntegration:
         *,
         action_id: str,
         approval_record: dict[str, Any],
+        safety_decision_id: str,
     ) -> BobaAutopilotControllerSetV1:
         return await self.autopilot_controller.coordinate_approved_action(
             project_id,
             run_id,
             action_id=action_id,
             approval_record=approval_record,
+            safety_decision_id=safety_decision_id,
         )
 
     def pause_boba_autopilot_run(
@@ -2963,6 +2989,121 @@ class BobaIntegration:
 
     def reset_boba_autopilot_controller(self, project_id: str) -> bool:
         return self.autopilot_controller.reset_run_metadata(project_id)
+
+    async def create_boba_safety_policy_snapshot(
+        self,
+        project_id: str,
+        *,
+        project_policy: dict[str, Any] | None = None,
+    ) -> BobaSafetyGateSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        return self.safety_gate.create_policy_snapshot(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+            project_policy=project_policy,
+        )
+
+    async def create_boba_safety_action_request(
+        self,
+        project_id: str,
+        **kwargs: Any,
+    ) -> BobaSafetyActionRequestV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        return self.safety_gate.create_action_request(project_id, **kwargs)
+
+    async def evaluate_boba_safety_action(
+        self,
+        project_id: str,
+        action_request_id: str,
+        *,
+        approval_record: dict[str, Any] | None = None,
+    ) -> BobaSafetyDecisionV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        return self.safety_gate.evaluate_action(
+            project_id,
+            action_request_id,
+            approval_record=approval_record,
+        )
+
+    def inspect_boba_safety_evaluation(
+        self,
+        project_id: str,
+        case_id: str,
+    ) -> BobaSafetyEvaluationCaseV1:
+        case = self.store.load_boba_safety_evaluation(project_id, case_id)
+        if case is None:
+            raise NotFoundError(
+                "BOBA Safety Gate evaluation was not found.",
+                details={"case_id": case_id},
+            )
+        return case
+
+    def inspect_boba_safety_decision(
+        self,
+        project_id: str,
+        decision_id: str,
+    ) -> BobaSafetyDecisionV1:
+        return self.safety_gate.inspect_decision(project_id, decision_id)
+
+    def revalidate_boba_safety_decision(
+        self,
+        project_id: str,
+        decision_id: str,
+        *,
+        approval_record: dict[str, Any] | None = None,
+        current_bindings: dict[str, Any] | None = None,
+    ) -> BobaSafetyDecisionV1:
+        return self.safety_gate.revalidate_decision(
+            project_id,
+            decision_id,
+            approval_record=approval_record,
+            current_bindings=current_bindings,
+        )
+
+    def invalidate_boba_safety_decision(
+        self,
+        project_id: str,
+        decision_id: str,
+        *,
+        reason: str,
+        changes: dict[str, bool] | None = None,
+    ) -> BobaSafetyDecisionInvalidationV1:
+        return self.safety_gate.invalidate_decision(
+            project_id,
+            decision_id,
+            reason=reason,
+            changes=changes,
+        )
+
+    def record_boba_human_safety_review(
+        self,
+        project_id: str,
+        case_id: str,
+        **kwargs: Any,
+    ) -> BobaSafetyDecisionV1:
+        return self.safety_gate.record_human_safety_review(
+            project_id,
+            case_id,
+            **kwargs,
+        )
+
+    def load_boba_safety_gate(
+        self,
+        project_id: str,
+    ) -> BobaSafetyGateSetV1 | None:
+        return self.store.load_boba_safety_gate(project_id)
+
+    def export_boba_safety_gate(self, project_id: str) -> dict[str, Any]:
+        return self.safety_gate.export_safety_gate(project_id)
+
+    def reset_boba_safety_gate(self, project_id: str) -> bool:
+        return self.safety_gate.reset_safety_gate_metadata(project_id)
 
     async def generate_boba_for_clip(
         self, project_id: str, clip_id: str

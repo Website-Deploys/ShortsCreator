@@ -102,6 +102,13 @@ import type {
   BobaRootCauseAnalyzerSetV1,
   BobaRightsPermissionGateGenerateInputV1,
   BobaRightsPermissionGateSetV1,
+  BobaSafetyActionInputV1,
+  BobaSafetyActionRequestV1,
+  BobaSafetyDecisionV1,
+  BobaSafetyEvaluationCaseV1,
+  BobaSafetyGateSetV1,
+  BobaSafetyHumanReviewInputV1,
+  BobaSafetyPolicySnapshotV1,
   BobaCandidateV1,
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
@@ -853,6 +860,118 @@ export const api = {
       workflow_resumed: false;
       publication_used: false;
     }>(`/boba/projects/${projectId}/autopilot`, {
+      method: "DELETE",
+    }),
+  getBobaSafetyGate: (projectId: string) =>
+    request<BobaSafetyGateSetV1>(
+      `/boba/projects/${projectId}/safety-gate`,
+    ),
+  createBobaSafetyPolicy: (
+    projectId: string,
+    projectPolicy: Record<string, unknown> = {},
+  ) =>
+    request<BobaSafetyPolicySnapshotV1>(
+      `/boba/projects/${projectId}/safety-gate/policies`,
+      {
+        method: "POST",
+        body: JSON.stringify({ project_policy: projectPolicy }),
+      },
+    ),
+  createBobaSafetyRequest: (
+    projectId: string,
+    input: BobaSafetyActionInputV1,
+  ) =>
+    request<BobaSafetyActionRequestV1>(
+      `/boba/projects/${projectId}/safety-gate/requests`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  evaluateBobaSafetyRequest: (
+    projectId: string,
+    actionRequestId: string,
+    approvalRecord?: Record<string, unknown>,
+  ) =>
+    request<BobaSafetyDecisionV1>(
+      `/boba/projects/${projectId}/safety-gate/evaluate`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          action_request_id: actionRequestId,
+          approval_record: approvalRecord,
+        }),
+      },
+    ),
+  revalidateBobaSafetyDecision: (
+    projectId: string,
+    decisionId: string,
+    approvalRecord?: Record<string, unknown>,
+    currentBindings: Record<string, unknown> = {},
+  ) =>
+    request<BobaSafetyDecisionV1>(
+      `/boba/projects/${projectId}/safety-gate/decisions/${decisionId}/revalidate`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          approval_record: approvalRecord,
+          current_bindings: currentBindings,
+        }),
+      },
+    ),
+  invalidateBobaSafetyDecision: (
+    projectId: string,
+    decisionId: string,
+    reason: string,
+  ) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/safety-gate/decisions/${decisionId}/invalidate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason, changes: {} }),
+      },
+    ),
+  recordBobaSafetyHumanReview: (
+    projectId: string,
+    caseId: string,
+    input: BobaSafetyHumanReviewInputV1,
+  ) =>
+    request<BobaSafetyDecisionV1>(
+      `/boba/projects/${projectId}/safety-gate/evaluations/${caseId}/human-review`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  getBobaSafetyEvaluation: (projectId: string, caseId: string) =>
+    request<BobaSafetyEvaluationCaseV1>(
+      `/boba/projects/${projectId}/safety-gate/evaluations/${caseId}`,
+    ),
+  getBobaSafetyDecision: (projectId: string, decisionId: string) =>
+    request<BobaSafetyDecisionV1>(
+      `/boba/projects/${projectId}/safety-gate/decisions/${decisionId}`,
+    ),
+  exportBobaSafetyGate: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/safety-gate/export`,
+    ),
+  resetBobaSafetyGate: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      safety_gate_summary_removed: boolean;
+      immutable_policy_history_deleted: false;
+      immutable_decision_history_deleted: false;
+      upstream_boba_artifacts_deleted: false;
+      approvals_deleted: false;
+      source_media_deleted: false;
+      accepted_outputs_deleted: false;
+      autopilot_history_deleted: false;
+      workflow_resumed: false;
+      checkpoint_restored: false;
+      publication_used: false;
+      action_execution_used: false;
+    }>(`/boba/projects/${projectId}/safety-gate`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>

@@ -4870,6 +4870,7 @@ export interface BobaAutopilotActionV1 {
   rationale: string;
   parameters: Record<string, unknown>;
   approval_binding_id: string | null;
+  safety_decision_id: string | null;
   budget_cost: Record<string, number>;
   risk_level: string;
   status: string;
@@ -5082,6 +5083,7 @@ export interface BobaAutopilotCreateRunInputV1 {
 
 export interface BobaAutopilotCoordinateInputV1 {
   action_id: string;
+  safety_decision_id: string;
   approval_record: Record<string, unknown>;
 }
 
@@ -5100,6 +5102,351 @@ export interface BobaAutopilotHumanDecisionInputV1 {
   reviewer_identity: string;
   action_id?: string;
   selected_alternative_id?: string;
+}
+
+export interface BobaSafetyPolicySnapshotV1 {
+  policy_snapshot_id: string;
+  policy_version: string;
+  created_at: string;
+  protected_actions: string[];
+  prohibited_actions: string[];
+  future_gated_actions: string[];
+  allowlisted_modules: string[];
+  allowlisted_operations: Record<string, string[]>;
+  protected_paths: string[];
+  protected_branches: string[];
+  decision_ttl_seconds: Record<string, number>;
+  policy_sha256: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaSafetyActionRequestV1 {
+  action_request_id: string;
+  project_id: string;
+  autopilot_run_id: string;
+  autopilot_action_id: string;
+  requesting_module: string;
+  target_module: string;
+  target_operation: string;
+  action_class: string;
+  action_description: string;
+  action_parameters_digest: string;
+  project_snapshot_id: string;
+  project_snapshot_digest: string;
+  plan_id: string;
+  strategy_id: string;
+  approval_record_id: string;
+  patch_proposal_id: string;
+  patch_diff_sha256: string;
+  code_base_sha: string;
+  tool_id: string;
+  capability_id: string;
+  configuration_digest: string;
+  checkpoint_reference: string;
+  checkpoint_digest: string;
+  rollback_plan_id: string;
+  validation_plan_id: string;
+  quality_plan_id: string;
+  retry_budget_digest: string;
+  time_budget_seconds: number;
+  requested_at: string;
+  requested_by: string;
+  request_digest: string;
+  warnings: string[];
+}
+
+export interface BobaSafetyEvaluationCaseV1 {
+  safety_case_id: string;
+  project_id: string;
+  autopilot_run_id: string;
+  action_request_id: string;
+  title: string;
+  target_module: string;
+  target_operation: string;
+  action_class: string;
+  evaluation_status: string;
+  project_snapshot_id: string;
+  project_snapshot_digest: string;
+  policy_snapshot_id: string;
+  rights_review_id: string;
+  approval_review_id: string;
+  checkpoint_review_id: string;
+  validation_review_id: string;
+  quality_review_id: string;
+  risk_assessment_id: string;
+  constraint_check_ids: string[];
+  safety_decision_id: string;
+  human_review_required: boolean;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaSafetyConstraintCheckV1 {
+  constraint_check_id: string;
+  safety_case_id: string;
+  constraint_type: string;
+  name: string;
+  required: boolean;
+  status: string;
+  observed_value: unknown;
+  expected_value: unknown;
+  evidence_ids: string[];
+  blocks_allowance: boolean;
+  failure_reason: string;
+  human_review_required: boolean;
+  warnings: string[];
+}
+
+export interface BobaSafetyApprovalReviewV1 {
+  approval_review_id: string;
+  safety_case_id: string;
+  approval_record_id: string;
+  target_module: string;
+  approval_type: string;
+  approval_found: boolean;
+  explicit_confirmation: boolean;
+  approved: boolean;
+  approved_at: string | null;
+  expires_at: string | null;
+  expired: boolean;
+  approved_scope: string[];
+  expected_scope: string[];
+  scope_match: boolean;
+  parameters_match: boolean;
+  snapshot_match: boolean;
+  exact_binding_valid: boolean;
+  independent_target_revalidation_required: true;
+  failure_reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaSafetyRightsReviewV1 {
+  rights_review_id: string;
+  safety_case_id: string;
+  rights_status: string;
+  permission_status: string;
+  source_provenance_status: string;
+  processing_scope_allowed: string[];
+  external_processing_allowed: false;
+  upload_allowed: false;
+  publication_allowed: false;
+  unknown_rights_present: boolean;
+  blocked_rights_present: boolean;
+  human_rights_review_required: boolean;
+  rights_clear_for_requested_internal_action: boolean;
+  failure_reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaSafetyCheckpointReviewV1 {
+  checkpoint_review_id: string;
+  safety_case_id: string;
+  checkpoint_required: boolean;
+  checkpoint_reference: string;
+  checkpoint_status: string;
+  checkpoint_validated: boolean;
+  checkpoint_fresh: boolean;
+  state_preservation_ready: boolean;
+  rollback_plan_present: boolean;
+  rollback_ready: boolean;
+  source_media_protected: boolean;
+  accepted_outputs_protected: boolean;
+  blocks_action: boolean;
+  failure_reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaSafetyValidationReadinessV1 {
+  validation_review_id: string;
+  safety_case_id: string;
+  validation_plan_id: string;
+  required_validators: string[];
+  available_validators: string[];
+  unavailable_validators: string[];
+  skipped_required_checks: string[];
+  required_checks_defined: boolean;
+  required_checks_available: boolean;
+  validation_ready: boolean;
+  failure_reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaSafetyQualityReviewV1 {
+  quality_review_id: string;
+  safety_case_id: string;
+  quality_plan_id: string;
+  output_quality_decision_id: string;
+  non_negotiable_requirements: string[];
+  acceptable_disclosed_degradations: string[];
+  unacceptable_degradations: string[];
+  baseline_required: boolean;
+  baseline_available: boolean;
+  quality_review_required: boolean;
+  human_quality_review_required: boolean;
+  non_negotiable_regression_present: boolean;
+  silent_quality_reduction_detected: boolean;
+  quality_requirements_match_request: boolean;
+  quality_clear_for_requested_action: boolean;
+  failure_reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaSafetyRiskAssessmentV1 {
+  risk_assessment_id: string;
+  safety_case_id: string;
+  risk_factors: Array<{
+    risk_factor_id: string;
+    category: string;
+    title: string;
+    summary: string;
+    severity: string;
+    likelihood: string;
+    mitigations: string[];
+    residual_risk: string;
+    blocking: boolean;
+    human_review_required: boolean;
+    warnings: string[];
+  }>;
+  overall_risk_level: string;
+  overall_risk_score: number;
+  risk_threshold: number;
+  risk_within_threshold: boolean;
+  critical_risk_present: boolean;
+  blocked_risk_present: boolean;
+  human_review_required: boolean;
+  failure_reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaSafetyDecisionV1 {
+  safety_decision_id: string;
+  safety_case_id: string;
+  action_request_id: string;
+  project_id: string;
+  autopilot_run_id: string;
+  decision: string;
+  decision_summary: string;
+  allowed_action_class: string;
+  allowed_target_module: string;
+  allowed_target_operation: string;
+  allowed_scope: string[];
+  project_snapshot_digest: string;
+  request_digest: string;
+  policy_snapshot_digest: string;
+  approval_record_id: string;
+  decision_created_at: string;
+  decision_expires_at: string;
+  decision_expired: boolean;
+  decision_valid: boolean;
+  conditions: string[];
+  unmet_conditions: string[];
+  denial_reasons: string[];
+  human_review_required: boolean;
+  target_module_revalidation_required: boolean;
+  workflow_resume_authorized: false;
+  checkpoint_restore_authorized: false;
+  upload_authorized: false;
+  publication_authorized: false;
+  push_authorized: false;
+  merge_authorized: false;
+  deployment_authorized: false;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaSafetyGateSetV1 {
+  schema_version: "boba_safety_gate_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  policy_snapshot: BobaSafetyPolicySnapshotV1;
+  evaluation_cases: BobaSafetyEvaluationCaseV1[];
+  action_requests: BobaSafetyActionRequestV1[];
+  evidence_records: Array<Record<string, unknown>>;
+  constraint_checks: BobaSafetyConstraintCheckV1[];
+  approval_reviews: BobaSafetyApprovalReviewV1[];
+  rights_reviews: BobaSafetyRightsReviewV1[];
+  checkpoint_reviews: BobaSafetyCheckpointReviewV1[];
+  validation_reviews: BobaSafetyValidationReadinessV1[];
+  quality_reviews: BobaSafetyQualityReviewV1[];
+  risk_assessments: BobaSafetyRiskAssessmentV1[];
+  safety_decisions: BobaSafetyDecisionV1[];
+  decision_invalidations: Array<{
+    invalidation_id: string;
+    safety_decision_id: string;
+    invalidated_at: string;
+    invalidation_reason: string;
+    warnings: string[];
+  }>;
+  handoffs: Array<{
+    handoff_id: string;
+    safety_case_id: string;
+    safety_decision_id: string;
+    target_module: string;
+    reason: string;
+    required_inputs: string[];
+    satisfied_conditions: string[];
+    failed_conditions: string[];
+    unresolved_questions: string[];
+    constraints: string[];
+    prohibited_actions: string[];
+    apply_automatically: boolean;
+    human_approval_required: boolean;
+    priority: string;
+    warnings: string[];
+  }>;
+  gate_summary: Record<string, number | string | string[]>;
+  signal_usage: Record<string, boolean | string[]>;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaSafetyActionInputV1 {
+  autopilot_run_id?: string;
+  autopilot_action_id?: string;
+  requesting_module?: string;
+  target_module: string;
+  target_operation: string;
+  action_class?: string;
+  action_description: string;
+  action_parameters?: Record<string, unknown>;
+  project_snapshot_id?: string;
+  project_snapshot_digest?: string;
+  plan_id?: string;
+  strategy_id?: string;
+  approval_record_id?: string;
+  patch_proposal_id?: string;
+  patch_diff_sha256?: string;
+  code_base_sha?: string;
+  tool_id?: string;
+  capability_id?: string;
+  configuration_digest?: string;
+  checkpoint_reference?: string;
+  checkpoint_digest?: string;
+  rollback_plan_id?: string;
+  validation_plan_id?: string;
+  quality_plan_id?: string;
+  retry_budget_digest?: string;
+  time_budget_seconds?: number;
+  requested_by?: string;
+}
+
+export interface BobaSafetyHumanReviewInputV1 {
+  decision:
+    | "approve_exact_medium_risk_action"
+    | "deny_action"
+    | "request_more_evidence"
+    | "acknowledge_disclosed_limitation"
+    | "approve_stricter_budget_reset"
+    | "select_safer_alternative"
+    | "keep_project_paused";
+  reason: string;
+  reviewer_identity: string;
+  request_digest: string;
+  project_snapshot_digest: string;
 }
 
 export interface BobaCreativeBriefV1 {

@@ -81,6 +81,11 @@ import type {
   BobaRootCauseAnalyzerSetV1,
   BobaRightsPermissionGateGenerateInputV1,
   BobaRightsPermissionGateSetV1,
+  BobaSafetyActionInputV1,
+  BobaSafetyActionRequestV1,
+  BobaSafetyDecisionV1,
+  BobaSafetyGateSetV1,
+  BobaSafetyHumanReviewInputV1,
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
   BobaClipRankingV1,
@@ -152,6 +157,8 @@ export const queryKeys = {
     ["boba", "projects", id, "output-quality-reviewer"] as const,
   bobaAutopilot: (id: string) =>
     ["boba", "projects", id, "autopilot"] as const,
+  bobaSafetyGate: (id: string) =>
+    ["boba", "projects", id, "safety-gate"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -1127,6 +1134,147 @@ export function useResetBobaAutopilot(projectId: string) {
     mutationFn: () => api.resetBobaAutopilot(projectId),
     onSuccess: () => {
       queryClient.setQueryData(queryKeys.bobaAutopilot(projectId), null);
+    },
+  });
+}
+
+export function useBobaSafetyGate(projectId: string) {
+  return useQuery<BobaSafetyGateSetV1 | null>({
+    queryKey: queryKeys.bobaSafetyGate(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaSafetyGate(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useCreateBobaSafetyPolicy(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (projectPolicy: Record<string, unknown> = {}) =>
+      api.createBobaSafetyPolicy(projectId, projectPolicy),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaSafetyGate(projectId),
+      });
+    },
+  });
+}
+
+export function useCreateBobaSafetyRequest(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<BobaSafetyActionRequestV1, Error, BobaSafetyActionInputV1>({
+    mutationFn: (input) => api.createBobaSafetyRequest(projectId, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaSafetyGate(projectId),
+      });
+    },
+  });
+}
+
+export function useEvaluateBobaSafetyRequest(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<
+    BobaSafetyDecisionV1,
+    Error,
+    {
+      actionRequestId: string;
+      approvalRecord?: Record<string, unknown>;
+    }
+  >({
+    mutationFn: ({ actionRequestId, approvalRecord }) =>
+      api.evaluateBobaSafetyRequest(
+        projectId,
+        actionRequestId,
+        approvalRecord,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaSafetyGate(projectId),
+      });
+    },
+  });
+}
+
+export function useRevalidateBobaSafetyDecision(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<
+    BobaSafetyDecisionV1,
+    Error,
+    {
+      decisionId: string;
+      approvalRecord?: Record<string, unknown>;
+      currentBindings?: Record<string, unknown>;
+    }
+  >({
+    mutationFn: ({ decisionId, approvalRecord, currentBindings }) =>
+      api.revalidateBobaSafetyDecision(
+        projectId,
+        decisionId,
+        approvalRecord,
+        currentBindings,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaSafetyGate(projectId),
+      });
+    },
+  });
+}
+
+export function useInvalidateBobaSafetyDecision(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      decisionId,
+      reason,
+    }: {
+      decisionId: string;
+      reason: string;
+    }) => api.invalidateBobaSafetyDecision(projectId, decisionId, reason),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaSafetyGate(projectId),
+      });
+    },
+  });
+}
+
+export function useRecordBobaSafetyHumanReview(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<
+    BobaSafetyDecisionV1,
+    Error,
+    { caseId: string; input: BobaSafetyHumanReviewInputV1 }
+  >({
+    mutationFn: ({ caseId, input }) =>
+      api.recordBobaSafetyHumanReview(projectId, caseId, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaSafetyGate(projectId),
+      });
+    },
+  });
+}
+
+export function useExportBobaSafetyGate(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaSafetyGate(projectId),
+  });
+}
+
+export function useResetBobaSafetyGate(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaSafetyGate(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(queryKeys.bobaSafetyGate(projectId), null);
     },
   });
 }

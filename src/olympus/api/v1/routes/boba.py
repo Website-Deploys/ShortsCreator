@@ -447,6 +447,7 @@ class AutopilotCoordinateApprovedRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action_id: str = Field(min_length=1, max_length=180)
+    safety_decision_id: str = Field(min_length=1, max_length=180)
     approval_record: dict[str, Any]
 
 
@@ -474,6 +475,87 @@ class AutopilotHumanDecisionRequest(BaseModel):
     reviewer_identity: str = Field(min_length=1, max_length=160)
     action_id: str | None = Field(default=None, max_length=180)
     selected_alternative_id: str | None = Field(default=None, max_length=180)
+
+
+class SafetyPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_policy: dict[str, Any] = Field(default_factory=dict, max_length=64)
+
+
+class SafetyActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    autopilot_run_id: str = Field(default="", max_length=180)
+    autopilot_action_id: str = Field(default="", max_length=180)
+    requesting_module: str = Field(
+        default="autopilot_controller",
+        min_length=1,
+        max_length=160,
+    )
+    target_module: str = Field(min_length=1, max_length=160)
+    target_operation: str = Field(min_length=1, max_length=160)
+    action_class: str = Field(default="unknown", max_length=80)
+    action_description: str = Field(min_length=1, max_length=700)
+    action_parameters: dict[str, Any] = Field(default_factory=dict, max_length=64)
+    project_snapshot_id: str = Field(default="", max_length=180)
+    project_snapshot_digest: str = Field(default="", max_length=64)
+    plan_id: str = Field(default="", max_length=180)
+    strategy_id: str = Field(default="", max_length=180)
+    approval_record_id: str = Field(default="", max_length=180)
+    patch_proposal_id: str = Field(default="", max_length=180)
+    patch_diff_sha256: str = Field(default="", max_length=64)
+    code_base_sha: str = Field(default="", max_length=64)
+    tool_id: str = Field(default="", max_length=180)
+    capability_id: str = Field(default="", max_length=180)
+    configuration_digest: str = Field(default="", max_length=64)
+    checkpoint_reference: str = Field(default="", max_length=500)
+    checkpoint_digest: str = Field(default="", max_length=128)
+    rollback_plan_id: str = Field(default="", max_length=180)
+    validation_plan_id: str = Field(default="", max_length=180)
+    quality_plan_id: str = Field(default="", max_length=180)
+    retry_budget_digest: str = Field(default="", max_length=64)
+    time_budget_seconds: int = Field(default=0, ge=0, le=3_600)
+    requested_by: str = Field(default="autopilot_controller", max_length=160)
+
+
+class SafetyEvaluateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_request_id: str = Field(min_length=1, max_length=180)
+    approval_record: dict[str, Any] | None = None
+
+
+class SafetyRevalidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approval_record: dict[str, Any] | None = None
+    current_bindings: dict[str, Any] = Field(default_factory=dict, max_length=32)
+
+
+class SafetyInvalidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=900)
+    changes: dict[str, bool] = Field(default_factory=dict, max_length=32)
+
+
+class SafetyHumanReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal[
+        "approve_exact_medium_risk_action",
+        "deny_action",
+        "request_more_evidence",
+        "acknowledge_disclosed_limitation",
+        "approve_stricter_budget_reset",
+        "select_safer_alternative",
+        "keep_project_paused",
+    ]
+    reason: str = Field(min_length=1, max_length=900)
+    reviewer_identity: str = Field(min_length=1, max_length=160)
+    request_digest: str = Field(min_length=64, max_length=64)
+    project_snapshot_digest: str = Field(min_length=64, max_length=64)
 
 
 def _require_enabled(settings: SettingsDep) -> None:
@@ -2281,6 +2363,7 @@ async def coordinate_autopilot_approved_action(
         run_id,
         action_id=body.action_id,
         approval_record=body.approval_record,
+        safety_decision_id=body.safety_decision_id,
     )
     return controller.model_dump(mode="json")
 
@@ -2462,6 +2545,206 @@ async def reset_autopilot_controller(
         "checkpoints_deleted": False,
         "workflow_resumed": False,
         "publication_used": False,
+    }
+
+
+@router.post("/projects/{project_id}/safety-gate/policies")
+async def create_safety_gate_policy(
+    project_id: str,
+    body: SafetyPolicyRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    gate = await boba.create_boba_safety_policy_snapshot(
+        project_id,
+        project_policy=body.project_policy or None,
+    )
+    return gate.policy_snapshot.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/safety-gate/requests")
+async def create_safety_gate_request(
+    project_id: str,
+    body: SafetyActionRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    request = await boba.create_boba_safety_action_request(
+        project_id,
+        **body.model_dump(mode="python"),
+    )
+    return request.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/safety-gate/evaluate")
+async def evaluate_safety_gate_request(
+    project_id: str,
+    body: SafetyEvaluateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    decision = await boba.evaluate_boba_safety_action(
+        project_id,
+        body.action_request_id,
+        approval_record=body.approval_record,
+    )
+    return decision.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/safety-gate/decisions/{decision_id}/revalidate"
+)
+async def revalidate_safety_gate_decision(
+    project_id: str,
+    decision_id: str,
+    body: SafetyRevalidateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    decision = boba.revalidate_boba_safety_decision(
+        project_id,
+        decision_id,
+        approval_record=body.approval_record,
+        current_bindings=body.current_bindings or None,
+    )
+    return decision.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/safety-gate/decisions/{decision_id}/invalidate"
+)
+async def invalidate_safety_gate_decision(
+    project_id: str,
+    decision_id: str,
+    body: SafetyInvalidateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    invalidation = boba.invalidate_boba_safety_decision(
+        project_id,
+        decision_id,
+        reason=body.reason,
+        changes=body.changes or None,
+    )
+    return invalidation.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/safety-gate/evaluations/{case_id}/human-review"
+)
+async def record_safety_gate_human_review(
+    project_id: str,
+    case_id: str,
+    body: SafetyHumanReviewRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    decision = boba.record_boba_human_safety_review(
+        project_id,
+        case_id,
+        decision=body.decision,
+        reason=body.reason,
+        reviewer_identity=body.reviewer_identity,
+        request_digest=body.request_digest,
+        project_snapshot_digest=body.project_snapshot_digest,
+    )
+    return decision.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/safety-gate")
+async def get_safety_gate(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    gate = boba.load_boba_safety_gate(project_id)
+    if gate is None:
+        raise NotFoundError(
+            "BOBA Safety Gate V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return gate.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/safety-gate/evaluations/{case_id}")
+async def get_safety_gate_evaluation(
+    project_id: str,
+    case_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_safety_evaluation(
+        project_id,
+        case_id,
+    ).model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/safety-gate/decisions/{decision_id}")
+async def get_safety_gate_decision(
+    project_id: str,
+    decision_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_safety_decision(
+        project_id,
+        decision_id,
+    ).model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/safety-gate/export")
+async def export_safety_gate(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_safety_gate(project_id)
+
+
+@router.delete("/projects/{project_id}/safety-gate")
+async def reset_safety_gate(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    removed = boba.reset_boba_safety_gate(project_id)
+    return {
+        "reset": removed,
+        "project_id": project_id,
+        "safety_gate_summary_removed": removed,
+        "immutable_policy_history_deleted": False,
+        "immutable_decision_history_deleted": False,
+        "upstream_boba_artifacts_deleted": False,
+        "approvals_deleted": False,
+        "source_media_deleted": False,
+        "accepted_outputs_deleted": False,
+        "autopilot_history_deleted": False,
+        "workflow_resumed": False,
+        "checkpoint_restored": False,
+        "publication_used": False,
+        "action_execution_used": False,
     }
 
 

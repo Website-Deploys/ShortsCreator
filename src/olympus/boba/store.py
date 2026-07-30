@@ -87,6 +87,12 @@ from olympus.boba.rights_permission_gate import (
     BobaRightsPermissionGateSetV1,
 )
 from olympus.boba.root_cause_analyzer import BobaRootCauseAnalyzerSetV1
+from olympus.boba.safety_gate import (
+    BobaSafetyDecisionV1,
+    BobaSafetyEvaluationCaseV1,
+    BobaSafetyGateSetV1,
+    sanitize_safety_export,
+)
 from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
 from olympus.boba.tool_recovery import BobaToolRecoveryBrainSetV1
 from olympus.boba.trend_topic_watcher import BobaTrendTopicWatcherSetV1
@@ -2864,6 +2870,250 @@ class BobaMemoryStore:
             if not directory.exists():
                 return False
             shutil.rmtree(directory)
+        return True
+
+    @staticmethod
+    def _validate_safety_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
+            raise ValidationError(f"Invalid BOBA Safety Gate {label}.")
+        return value
+
+    def boba_safety_gate_path(self, project_id: str) -> Path:
+        return self._path(project_id, "safety_gate/index.json")
+
+    def boba_safety_evaluation_path(
+        self,
+        project_id: str,
+        safety_case_id: str,
+    ) -> Path:
+        case_id = self._validate_safety_record_id(
+            safety_case_id,
+            label="case id",
+        )
+        return self._path(
+            project_id,
+            f"safety_gate/evaluations/{case_id}/index.json",
+        )
+
+    def boba_safety_decision_path(
+        self,
+        project_id: str,
+        decision_id: str,
+    ) -> Path:
+        safe_decision_id = self._validate_safety_record_id(
+            decision_id,
+            label="decision id",
+        )
+        return self._path(
+            project_id,
+            f"safety_gate/decisions/{safe_decision_id}/index.json",
+        )
+
+    def boba_safety_policy_path(
+        self,
+        project_id: str,
+        policy_id: str,
+    ) -> Path:
+        safe_policy_id = self._validate_safety_record_id(
+            policy_id,
+            label="policy id",
+        )
+        return self._path(
+            project_id,
+            f"safety_gate/policies/{safe_policy_id}.json",
+        )
+
+    def _write_immutable_safety_record(
+        self,
+        path: Path,
+        payload: dict[str, Any],
+    ) -> None:
+        existing = self._read(path, None)
+        if existing is not None:
+            if existing != payload:
+                raise ValidationError(
+                    "BOBA Safety Gate immutable history record changed."
+                )
+            return
+        self._atomic_write_compact(path, payload)
+
+    def save_boba_safety_gate(
+        self,
+        gate: BobaSafetyGateSetV1,
+    ) -> BobaSafetyGateSetV1:
+        with self._lock:
+            safe_gate = sanitize_safety_export(gate.model_dump(mode="json"))
+            if not isinstance(safe_gate, dict):
+                raise ValidationError("BOBA Safety Gate payload is invalid.")
+            self._atomic_write_compact(
+                self.boba_safety_gate_path(gate.project_id),
+                {
+                    "schema_version": "boba_safety_gate_record_v1",
+                    "safety_gate": safe_gate,
+                },
+            )
+            policy_payload = sanitize_safety_export(
+                gate.policy_snapshot.model_dump(mode="json")
+            )
+            if not isinstance(policy_payload, dict):
+                raise ValidationError("BOBA Safety Gate policy payload is invalid.")
+            self._write_immutable_safety_record(
+                self.boba_safety_policy_path(
+                    gate.project_id,
+                    gate.policy_snapshot.policy_snapshot_id,
+                ),
+                {
+                    "schema_version": "boba_safety_policy_snapshot_v1",
+                    "policy_snapshot": policy_payload,
+                },
+            )
+            for case in gate.evaluation_cases:
+                case_payload = sanitize_safety_export(case.model_dump(mode="json"))
+                if not isinstance(case_payload, dict):
+                    raise ValidationError(
+                        "BOBA Safety Gate evaluation payload is invalid."
+                    )
+                self._atomic_write_compact(
+                    self.boba_safety_evaluation_path(
+                        gate.project_id,
+                        case.safety_case_id,
+                    ),
+                    {
+                        "schema_version": "boba_safety_evaluation_v1",
+                        "evaluation_case": case_payload,
+                    },
+                )
+            for decision in gate.safety_decisions:
+                decision_payload = sanitize_safety_export(
+                    decision.model_dump(mode="json")
+                )
+                if not isinstance(decision_payload, dict):
+                    raise ValidationError(
+                        "BOBA Safety Gate decision payload is invalid."
+                    )
+                self._write_immutable_safety_record(
+                    self.boba_safety_decision_path(
+                        gate.project_id,
+                        decision.safety_decision_id,
+                    ),
+                    {
+                        "schema_version": "boba_safety_decision_v1",
+                        "safety_decision": decision_payload,
+                    },
+                )
+        return gate
+
+    def load_boba_safety_gate(
+        self,
+        project_id: str,
+    ) -> BobaSafetyGateSetV1 | None:
+        try:
+            raw = self._read(self.boba_safety_gate_path(project_id), None)
+        except ValidationError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        payload = raw.get("safety_gate", raw)
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return BobaSafetyGateSetV1.model_validate(payload)
+        except PydanticValidationError:
+            return None
+
+    def load_boba_safety_evaluation(
+        self,
+        project_id: str,
+        safety_case_id: str,
+    ) -> BobaSafetyEvaluationCaseV1 | None:
+        raw = self._read(
+            self.boba_safety_evaluation_path(project_id, safety_case_id),
+            None,
+        )
+        if isinstance(raw, dict):
+            payload = raw.get("evaluation_case", raw)
+            if isinstance(payload, dict):
+                try:
+                    return BobaSafetyEvaluationCaseV1.model_validate(payload)
+                except PydanticValidationError:
+                    pass
+        gate = self.load_boba_safety_gate(project_id)
+        if gate is None:
+            return None
+        return next(
+            (
+                item
+                for item in gate.evaluation_cases
+                if item.safety_case_id == safety_case_id
+            ),
+            None,
+        )
+
+    def load_boba_safety_decision(
+        self,
+        project_id: str,
+        decision_id: str,
+    ) -> BobaSafetyDecisionV1 | None:
+        raw = self._read(
+            self.boba_safety_decision_path(project_id, decision_id),
+            None,
+        )
+        if isinstance(raw, dict):
+            payload = raw.get("safety_decision", raw)
+            if isinstance(payload, dict):
+                try:
+                    return BobaSafetyDecisionV1.model_validate(payload)
+                except PydanticValidationError:
+                    pass
+        gate = self.load_boba_safety_gate(project_id)
+        if gate is None:
+            return None
+        return next(
+            (
+                item
+                for item in gate.safety_decisions
+                if item.safety_decision_id == decision_id
+            ),
+            None,
+        )
+
+    def export_boba_safety_gate(self, project_id: str) -> dict[str, Any]:
+        gate = self.load_boba_safety_gate(project_id)
+        if gate is None:
+            raise ValidationError("BOBA Safety Gate V1 is not available for export.")
+        payload = {
+            "schema_version": "boba_safety_gate_export_v1",
+            "project_id": project_id,
+            "exported_at": memory_now_iso(),
+            "safety_gate": gate.model_dump(mode="json"),
+            "privacy": {
+                "private_paths_excluded": True,
+                "secrets_excluded": True,
+                "credentials_excluded": True,
+                "tokens_excluded": True,
+                "raw_patches_excluded": True,
+                "raw_media_excluded": True,
+                "full_command_logs_excluded": True,
+                "action_execution_used": False,
+                "workflow_resume_used": False,
+                "publication_used": False,
+            },
+        }
+        safe = sanitize_safety_export(payload)
+        if not isinstance(safe, dict):
+            raise ValidationError("BOBA Safety Gate export is invalid.")
+        return safe
+
+    def reset_boba_safety_gate(self, project_id: str) -> bool:
+        path = self.boba_safety_gate_path(project_id)
+        directory = path.parent.resolve()
+        project_directory = self._project_dir(project_id).resolve()
+        if directory.parent != project_directory or directory.name != "safety_gate":
+            raise ValidationError("Invalid BOBA Safety Gate reset path.")
+        with self._lock:
+            if not path.exists():
+                return False
+            path.unlink()
         return True
 
     def approval_rejection_learning_path(self, project_id: str) -> Path:
