@@ -1070,6 +1070,36 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
         "name": "Integration Layer",
         "path": "olympus.boba.integration_layer",
     },
+    "workflow_controller": {
+        "name": "Workflow Controller",
+        "path": "olympus.boba.workflow_controller",
+        "deps": ["integration_layer", "safety_gate"],
+        "planning": True,
+        "execution": True,
+        "approval": True,
+        "safety": True,
+        "checkpoint": True,
+    },
+    "olympus_editing": {
+        "name": "Olympus Editing",
+        "path": "olympus.editing",
+        "execution": True,
+        "approval": True,
+        "safety": True,
+        "checkpoint": True,
+    },
+    "olympus_rendering": {
+        "name": "Olympus Rendering",
+        "path": "olympus.rendering",
+        "execution": True,
+        "approval": True,
+        "safety": True,
+        "checkpoint": True,
+    },
+    "olympus_optimization": {
+        "name": "Olympus Optimization",
+        "path": "olympus.optimization",
+    },
     "tool_registry_fallback_router": {
         "name": "Tool Registry / Fallback Router",
         "future": True,
@@ -1079,7 +1109,6 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
         "future": True,
     },
     "validator_runner": {"name": "Validator Runner", "future": True},
-    "workflow_controller": {"name": "Workflow Controller", "future": True},
     "final_decision_bus": {"name": "Final Decision Bus", "future": True},
     "live_companion": {"name": "Live Companion", "future": True},
 }
@@ -1286,6 +1315,112 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
             _operation("safety_gate", "revalidate", "read_only"),
             _operation("safety_gate", "invalidate", "metadata_reset"),
             _operation("safety_gate", "record_human_review", "metadata_reset"),
+            _operation("workflow_controller", "build_definition", "planning"),
+            _operation("workflow_controller", "create_run", "planning"),
+            _operation(
+                "workflow_controller",
+                "inspect",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation("workflow_controller", "plan_next", "planning"),
+            _operation(
+                "workflow_controller",
+                "create_transition_request",
+                "planning",
+            ),
+            _operation(
+                "workflow_controller",
+                "evaluate_transition",
+                "planning",
+            ),
+            _operation(
+                "workflow_controller",
+                "advance_safe_read_only",
+                "read_only",
+            ),
+            _operation(
+                "workflow_controller",
+                "coordinate_approved_internal_transition",
+                "approved_execution",
+                side_effect_class="isolated_generated_state",
+                approval=True,
+                approval_type="target_module_exact",
+                safety=True,
+                checkpoint=True,
+                timeout=1_800,
+            ),
+            _operation("workflow_controller", "pause", "metadata_reset"),
+            _operation(
+                "workflow_controller",
+                "continue_controller",
+                "metadata_reset",
+            ),
+            _operation("workflow_controller", "cancel", "metadata_reset"),
+            _operation(
+                "workflow_controller",
+                "create_recovery_hold",
+                "planning",
+            ),
+            _operation(
+                "workflow_controller",
+                "receive_recovery_result",
+                "planning",
+            ),
+            _operation(
+                "workflow_controller",
+                "evaluate_resume_eligibility",
+                "planning",
+            ),
+            _operation(
+                "workflow_controller",
+                "record_human_decision",
+                "metadata_reset",
+            ),
+            _operation(
+                "workflow_controller",
+                "complete_internal_output",
+                "approved_execution",
+                approval=True,
+                approval_type="target_module_exact",
+                safety=True,
+                checkpoint=True,
+            ),
+            _operation(
+                "olympus_editing",
+                "prepare_render",
+                "approved_execution",
+                side_effect_class="isolated_generated_state",
+                approval=True,
+                approval_type="target_module_exact",
+                safety=True,
+                checkpoint=True,
+                required_artifacts=[
+                    "hook_retention_plan",
+                    "caption_motion_plan",
+                    "music_mood_plan",
+                ],
+                timeout=1_800,
+            ),
+            _operation(
+                "olympus_rendering",
+                "render",
+                "approved_execution",
+                side_effect_class="isolated_generated_state",
+                approval=True,
+                approval_type="target_module_exact",
+                safety=True,
+                checkpoint=True,
+                required_artifacts=["render_timeline"],
+                timeout=3_600,
+            ),
+            _operation(
+                "olympus_optimization",
+                "validate_render",
+                "read_only",
+                required_artifacts=["rendered_mp4", "render_manifest"],
+                timeout=900,
+            ),
             _operation("workflow_controller", "resume", "future_gated"),
             _operation("checkpoint_recovery_manager", "restore_checkpoint", "future_gated"),
             _operation("integration_layer", "upload", "future_gated"),
@@ -2218,8 +2353,14 @@ class BobaIntegrationLayerV1:
         }
         conflicting_run = request.target_operation_id in active_operations
         project_uncertain = bool(context.get("project_state_uncertain"))
+        workflow_transition_missing = (
+            operation.operation_class in _EXECUTION_OPERATION_CLASSES
+            and request.requesting_module_id == "workflow_controller"
+            and not bool(context.get("workflow_transition_valid"))
+        )
         autopilot_missing = (
             operation.operation_class in _EXECUTION_OPERATION_CLASSES
+            and request.requesting_module_id != "workflow_controller"
             and (
                 request.requesting_module_id != "autopilot_controller"
                 or not bool(context.get("autopilot_action_valid"))
@@ -2242,6 +2383,12 @@ class BobaIntegrationLayerV1:
         elif project_uncertain:
             status = "blocked"
             reason = "The project state is uncertain."
+        elif workflow_transition_missing:
+            status = "blocked"
+            reason = (
+                "Execution requires an exact validated Workflow Controller "
+                "transition."
+            )
         elif autopilot_missing:
             status = "blocked"
             reason = "Execution requires an exact validated Autopilot action."
@@ -2270,7 +2417,14 @@ class BobaIntegrationLayerV1:
             blocks_routing=status != "ready",
             failure_reason=reason,
             warnings=(
-                ["Execution Autopilot binding was not independently confirmed."]
+                [
+                    (
+                        "Execution Workflow Controller binding was not "
+                        "independently confirmed."
+                    )
+                ]
+                if workflow_transition_missing
+                else ["Execution Autopilot binding was not independently confirmed."]
                 if autopilot_missing
                 else []
             ),

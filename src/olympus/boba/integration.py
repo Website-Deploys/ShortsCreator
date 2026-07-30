@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from olympus.boba.approval_rejection_learning import (
     BobaApprovalRejectionLearningSetV1,
@@ -180,6 +180,21 @@ from olympus.boba.whole_video import (
     build_whole_video_memory_summary,
     whole_video_memory_record,
 )
+from olympus.boba.workflow_controller import (
+    BobaWorkflowControllerSetV1,
+    BobaWorkflowControllerV1,
+    BobaWorkflowDefinitionSnapshotV1,
+    BobaWorkflowEventV1,
+    BobaWorkflowHumanDecisionV1,
+    BobaWorkflowPauseCategoryV1,
+    BobaWorkflowPauseRecordV1,
+    BobaWorkflowRecoveryHoldV1,
+    BobaWorkflowResumeEligibilityReviewV1,
+    BobaWorkflowRunV1,
+    BobaWorkflowTransitionDecisionV1,
+    BobaWorkflowTransitionRequestV1,
+    BobaWorkflowTransitionTypeV1,
+)
 from olympus.data.repositories.project_repository import StorageProjectRepository
 from olympus.domain.contracts.storage import StoragePort
 from olympus.music import load_music_assets
@@ -242,6 +257,35 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "safety_gate.revalidate",
     "safety_gate.load",
     "safety_gate.export",
+    "whole_video_understanding.generate",
+    "candidate_clip_discovery.discover",
+    "clip_ranking.rank",
+    "editorial_decision.generate",
+    "creative_director.generate",
+    "clip_brief.generate",
+    "hook_retention.generate",
+    "caption_motion.generate",
+    "music_mood.generate",
+    "rights_permission_gate.generate",
+    "workflow_controller.build_definition",
+    "workflow_controller.create_run",
+    "workflow_controller.inspect",
+    "workflow_controller.plan_next",
+    "workflow_controller.create_transition_request",
+    "workflow_controller.evaluate_transition",
+    "workflow_controller.advance_safe_read_only",
+    "workflow_controller.coordinate_approved_internal_transition",
+    "workflow_controller.pause",
+    "workflow_controller.continue_controller",
+    "workflow_controller.cancel",
+    "workflow_controller.create_recovery_hold",
+    "workflow_controller.receive_recovery_result",
+    "workflow_controller.evaluate_resume_eligibility",
+    "workflow_controller.record_human_decision",
+    "workflow_controller.load",
+    "workflow_controller.export",
+    "workflow_controller.reset",
+    "workflow_controller.complete_internal_output",
 )
 
 
@@ -324,6 +368,10 @@ class BobaIntegration:
             module_invoker=self._invoke_autopilot_typed_module,
             safety_decision_validator=self.safety_gate.validate_for_autopilot,
         )
+        self.workflow_controller = BobaWorkflowControllerV1(
+            store,
+            integration_layer_factory=self._integration_layer,
+        )
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
 
@@ -404,6 +452,75 @@ class BobaIntegration:
                 )
             )
         )
+        workflow_controller = self.store.load_boba_workflow_controller(project_id)
+        workflow_run_id = str(
+            request.request_parameters.get("workflow_run_id") or ""
+        )
+        workflow_stage_instance_id = str(
+            request.request_parameters.get("workflow_stage_instance_id") or ""
+        )
+        workflow_transition_request_id = str(
+            request.request_parameters.get("workflow_transition_request_id")
+            or ""
+        )
+        workflow_transition_decision_id = str(
+            request.request_parameters.get("workflow_transition_decision_id")
+            or ""
+        )
+        workflow_run = next(
+            (
+                item
+                for item in workflow_controller.workflow_runs
+                if item.workflow_run_id == workflow_run_id
+            ),
+            None,
+        ) if workflow_controller is not None else None
+        workflow_stage = next(
+            (
+                item
+                for item in workflow_controller.stage_instances
+                if item.stage_instance_id == workflow_stage_instance_id
+                and item.workflow_run_id == workflow_run_id
+            ),
+            None,
+        ) if workflow_controller is not None else None
+        workflow_request = next(
+            (
+                item
+                for item in workflow_controller.transition_requests
+                if item.transition_request_id == workflow_transition_request_id
+                and item.workflow_run_id == workflow_run_id
+            ),
+            None,
+        ) if workflow_controller is not None else None
+        workflow_decision = next(
+            (
+                item
+                for item in workflow_controller.transition_decisions
+                if item.transition_decision_id == workflow_transition_decision_id
+                and item.transition_request_id == workflow_transition_request_id
+            ),
+            None,
+        ) if workflow_controller is not None else None
+        workflow_transition_valid = bool(
+            workflow_run is not None
+            and workflow_stage is not None
+            and workflow_stage.status == "running"
+            and workflow_request is not None
+            and workflow_request.requested_operation_id
+            == request.target_operation_id
+            and workflow_decision is not None
+            and workflow_decision.decision_valid
+            and workflow_decision.decision
+            in {
+                "allowed_read_only_transition",
+                "allowed_exact_internal_transition",
+            }
+            and workflow_request.project_snapshot_digest
+            == workflow_run.project_snapshot_digest
+            and workflow_decision.project_snapshot_current
+            and workflow_decision.workflow_revision_current
+        )
         rights = self.store.load_rights_permission_gate(project_id)
         rights_allowed = bool(
             rights is not None
@@ -415,6 +532,7 @@ class BobaIntegration:
             "approval_records": approval_records,
             "safety_decisions": safety_decisions,
             "autopilot_action_valid": action_matches_target,
+            "workflow_transition_valid": workflow_transition_valid,
             "rights_allowed": rights_allowed,
             "project_state_uncertain": False,
             "active_target_operation_ids": [],
@@ -442,6 +560,353 @@ class BobaIntegration:
             handlers=self._integration_handlers(),
             project_exists=self._integration_project_exists,
             context_provider=self._integration_context,
+        )
+
+    def build_boba_workflow_definition(
+        self,
+        project_id: str,
+        *,
+        source_id: str | None = None,
+    ) -> BobaWorkflowDefinitionSnapshotV1:
+        return self.workflow_controller.build_workflow_definition(
+            project_id,
+            source_id=source_id,
+        )
+
+    def create_boba_workflow_run(
+        self,
+        project_id: str,
+        *,
+        source_id: str,
+        project_snapshot: dict[str, Any] | None,
+        source_storage_reference: str,
+        source_artifact_digest: str,
+        clip_ids: list[str] | None = None,
+        output_ids_by_clip: dict[str, str] | None = None,
+        rights_status: str = "unknown",
+    ) -> BobaWorkflowControllerSetV1:
+        return self.workflow_controller.create_workflow_run(
+            project_id,
+            source_id=source_id,
+            project_snapshot=project_snapshot,
+            source_storage_reference=source_storage_reference,
+            source_artifact_digest=source_artifact_digest,
+            clip_ids=clip_ids or [],
+            output_ids_by_clip=output_ids_by_clip or {},
+            rights_status=rights_status,
+        )
+
+    def inspect_boba_workflow_run(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+    ) -> dict[str, Any]:
+        return self.workflow_controller.inspect_workflow_run(
+            project_id,
+            workflow_run_id,
+        )
+
+    def plan_boba_workflow_next_stage(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+    ) -> dict[str, Any]:
+        return self.workflow_controller.plan_next_stage(
+            project_id,
+            workflow_run_id,
+        )
+
+    def create_boba_workflow_transition_request(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        *,
+        source_stage_instance_id: str,
+        target_stage_id: str,
+        expected_revision: int,
+        transition_type: BobaWorkflowTransitionTypeV1,
+        reason: str,
+        clip_id: str | None = None,
+        output_id: str | None = None,
+        approval_record_id: str | None = None,
+        safety_decision_id: str | None = None,
+        integration_request_id: str | None = None,
+        checkpoint_reference: str | None = None,
+        checkpoint_digest: str | None = None,
+        quality_decision_id: str | None = None,
+        human_decision_id: str | None = None,
+        expires_in_seconds: int = 300,
+        idempotency_key: str | None = None,
+    ) -> BobaWorkflowTransitionRequestV1:
+        return self.workflow_controller.create_transition_request(
+            project_id,
+            workflow_run_id,
+            source_stage_instance_id=source_stage_instance_id,
+            target_stage_id=target_stage_id,
+            expected_revision=expected_revision,
+            transition_type=transition_type,
+            reason=reason,
+            clip_id=clip_id,
+            output_id=output_id,
+            approval_record_id=approval_record_id,
+            safety_decision_id=safety_decision_id,
+            integration_request_id=integration_request_id,
+            checkpoint_reference=checkpoint_reference,
+            checkpoint_digest=checkpoint_digest,
+            quality_decision_id=quality_decision_id,
+            human_decision_id=human_decision_id,
+            expires_in_seconds=expires_in_seconds,
+            idempotency_key=idempotency_key,
+        )
+
+    def evaluate_boba_workflow_transition(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        transition_request_id: str,
+        *,
+        expected_revision: int,
+        current_project_snapshot_digest: str,
+        rights_clear: bool | None = None,
+        approval_record: dict[str, Any] | None = None,
+        safety_decision: BobaSafetyDecisionV1 | dict[str, Any] | None = None,
+        checkpoint_valid: bool | None = None,
+        technical_validation: dict[str, Any] | None = None,
+        quality_decision: dict[str, Any] | None = None,
+        human_decision: BobaWorkflowHumanDecisionV1
+        | dict[str, Any]
+        | None = None,
+    ) -> BobaWorkflowTransitionDecisionV1:
+        return self.workflow_controller.evaluate_transition_request(
+            project_id,
+            workflow_run_id,
+            transition_request_id,
+            expected_revision=expected_revision,
+            current_project_snapshot_digest=current_project_snapshot_digest,
+            rights_clear=rights_clear,
+            approval_record=approval_record,
+            safety_decision=safety_decision,
+            checkpoint_valid=checkpoint_valid,
+            technical_validation=technical_validation,
+            quality_decision=quality_decision,
+            human_decision=human_decision,
+        )
+
+    async def advance_boba_workflow_safe_read_only_stage(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        transition_decision_id: str,
+        *,
+        expected_revision: int,
+        integration_parameters: dict[str, Any] | None = None,
+    ) -> BobaIntegrationResponseV1:
+        return await self.workflow_controller.advance_safe_read_only_stage(
+            project_id,
+            workflow_run_id,
+            transition_decision_id,
+            expected_revision=expected_revision,
+            integration_parameters=integration_parameters,
+        )
+
+    async def coordinate_approved_boba_workflow_transition(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        transition_decision_id: str,
+        *,
+        expected_revision: int,
+        integration_parameters: dict[str, Any] | None = None,
+        approval_binding: BobaIntegrationApprovalBindingV1 | None = None,
+        safety_binding: BobaIntegrationSafetyBindingV1 | None = None,
+    ) -> BobaIntegrationResponseV1:
+        return await self.workflow_controller.coordinate_approved_internal_transition(
+            project_id,
+            workflow_run_id,
+            transition_decision_id,
+            expected_revision=expected_revision,
+            integration_parameters=integration_parameters,
+            approval_binding=approval_binding,
+            safety_binding=safety_binding,
+        )
+
+    def pause_boba_workflow(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        *,
+        expected_revision: int,
+        reason: str,
+        category: BobaWorkflowPauseCategoryV1 = "manual",
+        stage_instance_id: str | None = None,
+    ) -> BobaWorkflowPauseRecordV1:
+        return self.workflow_controller.pause_workflow(
+            project_id,
+            workflow_run_id,
+            expected_revision=expected_revision,
+            reason=reason,
+            category=category,
+            stage_instance_id=stage_instance_id,
+        )
+
+    def continue_boba_workflow_controller(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        *,
+        expected_revision: int,
+    ) -> BobaWorkflowRunV1:
+        return self.workflow_controller.continue_controller(
+            project_id,
+            workflow_run_id,
+            expected_revision=expected_revision,
+        )
+
+    def cancel_boba_workflow_run(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        *,
+        expected_revision: int,
+        reason: str,
+    ) -> BobaWorkflowRunV1:
+        return self.workflow_controller.cancel_workflow_run(
+            project_id,
+            workflow_run_id,
+            expected_revision=expected_revision,
+            reason=reason,
+        )
+
+    def create_boba_workflow_recovery_hold(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        *,
+        failed_stage_instance_id: str,
+        expected_revision: int,
+        reason: str,
+        observer_record_id: str | None = None,
+    ) -> BobaWorkflowRecoveryHoldV1:
+        return self.workflow_controller.create_recovery_hold(
+            project_id,
+            workflow_run_id,
+            failed_stage_instance_id=failed_stage_instance_id,
+            expected_revision=expected_revision,
+            reason=reason,
+            observer_record_id=observer_record_id,
+        )
+
+    def receive_boba_autopilot_recovery_result(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        recovery_hold_id: str,
+        recovery_result: BobaIntegrationResponseV1 | dict[str, Any],
+        *,
+        expected_revision: int,
+    ) -> BobaWorkflowRecoveryHoldV1:
+        return self.workflow_controller.receive_autopilot_recovery_result(
+            project_id,
+            workflow_run_id,
+            recovery_hold_id,
+            recovery_result,
+            expected_revision=expected_revision,
+        )
+
+    def evaluate_boba_workflow_resume_eligibility(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        recovery_hold_id: str,
+        *,
+        expected_revision: int,
+        current_project_snapshot_digest: str,
+        rights_clear: bool,
+        approval_record: dict[str, Any] | None,
+        safety_decision: BobaSafetyDecisionV1 | dict[str, Any] | None,
+        checkpoint_valid: bool,
+        rollback_state_clear: bool,
+        technical_validation: dict[str, Any] | None,
+        quality_decision: dict[str, Any] | None,
+        human_decision: BobaWorkflowHumanDecisionV1
+        | dict[str, Any]
+        | None = None,
+    ) -> BobaWorkflowResumeEligibilityReviewV1:
+        return self.workflow_controller.evaluate_resume_eligibility(
+            project_id,
+            workflow_run_id,
+            recovery_hold_id,
+            expected_revision=expected_revision,
+            current_project_snapshot_digest=current_project_snapshot_digest,
+            rights_clear=rights_clear,
+            approval_record=approval_record,
+            safety_decision=safety_decision,
+            checkpoint_valid=checkpoint_valid,
+            rollback_state_clear=rollback_state_clear,
+            technical_validation=technical_validation,
+            quality_decision=quality_decision,
+            human_decision=human_decision,
+        )
+
+    def record_boba_workflow_human_decision(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        *,
+        expected_revision: int,
+        decision_type: str,
+        decision: str,
+        reason: str,
+        reviewer_reference: str,
+        explicit_confirmation: bool,
+        stage_instance_id: str | None = None,
+        transition_request_id: str | None = None,
+        conditions: list[str] | None = None,
+        expires_in_seconds: int | None = None,
+    ) -> BobaWorkflowHumanDecisionV1:
+        return self.workflow_controller.record_human_workflow_decision(
+            project_id,
+            workflow_run_id,
+            expected_revision=expected_revision,
+            decision_type=decision_type,
+            decision=decision,
+            reason=reason,
+            reviewer_reference=reviewer_reference,
+            explicit_confirmation=explicit_confirmation,
+            stage_instance_id=stage_instance_id,
+            transition_request_id=transition_request_id,
+            conditions=conditions or [],
+            expires_in_seconds=expires_in_seconds,
+        )
+
+    def inspect_boba_workflow_events(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+    ) -> list[BobaWorkflowEventV1]:
+        return self.workflow_controller.inspect_workflow_events(
+            project_id,
+            workflow_run_id,
+        )
+
+    def load_boba_workflow_controller(
+        self,
+        project_id: str,
+    ) -> BobaWorkflowControllerSetV1 | None:
+        return self.store.load_boba_workflow_controller(project_id)
+
+    def export_boba_workflow_controller(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        return self.workflow_controller.export_workflow_controller(project_id)
+
+    def reset_boba_workflow_controller(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        return self.workflow_controller.reset_workflow_controller_metadata(
+            project_id
         )
 
     @staticmethod
@@ -498,6 +963,7 @@ class BobaIntegration:
             ),
             "autopilot_controller.load": self.load_boba_autopilot_controller,
             "safety_gate.load": self.load_boba_safety_gate,
+            "workflow_controller.load": self.load_boba_workflow_controller,
         }
         export_handlers = {
             "observer.export": self.export_observer_report,
@@ -513,6 +979,7 @@ class BobaIntegration:
                 self.export_boba_autopilot_controller
             ),
             "safety_gate.export": self.export_boba_safety_gate,
+            "workflow_controller.export": self.export_boba_workflow_controller,
         }
         if operation_id in load_handlers:
             result = load_handlers[operation_id](project_id)
@@ -768,6 +1235,341 @@ class BobaIntegration:
                 current_bindings=_dict(values.get("current_bindings")) or None,
             )
             side_effects.append("safety_revalidation_metadata_updated")
+        elif operation_id == "whole_video_understanding.generate":
+            result = await self.generate_whole_video_understanding(project_id)
+            side_effects.append("whole_video_understanding_metadata_updated")
+        elif operation_id == "candidate_clip_discovery.discover":
+            result = await self.discover_candidate_clips(project_id)
+            side_effects.append("candidate_clip_discovery_metadata_updated")
+        elif operation_id == "clip_ranking.rank":
+            result = await self.rank_discovered_candidate_clips(project_id)
+            side_effects.append("clip_ranking_metadata_updated")
+        elif operation_id == "editorial_decision.generate":
+            result = await self.generate_editorial_decisions(project_id)
+            side_effects.append("editorial_decision_metadata_updated")
+        elif operation_id == "creative_director.generate":
+            result = await self.generate_creative_direction_v2(project_id)
+            side_effects.append("creative_direction_metadata_updated")
+        elif operation_id == "clip_brief.generate":
+            result = await self.generate_clip_briefs(project_id)
+            side_effects.append("clip_brief_metadata_updated")
+        elif operation_id == "hook_retention.generate":
+            result = await self.generate_hook_retention(project_id)
+            side_effects.append("hook_retention_metadata_updated")
+        elif operation_id == "caption_motion.generate":
+            result = await self.generate_caption_motion(project_id)
+            side_effects.append("caption_motion_metadata_updated")
+        elif operation_id == "music_mood.generate":
+            result = await self.generate_music_mood(project_id)
+            side_effects.append("music_mood_metadata_updated")
+        elif operation_id == "rights_permission_gate.generate":
+            manual_items = values.get("manual_items")
+            result = await self.generate_rights_permission_gate(
+                project_id,
+                manual_items=(
+                    [dict(item) for item in manual_items if isinstance(item, dict)]
+                    if isinstance(manual_items, list)
+                    else None
+                ),
+                source_label=str(values.get("source_label") or "workflow"),
+                dry_run=bool(values.get("dry_run")),
+            )
+            if not bool(values.get("dry_run")):
+                side_effects.append("rights_permission_metadata_updated")
+        elif operation_id == "workflow_controller.build_definition":
+            result = self.build_boba_workflow_definition(
+                project_id,
+                source_id=str(values.get("source_id") or "") or None,
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.create_run":
+            result = self.create_boba_workflow_run(
+                project_id,
+                source_id=str(values.get("source_id") or ""),
+                project_snapshot=_dict(values.get("project_snapshot")),
+                source_storage_reference=str(
+                    values.get("source_storage_reference") or ""
+                ),
+                source_artifact_digest=str(
+                    values.get("source_artifact_digest") or ""
+                ),
+                clip_ids=[
+                    str(item)
+                    for item in values.get("clip_ids", [])
+                    if isinstance(item, str)
+                ],
+                output_ids_by_clip={
+                    str(key): str(value)
+                    for key, value in _dict(
+                        values.get("output_ids_by_clip")
+                    ).items()
+                },
+                rights_status=str(values.get("rights_status") or "unknown"),
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.inspect":
+            result = self.inspect_boba_workflow_run(
+                project_id,
+                request.run_id,
+            )
+        elif operation_id == "workflow_controller.plan_next":
+            result = self.plan_boba_workflow_next_stage(
+                project_id,
+                request.run_id,
+            )
+        elif operation_id == "workflow_controller.create_transition_request":
+            transition_type = cast(
+                BobaWorkflowTransitionTypeV1,
+                str(values.get("transition_type") or "unknown"),
+            )
+            result = self.create_boba_workflow_transition_request(
+                project_id,
+                request.run_id,
+                source_stage_instance_id=str(
+                    values.get("source_stage_instance_id") or ""
+                ),
+                target_stage_id=str(values.get("target_stage_id") or ""),
+                expected_revision=int(values.get("expected_revision") or 0),
+                transition_type=transition_type,
+                reason=str(values.get("reason") or ""),
+                clip_id=str(values.get("clip_id") or "") or None,
+                output_id=str(values.get("output_id") or "") or None,
+                approval_record_id=(
+                    str(values.get("approval_record_id") or "") or None
+                ),
+                safety_decision_id=(
+                    str(values.get("safety_decision_id") or "") or None
+                ),
+                integration_request_id=(
+                    str(values.get("integration_request_id") or "") or None
+                ),
+                checkpoint_reference=(
+                    str(values.get("checkpoint_reference") or "") or None
+                ),
+                checkpoint_digest=(
+                    str(values.get("checkpoint_digest") or "") or None
+                ),
+                quality_decision_id=(
+                    str(values.get("quality_decision_id") or "") or None
+                ),
+                human_decision_id=(
+                    str(values.get("human_decision_id") or "") or None
+                ),
+                expires_in_seconds=int(
+                    values.get("expires_in_seconds") or 300
+                ),
+                idempotency_key=(
+                    str(values.get("idempotency_key") or "") or None
+                ),
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.evaluate_transition":
+            result = self.evaluate_boba_workflow_transition(
+                project_id,
+                request.run_id,
+                str(values.get("transition_request_id") or ""),
+                expected_revision=int(values.get("expected_revision") or 0),
+                current_project_snapshot_digest=str(
+                    values.get("current_project_snapshot_digest") or ""
+                ),
+                rights_clear=(
+                    bool(values.get("rights_clear"))
+                    if "rights_clear" in values
+                    else None
+                ),
+                approval_record=_dict(values.get("approval_record")) or None,
+                safety_decision=_dict(values.get("safety_decision")) or None,
+                checkpoint_valid=(
+                    bool(values.get("checkpoint_valid"))
+                    if "checkpoint_valid" in values
+                    else None
+                ),
+                technical_validation=(
+                    _dict(values.get("technical_validation")) or None
+                ),
+                quality_decision=_dict(values.get("quality_decision")) or None,
+                human_decision=_dict(values.get("human_decision")) or None,
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.advance_safe_read_only":
+            result = await self.advance_boba_workflow_safe_read_only_stage(
+                project_id,
+                request.run_id,
+                str(values.get("transition_decision_id") or ""),
+                expected_revision=int(values.get("expected_revision") or 0),
+                integration_parameters=(
+                    _dict(values.get("integration_parameters")) or None
+                ),
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif (
+            operation_id
+            == "workflow_controller.coordinate_approved_internal_transition"
+        ):
+            raw_approval_binding = _dict(
+                values.get("downstream_approval_binding")
+            )
+            raw_safety_binding = _dict(values.get("downstream_safety_binding"))
+            result = await self.coordinate_approved_boba_workflow_transition(
+                project_id,
+                request.run_id,
+                str(values.get("transition_decision_id") or ""),
+                expected_revision=int(values.get("expected_revision") or 0),
+                integration_parameters=(
+                    _dict(values.get("integration_parameters")) or None
+                ),
+                approval_binding=(
+                    BobaIntegrationApprovalBindingV1.model_validate(
+                        raw_approval_binding
+                    )
+                    if raw_approval_binding
+                    else None
+                ),
+                safety_binding=(
+                    BobaIntegrationSafetyBindingV1.model_validate(
+                        raw_safety_binding
+                    )
+                    if raw_safety_binding
+                    else None
+                ),
+            )
+            target_revalidated = result.status in {
+                "succeeded",
+                "duplicate_reused",
+            }
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.pause":
+            pause_category = cast(
+                BobaWorkflowPauseCategoryV1,
+                str(values.get("category") or "manual"),
+            )
+            result = self.pause_boba_workflow(
+                project_id,
+                request.run_id,
+                expected_revision=int(values.get("expected_revision") or 0),
+                reason=str(values.get("reason") or "Explicit workflow pause."),
+                category=pause_category,
+                stage_instance_id=(
+                    str(values.get("stage_instance_id") or "") or None
+                ),
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.create_recovery_hold":
+            result = self.create_boba_workflow_recovery_hold(
+                project_id,
+                request.run_id,
+                failed_stage_instance_id=str(
+                    values.get("failed_stage_instance_id") or ""
+                ),
+                expected_revision=int(values.get("expected_revision") or 0),
+                reason=str(values.get("reason") or ""),
+                observer_record_id=(
+                    str(values.get("observer_record_id") or "") or None
+                ),
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.receive_recovery_result":
+            result = self.receive_boba_autopilot_recovery_result(
+                project_id,
+                request.run_id,
+                str(values.get("recovery_hold_id") or ""),
+                _dict(values.get("recovery_result")),
+                expected_revision=int(values.get("expected_revision") or 0),
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.evaluate_resume_eligibility":
+            result = self.evaluate_boba_workflow_resume_eligibility(
+                project_id,
+                request.run_id,
+                str(values.get("recovery_hold_id") or ""),
+                expected_revision=int(values.get("expected_revision") or 0),
+                current_project_snapshot_digest=str(
+                    values.get("current_project_snapshot_digest") or ""
+                ),
+                rights_clear=bool(values.get("rights_clear")),
+                approval_record=_dict(values.get("approval_record")) or None,
+                safety_decision=_dict(values.get("safety_decision")) or None,
+                checkpoint_valid=bool(values.get("checkpoint_valid")),
+                rollback_state_clear=bool(
+                    values.get("rollback_state_clear")
+                ),
+                technical_validation=(
+                    _dict(values.get("technical_validation")) or None
+                ),
+                quality_decision=_dict(values.get("quality_decision")) or None,
+                human_decision=_dict(values.get("human_decision")) or None,
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.continue_controller":
+            result = self.continue_boba_workflow_controller(
+                project_id,
+                request.run_id,
+                expected_revision=int(values.get("expected_revision") or 0),
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.cancel":
+            result = self.cancel_boba_workflow_run(
+                project_id,
+                request.run_id,
+                expected_revision=int(values.get("expected_revision") or 0),
+                reason=str(
+                    values.get("reason") or "Explicit workflow cancellation."
+                ),
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.record_human_decision":
+            result = self.record_boba_workflow_human_decision(
+                project_id,
+                request.run_id,
+                expected_revision=int(values.get("expected_revision") or 0),
+                decision_type=str(values.get("decision_type") or "review"),
+                decision=str(values.get("decision") or ""),
+                reason=str(values.get("reason") or ""),
+                reviewer_reference=str(
+                    values.get("reviewer_reference") or "local_reviewer"
+                ),
+                explicit_confirmation=bool(
+                    values.get("explicit_confirmation")
+                ),
+                stage_instance_id=(
+                    str(values.get("stage_instance_id") or "") or None
+                ),
+                transition_request_id=(
+                    str(values.get("transition_request_id") or "") or None
+                ),
+            )
+            side_effects.append("workflow_controller_metadata_updated")
+        elif operation_id == "workflow_controller.complete_internal_output":
+            result = {
+                "schema_version": "boba_workflow_completion_target_v1",
+                "project_id": project_id,
+                "workflow_run_id": request.run_id,
+                "stage_instance_id": str(
+                    values.get("workflow_stage_instance_id") or ""
+                ),
+                "ready_for_controller_completion": True,
+                "artifact_bindings": [
+                    {
+                        "project_id": project_id,
+                        "workflow_run_id": request.run_id,
+                        "artifact_type": "internal_output_completion",
+                        "producer_record_id": request.request_id,
+                        "schema_id": "boba.workflow.internal_output_completion",
+                        "schema_version": "1",
+                        "artifact_digest": hashlib.sha256(
+                            request.request_digest.encode("utf-8")
+                        ).hexdigest(),
+                        "sanitized_storage_reference": (
+                            f"projects/{project_id}/workflow_controller/index.json"
+                        ),
+                    }
+                ],
+            }
+            target_revalidated = True
+            side_effects.append("workflow_completion_evidence_returned")
+        elif operation_id == "workflow_controller.reset":
+            result = self.reset_boba_workflow_controller(project_id)
+            side_effects.append("workflow_controller_active_metadata_reset")
         else:
             raise ValidationError(
                 "Integration Layer facade has no fixed typed adapter for this "

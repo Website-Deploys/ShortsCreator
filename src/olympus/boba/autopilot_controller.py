@@ -1203,7 +1203,7 @@ _ACTION_CLASS_BY_TYPE: dict[
     "prepare_checkpoint_handoff": "future_gated",
     "prepare_validator_handoff": "future_gated",
     "prepare_safety_handoff": "future_gated",
-    "prepare_workflow_handoff": "future_gated",
+    "prepare_workflow_handoff": "automatic_read_only",
     "pause_controller": "automatic_read_only",
     "cancel_controller": "automatic_read_only",
     "stop_controller": "automatic_read_only",
@@ -2178,7 +2178,8 @@ class BobaAutopilotControllerV1:
                 "Quality review passed; BOBA prepared a future Safety Gate handoff."
             ),
             "ready_for_workflow_controller": (
-                "BOBA prepared a future Workflow Controller handoff but did not resume Olympus."
+                "BOBA prepared a typed Workflow Controller handoff but did not "
+                "resume Olympus."
             ),
             "completed_internal_cycle": (
                 "BOBA completed its internal cycle without resuming or publishing anything."
@@ -2495,8 +2496,8 @@ class BobaAutopilotControllerV1:
                     "No repair runs when a controller run is created.",
                 ],
                 limitations=[
-                    "V1 does not implement Safety Gate, Workflow Controller, "
-                    "Final Decision Bus, Checkpoint Recovery Manager, or Live Companion.",
+                    "V1 does not implement Final Decision Bus, Checkpoint Recovery "
+                    "Manager, or Live Companion.",
                     "V1 does not directly run commands, Git, FFmpeg, network requests, "
                     "uploads, publication, merges, or deployments.",
                 ],
@@ -4029,7 +4030,7 @@ class BobaAutopilotControllerV1:
             action_type="prepare_workflow_handoff",
             target_module="workflow_controller",
             target_operation="prepare_handoff",
-            description="Prepare the future Workflow Controller handoff.",
+            description="Prepare the typed Workflow Controller handoff.",
             rationale="Autopilot has no authority to resume the Olympus workflow.",
             expected_output="workflow_controller_handoff",
         )
@@ -4039,6 +4040,12 @@ class BobaAutopilotControllerV1:
             target_module="workflow_controller",
             reason=action.rationale,
             action=action,
+            required_inputs=[
+                f"autopilot_run_id:{run.run_id}",
+                f"project_id:{run.project_id}",
+                f"project_snapshot_id:{run.project_snapshot_id}",
+                "exact_workflow_run_and_recovery_hold_from_source_handoff",
+            ],
             priority="high",
         )
         action.status = "succeeded"

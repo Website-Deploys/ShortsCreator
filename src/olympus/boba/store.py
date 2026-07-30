@@ -105,6 +105,14 @@ from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
 from olympus.boba.tool_recovery import BobaToolRecoveryBrainSetV1
 from olympus.boba.trend_topic_watcher import BobaTrendTopicWatcherSetV1
 from olympus.boba.whole_video import BobaWholeVideoUnderstandingV1
+from olympus.boba.workflow_controller import (
+    BobaWorkflowControllerSetV1,
+    BobaWorkflowDefinitionSnapshotV1,
+    BobaWorkflowEventV1,
+    BobaWorkflowExecutionLeaseV1,
+    BobaWorkflowStageDefinitionV1,
+    sanitize_workflow_export,
+)
 from olympus.platform.errors import ValidationError
 
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -4143,4 +4151,623 @@ class BobaMemoryStore:
             "autopilot_history_removed": False,
             "source_media_removed": False,
             "accepted_outputs_removed": False,
+        }
+
+    @staticmethod
+    def _validate_workflow_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
+            raise ValidationError(f"Invalid BOBA Workflow Controller {label}.")
+        return value
+
+    def boba_workflow_controller_path(self, project_id: str) -> Path:
+        return self._path(project_id, "workflow_controller/index.json")
+
+    def boba_workflow_definition_path(
+        self,
+        project_id: str,
+        definition_id: str,
+    ) -> Path:
+        safe_id = self._validate_workflow_record_id(
+            definition_id,
+            label="definition id",
+        )
+        return self._path(
+            project_id,
+            f"workflow_controller/definitions/{safe_id}.json",
+        )
+
+    def boba_workflow_run_path(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+    ) -> Path:
+        safe_id = self._validate_workflow_record_id(
+            workflow_run_id,
+            label="run id",
+        )
+        return self._path(
+            project_id,
+            f"workflow_controller/runs/{safe_id}/index.json",
+        )
+
+    def boba_workflow_stage_path(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        stage_instance_id: str,
+    ) -> Path:
+        safe_stage_id = self._validate_workflow_record_id(
+            stage_instance_id,
+            label="stage instance id",
+        )
+        return self.boba_workflow_run_path(
+            project_id,
+            workflow_run_id,
+        ).parent / "stages" / f"{safe_stage_id}.json"
+
+    def boba_workflow_transition_path(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        transition_request_id: str,
+    ) -> Path:
+        safe_transition_id = self._validate_workflow_record_id(
+            transition_request_id,
+            label="transition request id",
+        )
+        return self.boba_workflow_run_path(
+            project_id,
+            workflow_run_id,
+        ).parent / "transitions" / f"{safe_transition_id}.json"
+
+    def boba_workflow_events_path(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+    ) -> Path:
+        return self.boba_workflow_run_path(
+            project_id,
+            workflow_run_id,
+        ).with_name("events.jsonl")
+
+    def boba_workflow_execution_lease_path(self, project_id: str) -> Path:
+        return self._path(project_id, "workflow_controller/active.lock.json")
+
+    def save_boba_workflow_definition(
+        self,
+        project_id: str,
+        snapshot: BobaWorkflowDefinitionSnapshotV1,
+        stages: list[BobaWorkflowStageDefinitionV1],
+    ) -> BobaWorkflowDefinitionSnapshotV1:
+        path = self.boba_workflow_definition_path(
+            project_id,
+            snapshot.workflow_definition_id,
+        )
+        payload = {
+            "schema_version": "boba_workflow_definition_record_v1",
+            "project_id": project_id,
+            "definition": snapshot.model_dump(mode="json"),
+            "stage_definitions": [
+                item.model_dump(mode="json") for item in stages
+            ],
+        }
+        safe = sanitize_workflow_export(payload)
+        with self._lock:
+            existing = self._read(path, None)
+            if isinstance(existing, dict):
+                if existing != safe:
+                    raise ValidationError(
+                        "Completed workflow definition snapshots are immutable."
+                    )
+                return snapshot
+            self._atomic_write_compact(path, safe)
+        return snapshot
+
+    @staticmethod
+    def _workflow_run_payload(
+        controller: BobaWorkflowControllerSetV1,
+        workflow_run_id: str,
+    ) -> dict[str, Any]:
+        stage_ids = {
+            item.stage_instance_id
+            for item in controller.stage_instances
+            if item.workflow_run_id == workflow_run_id
+        }
+        return {
+            "schema_version": "boba_workflow_run_record_v1",
+            "project_id": controller.project_id,
+            "run": next(
+                (
+                    item.model_dump(mode="json")
+                    for item in controller.workflow_runs
+                    if item.workflow_run_id == workflow_run_id
+                ),
+                None,
+            ),
+            "stage_instance_ids": sorted(stage_ids),
+            "transition_request_ids": [
+                item.transition_request_id
+                for item in controller.transition_requests
+                if item.workflow_run_id == workflow_run_id
+            ],
+            "pause_record_ids": [
+                item.pause_record_id
+                for item in controller.pause_records
+                if item.workflow_run_id == workflow_run_id
+            ],
+            "recovery_hold_ids": [
+                item.recovery_hold_id
+                for item in controller.recovery_holds
+                if item.workflow_run_id == workflow_run_id
+            ],
+            "incident_ids": [
+                item.incident_id
+                for item in controller.incidents
+                if item.workflow_run_id == workflow_run_id
+            ],
+            "human_decision_ids": [
+                item.human_decision_id
+                for item in controller.human_decisions
+                if item.workflow_run_id == workflow_run_id
+            ],
+        }
+
+    def _save_boba_workflow_stage_record(
+        self,
+        controller: BobaWorkflowControllerSetV1,
+        stage: Any,
+    ) -> None:
+        path = self.boba_workflow_stage_path(
+            controller.project_id,
+            stage.workflow_run_id,
+            stage.stage_instance_id,
+        )
+        payload = sanitize_workflow_export(
+            {
+                "schema_version": "boba_workflow_stage_record_v1",
+                "project_id": controller.project_id,
+                "stage_instance": stage.model_dump(mode="json"),
+            }
+        )
+        existing = self._read(path, None)
+        if isinstance(existing, dict):
+            saved_stage = existing.get("stage_instance")
+            saved_status = (
+                str(saved_stage.get("status") or "")
+                if isinstance(saved_stage, dict)
+                else ""
+            )
+            if (
+                saved_status
+                in {
+                    "completed",
+                    "completed_with_limitations",
+                    "failed",
+                    "timed_out",
+                    "cancelled",
+                    "superseded",
+                    "skipped_not_required",
+                }
+                and existing != payload
+            ):
+                raise ValidationError(
+                    "Completed workflow stage records are immutable."
+                )
+        self._atomic_write_compact(path, payload)
+
+    def _save_boba_workflow_transition_records(
+        self,
+        controller: BobaWorkflowControllerSetV1,
+        workflow_run_id: str,
+    ) -> None:
+        decisions_by_request: dict[str, list[Any]] = {}
+        for decision in controller.transition_decisions:
+            if decision.workflow_run_id == workflow_run_id:
+                decisions_by_request.setdefault(
+                    decision.transition_request_id,
+                    [],
+                ).append(decision)
+        for request in controller.transition_requests:
+            if request.workflow_run_id != workflow_run_id:
+                continue
+            path = self.boba_workflow_transition_path(
+                controller.project_id,
+                workflow_run_id,
+                request.transition_request_id,
+            )
+            payload = sanitize_workflow_export(
+                {
+                    "schema_version": "boba_workflow_transition_record_v1",
+                    "project_id": controller.project_id,
+                    "request": request.model_dump(mode="json"),
+                    "decisions": [
+                        item.model_dump(mode="json")
+                        for item in decisions_by_request.get(
+                            request.transition_request_id,
+                            [],
+                        )
+                    ],
+                }
+            )
+            existing = self._read(path, None)
+            if isinstance(existing, dict):
+                existing_decisions = existing.get("decisions")
+                if (
+                    isinstance(existing_decisions, list)
+                    and existing_decisions
+                    and existing != payload
+                ):
+                    raise ValidationError(
+                        "Completed workflow transition decisions are immutable."
+                    )
+            self._atomic_write_compact(path, payload)
+
+    def append_boba_workflow_events(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+        events: list[BobaWorkflowEventV1],
+    ) -> None:
+        path = self.boba_workflow_events_path(project_id, workflow_run_id)
+        existing = self.load_boba_workflow_events(project_id, workflow_run_id)
+        existing_ids = {item.event_id for item in existing}
+        sequence = existing[-1].sequence if existing else 0
+        new_events = sorted(
+            [item for item in events if item.event_id not in existing_ids],
+            key=lambda item: item.sequence,
+        )
+        if not new_events:
+            return
+        for event in new_events:
+            if event.sequence <= sequence:
+                raise ValidationError(
+                    "Workflow event sequence must be monotonic."
+                )
+            sequence = event.sequence
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            for event in new_events:
+                safe = sanitize_workflow_export(event.model_dump(mode="json"))
+                handle.write(
+                    json.dumps(
+                        safe,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def load_boba_workflow_events(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+    ) -> list[BobaWorkflowEventV1]:
+        path = self.boba_workflow_events_path(project_id, workflow_run_id)
+        if not path.exists():
+            return []
+        events: list[BobaWorkflowEventV1] = []
+        try:
+            for line in path.read_text(encoding="utf-8-sig").splitlines():
+                try:
+                    events.append(
+                        BobaWorkflowEventV1.model_validate(json.loads(line))
+                    )
+                except (json.JSONDecodeError, PydanticValidationError):
+                    continue
+        except OSError as exc:
+            raise ValidationError(
+                "BOBA Workflow Controller event stream is unreadable."
+            ) from exc
+        return sorted(events, key=lambda item: item.sequence)
+
+    def save_boba_workflow_controller(
+        self,
+        controller: BobaWorkflowControllerSetV1,
+    ) -> BobaWorkflowControllerSetV1:
+        safe = sanitize_workflow_export(controller.model_dump(mode="json"))
+        validated = BobaWorkflowControllerSetV1.model_validate(safe)
+        with self._lock:
+            for snapshot in validated.workflow_definition_snapshots:
+                stages = [
+                    item
+                    for item in validated.stage_definitions
+                    if item.workflow_definition_id
+                    == snapshot.workflow_definition_id
+                ]
+                self.save_boba_workflow_definition(
+                    validated.project_id,
+                    snapshot,
+                    stages,
+                )
+            for run in validated.workflow_runs:
+                self._atomic_write_compact(
+                    self.boba_workflow_run_path(
+                        validated.project_id,
+                        run.workflow_run_id,
+                    ),
+                    sanitize_workflow_export(
+                        self._workflow_run_payload(
+                            validated,
+                            run.workflow_run_id,
+                        )
+                    ),
+                )
+                for stage in validated.stage_instances:
+                    if stage.workflow_run_id == run.workflow_run_id:
+                        self._save_boba_workflow_stage_record(validated, stage)
+                self._save_boba_workflow_transition_records(
+                    validated,
+                    run.workflow_run_id,
+                )
+                self.append_boba_workflow_events(
+                    validated.project_id,
+                    run.workflow_run_id,
+                    [
+                        item
+                        for item in validated.workflow_events
+                        if item.workflow_run_id == run.workflow_run_id
+                    ],
+                )
+            self._atomic_write_compact(
+                self.boba_workflow_controller_path(controller.project_id),
+                {
+                    "schema_version": "boba_workflow_controller_record_v1",
+                    "workflow_controller": validated.model_dump(mode="json"),
+                },
+            )
+        return validated
+
+    def load_boba_workflow_controller(
+        self,
+        project_id: str,
+    ) -> BobaWorkflowControllerSetV1 | None:
+        try:
+            raw = self._read(self.boba_workflow_controller_path(project_id), None)
+        except ValidationError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        payload = raw.get("workflow_controller", raw)
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return BobaWorkflowControllerSetV1.model_validate(payload)
+        except PydanticValidationError:
+            return None
+
+    def load_boba_workflow_execution_lease(
+        self,
+        project_id: str,
+    ) -> BobaWorkflowExecutionLeaseV1 | None:
+        raw = self._read(
+            self.boba_workflow_execution_lease_path(project_id),
+            None,
+        )
+        if not isinstance(raw, dict):
+            return None
+        try:
+            lease = BobaWorkflowExecutionLeaseV1.model_validate(raw)
+        except PydanticValidationError as exc:
+            raise ValidationError(
+                "BOBA Workflow Controller lease metadata is malformed."
+            ) from exc
+        expires_at = self._autopilot_time(lease.expires_at)
+        lease.stale = expires_at is None or expires_at <= datetime.now(UTC)
+        if lease.stale:
+            lease.lease_status = "expired"
+        return lease
+
+    def acquire_boba_workflow_execution_lease(
+        self,
+        project_id: str,
+        *,
+        workflow_run_id: str,
+        transition_request_id: str,
+        stage_instance_id: str,
+        owner_id: str,
+        lease_mode: str,
+        revision: int,
+        project_snapshot_digest: str,
+        lease_seconds: int = 300,
+        confirm_stale: bool = False,
+    ) -> BobaWorkflowExecutionLeaseV1:
+        path = self.boba_workflow_execution_lease_path(project_id)
+        with self._lock:
+            existing = self.load_boba_workflow_execution_lease(project_id)
+            if existing is not None and not existing.stale:
+                if (
+                    existing.workflow_run_id == workflow_run_id
+                    and existing.transition_request_id == transition_request_id
+                    and existing.stage_instance_id == stage_instance_id
+                    and existing.owner_id == owner_id
+                ):
+                    return self.refresh_boba_workflow_execution_lease(
+                        project_id,
+                        workflow_run_id=workflow_run_id,
+                        owner_id=owner_id,
+                        lease_seconds=lease_seconds,
+                    )
+                raise ValidationError(
+                    "A conflicting workflow execution lease is active."
+                )
+            warnings: list[str] = []
+            if existing is not None:
+                if not confirm_stale:
+                    raise ValidationError(
+                        "A stale workflow lease requires explicit replacement."
+                    )
+                stale_path = path.with_name(
+                    f"active.lock.stale.{uuid4().hex}.json"
+                )
+                with suppress(FileNotFoundError):
+                    os.replace(path, stale_path)
+                warnings.append(
+                    "The explicitly replaced stale lease was preserved."
+                )
+            now = datetime.now(UTC)
+            lease = BobaWorkflowExecutionLeaseV1(
+                execution_lease_id=f"workflow_lease_{uuid4().hex}",
+                project_id=project_id,
+                workflow_run_id=workflow_run_id,
+                transition_request_id=transition_request_id,
+                stage_instance_id=stage_instance_id,
+                lease_mode=lease_mode,
+                owner_id=owner_id,
+                acquired_at=now.isoformat(),
+                refreshed_at=now.isoformat(),
+                expires_at=(
+                    now
+                    + timedelta(seconds=max(30, min(lease_seconds, 900)))
+                ).isoformat(),
+                lease_status="active",
+                revision_at_acquisition=revision,
+                project_snapshot_digest=project_snapshot_digest,
+                warnings=warnings,
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with path.open("x", encoding="utf-8", newline="\n") as handle:
+                    json.dump(
+                        lease.model_dump(mode="json"),
+                        handle,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except FileExistsError as exc:
+                raise ValidationError(
+                    "A workflow lease was acquired concurrently."
+                ) from exc
+            return lease
+
+    def refresh_boba_workflow_execution_lease(
+        self,
+        project_id: str,
+        *,
+        workflow_run_id: str,
+        owner_id: str,
+        lease_seconds: int = 300,
+        confirm_stale: bool = False,
+    ) -> BobaWorkflowExecutionLeaseV1:
+        with self._lock:
+            lease = self.load_boba_workflow_execution_lease(project_id)
+            if lease is None:
+                raise ValidationError("Workflow execution lease is missing.")
+            if (
+                lease.workflow_run_id != workflow_run_id
+                or lease.owner_id != owner_id
+            ):
+                raise ValidationError(
+                    "Workflow execution lease belongs to another run or owner."
+                )
+            if lease.stale and not confirm_stale:
+                raise ValidationError(
+                    "A stale workflow lease requires explicit refresh confirmation."
+                )
+            now = datetime.now(UTC)
+            lease.refreshed_at = now.isoformat()
+            lease.expires_at = (
+                now + timedelta(seconds=max(30, min(lease_seconds, 900)))
+            ).isoformat()
+            lease.stale = False
+            lease.lease_status = "active"
+            self._atomic_write_compact(
+                self.boba_workflow_execution_lease_path(project_id),
+                lease.model_dump(mode="json"),
+            )
+            return lease
+
+    def release_boba_workflow_execution_lease(
+        self,
+        project_id: str,
+        *,
+        workflow_run_id: str,
+        owner_id: str,
+    ) -> bool:
+        path = self.boba_workflow_execution_lease_path(project_id)
+        with self._lock:
+            lease = self.load_boba_workflow_execution_lease(project_id)
+            if lease is None:
+                return False
+            if (
+                lease.workflow_run_id != workflow_run_id
+                or lease.owner_id != owner_id
+            ):
+                raise ValidationError(
+                    "Workflow lease release does not match its run and owner."
+                )
+            path.unlink(missing_ok=True)
+            return True
+
+    def export_boba_workflow_controller(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        controller = self.load_boba_workflow_controller(project_id)
+        if controller is None:
+            raise ValidationError(
+                "BOBA Workflow Controller is not available for export."
+            )
+        safe = sanitize_workflow_export(
+            {
+                "schema_version": "boba_workflow_controller_export_v1",
+                "project_id": project_id,
+                "exported_at": memory_now_iso(),
+                "workflow_controller": controller.model_dump(mode="json"),
+                "privacy": {
+                    "private_paths_excluded": True,
+                    "secrets_excluded": True,
+                    "credentials_excluded": True,
+                    "raw_media_excluded": True,
+                    "complete_command_logs_excluded": True,
+                    "source_media_modified": False,
+                    "accepted_outputs_modified": False,
+                    "workflow_resume_used": False,
+                    "upload_used": False,
+                    "publication_used": False,
+                },
+            }
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("Workflow Controller export is malformed.")
+        return safe
+
+    def reset_boba_workflow_controller(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        controller = self.load_boba_workflow_controller(project_id)
+        if controller is not None and any(
+            run.run_status not in {"completed", "cancelled", "failed"}
+            for run in controller.workflow_runs
+        ):
+            raise ValidationError(
+                "Active workflow runs must be safely cancelled before reset."
+            )
+        index_path = self.boba_workflow_controller_path(project_id)
+        lock_path = self.boba_workflow_execution_lease_path(project_id)
+        with self._lock:
+            active_removed = index_path.exists()
+            lease_removed = lock_path.exists()
+            index_path.unlink(missing_ok=True)
+            lock_path.unlink(missing_ok=True)
+        return {
+            "schema_version": "boba_workflow_controller_reset_v1",
+            "project_id": project_id,
+            "active_metadata_removed": active_removed,
+            "active_lease_removed": lease_removed,
+            "immutable_workflow_history_preserved": True,
+            "stage_records_preserved": True,
+            "transition_records_preserved": True,
+            "event_streams_preserved": True,
+            "recovery_records_preserved": True,
+            "source_media_removed": False,
+            "accepted_outputs_removed": False,
+            "autopilot_history_removed": False,
+            "safety_decisions_removed": False,
+            "integration_transactions_removed": False,
+            "approvals_removed": False,
         }

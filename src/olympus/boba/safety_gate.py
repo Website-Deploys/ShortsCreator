@@ -1028,7 +1028,17 @@ def build_safety_module_operation_registry() -> dict[str, dict[str, str]]:
         "checkpoint_recovery_manager": {
             "restore_checkpoint": "future_gated",
         },
-        "workflow_controller": {"resume": "future_gated"},
+        "workflow_controller": {
+            "create_run": "automatic_read_only",
+            "advance_safe_read_only_stage": "automatic_read_only",
+            "advance_exact_internal_stage": "approval_required_execution",
+            "pause": "approval_required_read_only",
+            "cancel": "approval_required_read_only",
+            "record_human_decision": "approval_required_read_only",
+            "complete_internal_output": "approval_required_execution",
+            "resume": "future_gated",
+            "resume_workflow": "future_gated",
+        },
         "validator_runner": {"execute": "future_gated"},
         "final_decision_bus": {"continue": "future_gated"},
     }
