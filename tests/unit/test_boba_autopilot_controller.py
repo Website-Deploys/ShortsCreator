@@ -449,7 +449,7 @@ def test_required_diagnostic_approval_quality_and_handoff_stages_cannot_be_skipp
             "prepare_workflow_handoff",
             "workflow_controller",
             "prepare",
-            "future_gated",
+            "automatic_read_only",
         ),
         ("human_review", "human_operator", "review", "future_gated"),
         ("unknown", "unknown", "unknown", "unknown"),

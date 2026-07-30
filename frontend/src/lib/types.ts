@@ -5523,6 +5523,624 @@ export interface BobaIntegrationLayerSetV1 {
   limitations: string[];
 }
 
+export interface BobaWorkflowDefinitionSnapshotV1 {
+  workflow_definition_id: string;
+  workflow_name: string;
+  workflow_version: string;
+  created_at: string;
+  stage_definition_ids: string[];
+  start_stage_id: string;
+  terminal_stage_ids: string[];
+  required_stage_ids: string[];
+  optional_stage_ids: string[];
+  workflow_graph_digest: string;
+  immutable: true;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaWorkflowStageDefinitionV1 {
+  stage_definition_id: string;
+  workflow_definition_id: string;
+  stage_id: string;
+  display_name: string;
+  stage_version: string;
+  stage_scope: string;
+  operation_module_id: string;
+  operation_id: string;
+  operation_class: string;
+  side_effect_class: string;
+  required_predecessor_stage_ids: string[];
+  allowed_next_stage_ids: string[];
+  required_artifact_types: string[];
+  optional_artifact_types: string[];
+  produced_artifact_types: string[];
+  rights_gate_required: boolean;
+  target_approval_required: boolean;
+  safety_gate_required: boolean;
+  checkpoint_required: boolean;
+  technical_validation_required: boolean;
+  output_quality_review_required: boolean;
+  human_review_required: boolean;
+  terminal: boolean;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaWorkflowRunV1 {
+  workflow_run_id: string;
+  project_id: string;
+  source_id: string;
+  correlation_id: string;
+  workflow_definition_id: string;
+  created_at: string;
+  started_at: string | null;
+  updated_at: string;
+  completed_at: string | null;
+  run_status: string;
+  current_project_state: string;
+  current_stage_instance_ids: string[];
+  completed_stage_instance_ids: string[];
+  failed_stage_instance_ids: string[];
+  blocked_stage_instance_ids: string[];
+  active_transition_request_id: string | null;
+  active_transition_decision_id: string | null;
+  active_integration_transaction_id: string | null;
+  active_safety_decision_id: string | null;
+  active_autopilot_run_id: string | null;
+  active_recovery_hold_id: string | null;
+  pause_record_ids: string[];
+  incident_ids: string[];
+  human_decision_ids: string[];
+  event_ids: string[];
+  execution_lease_id: string | null;
+  project_snapshot_digest: string;
+  revision: number;
+  internal_output_complete: boolean;
+  upload_authorized: false;
+  publication_authorized: false;
+  stop_reason: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaWorkflowStageInstanceV1 {
+  stage_instance_id: string;
+  workflow_run_id: string;
+  project_id: string;
+  clip_id: string | null;
+  output_id: string | null;
+  stage_definition_id: string;
+  stage_id: string;
+  attempt_number: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  status: string;
+  predecessor_stage_instance_ids: string[];
+  successor_stage_instance_ids: string[];
+  input_artifact_binding_ids: string[];
+  output_artifact_binding_ids: string[];
+  dependency_check_id: string | null;
+  transition_request_id: string | null;
+  transition_decision_id: string | null;
+  integration_transaction_id: string | null;
+  safety_decision_id: string | null;
+  approval_record_id: string | null;
+  project_snapshot_digest: string;
+  input_digest: string;
+  idempotency_key: string;
+  result_digest: string;
+  failure_summary: string;
+  recovery_required: boolean;
+  human_review_required: boolean;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaWorkflowArtifactBindingV1 {
+  artifact_binding_id: string;
+  workflow_run_id: string;
+  stage_instance_id: string;
+  project_id: string;
+  clip_id: string | null;
+  output_id: string | null;
+  artifact_type: string;
+  producer_module_id: string;
+  producer_record_id: string;
+  schema_id: string;
+  schema_version: string;
+  artifact_digest: string;
+  sanitized_storage_reference: string;
+  immutable: boolean;
+  accepted_output: boolean;
+  source_media: boolean;
+  source_media_read_only: boolean;
+  required: boolean;
+  available: boolean;
+  stale: boolean;
+  malformed: boolean;
+  warnings: string[];
+}
+
+export interface BobaWorkflowDependencyCheckV1 {
+  dependency_check_id: string;
+  workflow_run_id: string;
+  stage_instance_id: string;
+  dependency_status: string;
+  required_predecessor_stage_ids: string[];
+  completed_predecessor_stage_ids: string[];
+  failed_predecessor_stage_ids: string[];
+  required_artifact_binding_ids: string[];
+  missing_artifact_types: string[];
+  stale_artifact_binding_ids: string[];
+  malformed_artifact_binding_ids: string[];
+  rights_ready: boolean;
+  approval_ready: boolean;
+  safety_ready: boolean;
+  checkpoint_ready: boolean;
+  validation_ready: boolean;
+  quality_ready: boolean;
+  human_review_ready: boolean;
+  active_conflict_present: boolean;
+  blocks_transition: boolean;
+  failure_reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaWorkflowTransitionRequestV1 {
+  transition_request_id: string;
+  workflow_run_id: string;
+  project_id: string;
+  clip_id: string | null;
+  output_id: string | null;
+  source_stage_instance_id: string;
+  target_stage_definition_id: string;
+  transition_type: string;
+  requested_operation_id: string;
+  request_reason: string;
+  current_revision: number;
+  project_snapshot_digest: string;
+  input_artifact_digest: string;
+  approval_record_id: string | null;
+  safety_decision_id: string | null;
+  integration_request_id: string | null;
+  checkpoint_reference: string | null;
+  checkpoint_digest: string | null;
+  quality_decision_id: string | null;
+  human_decision_id: string | null;
+  request_digest: string;
+  idempotency_key: string;
+  expires_at: string;
+  warnings: string[];
+}
+
+export interface BobaWorkflowTransitionDecisionV1 {
+  transition_decision_id: string;
+  transition_request_id: string;
+  workflow_run_id: string;
+  project_id: string;
+  decision: string;
+  decision_summary: string;
+  source_stage_valid: boolean;
+  target_stage_valid: boolean;
+  graph_transition_valid: boolean;
+  dependency_check_id: string | null;
+  artifact_bindings_valid: boolean;
+  project_snapshot_current: boolean;
+  workflow_revision_current: boolean;
+  rights_clear: boolean;
+  target_approval_valid: boolean;
+  safety_decision_valid: boolean;
+  integration_ready: boolean;
+  checkpoint_ready: boolean;
+  validation_ready: boolean;
+  quality_ready: boolean;
+  human_review_complete: boolean;
+  lease_available: boolean;
+  idempotency_clear: boolean;
+  conditions: string[];
+  unmet_conditions: string[];
+  blocking_reasons: string[];
+  next_project_state: string;
+  decision_valid: boolean;
+  target_revalidation_required: boolean;
+  workflow_resume_authorized: false;
+  upload_authorized: false;
+  publication_authorized: false;
+  confidence: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaWorkflowPauseRecordV1 {
+  pause_record_id: string;
+  workflow_run_id: string;
+  project_id: string;
+  stage_instance_id: string | null;
+  paused_at: string;
+  pause_reason: string;
+  pause_category: string;
+  project_state_at_pause: string;
+  active_operation_status: string;
+  source_media_protected: boolean;
+  accepted_outputs_protected: boolean;
+  recovery_required: boolean;
+  human_review_required: boolean;
+  resume_conditions: string[];
+  released_at: string | null;
+  warnings: string[];
+}
+
+export interface BobaWorkflowRecoveryHoldV1 {
+  recovery_hold_id: string;
+  workflow_run_id: string;
+  project_id: string;
+  failed_stage_instance_id: string;
+  created_at: string;
+  recovery_reason: string;
+  autopilot_run_id: string | null;
+  output_quality_decision_id: string | null;
+  safety_decision_id: string | null;
+  hold_status: string;
+  recovery_artifact_ids: string[];
+  original_project_snapshot_digest: string;
+  current_project_snapshot_digest: string;
+  resolution_summary: string;
+  human_review_required: boolean;
+  released: boolean;
+  released_at: string | null;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaWorkflowResumeEligibilityReviewV1 {
+  resume_eligibility_review_id: string;
+  workflow_run_id: string;
+  project_id: string;
+  recovery_hold_id: string;
+  paused_stage_instance_id: string;
+  proposed_target_stage_definition_id: string;
+  reviewed_at: string;
+  project_snapshot_match: boolean;
+  workflow_revision_match: boolean;
+  recovery_resolved: boolean;
+  output_quality_accepted: boolean;
+  technical_validation_passed: boolean;
+  rights_clear: boolean;
+  safety_decision_valid: boolean;
+  target_approval_valid: boolean;
+  checkpoint_valid: boolean;
+  rollback_state_clear: boolean;
+  no_active_recovery: boolean;
+  no_active_conflicting_transition: boolean;
+  artifacts_current: boolean;
+  dependencies_ready: boolean;
+  human_review_complete: boolean;
+  retry_budget_clear: boolean;
+  resume_eligible: boolean;
+  missing_conditions: string[];
+  blocking_conditions: string[];
+  safest_next_action: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaWorkflowExecutionLeaseV1 {
+  execution_lease_id: string;
+  project_id: string;
+  workflow_run_id: string;
+  transition_request_id: string | null;
+  stage_instance_id: string | null;
+  lease_mode: string;
+  owner_id: string;
+  acquired_at: string;
+  refreshed_at: string;
+  expires_at: string;
+  lease_status: string;
+  revision_at_acquisition: number;
+  project_snapshot_digest: string;
+  stale: boolean;
+  conflicting_lease_ids: string[];
+  warnings: string[];
+}
+
+export interface BobaWorkflowIncidentV1 {
+  incident_id: string;
+  workflow_run_id: string;
+  project_id: string;
+  stage_instance_id: string | null;
+  incident_type: string;
+  severity: string;
+  title: string;
+  bounded_summary: string;
+  observed_at: string;
+  occurrence_count: number;
+  project_state_uncertain: boolean;
+  recovery_handoff_required: boolean;
+  human_review_required: boolean;
+  warnings: string[];
+}
+
+export interface BobaWorkflowHumanDecisionV1 {
+  human_decision_id: string;
+  workflow_run_id: string;
+  project_id: string;
+  stage_instance_id: string | null;
+  transition_request_id: string | null;
+  decision_type: string;
+  decision: string;
+  bounded_reason: string;
+  reviewer_reference: string;
+  decided_at: string;
+  project_snapshot_digest: string;
+  workflow_revision: number;
+  explicit_confirmation: boolean;
+  conditions: string[];
+  expires_at: string | null;
+  upload_authorized: false;
+  publication_authorized: false;
+  warnings: string[];
+}
+
+export interface BobaWorkflowEventV1 {
+  event_id: string;
+  workflow_run_id: string;
+  project_id: string;
+  clip_id: string | null;
+  sequence: number;
+  created_at: string;
+  event_type: string;
+  severity: string;
+  project_state: string;
+  stage_instance_id: string | null;
+  transition_request_id: string | null;
+  module_id: string;
+  operation_id: string;
+  technical_message: string;
+  easy_message: string;
+  confirmed_fact: string;
+  assessment: string;
+  progress_current: number | null;
+  progress_total: number | null;
+  progress_percent: number | null;
+  requires_attention: boolean;
+  available_user_actions: string[];
+  evidence_reference_ids: string[];
+  warnings: string[];
+}
+
+export interface BobaWorkflowHandoffV1 {
+  handoff_id: string;
+  workflow_run_id: string;
+  project_id: string;
+  stage_instance_id: string | null;
+  transition_request_id: string | null;
+  source_module_id: string;
+  target_module_id: string;
+  reason: string;
+  current_project_state: string;
+  required_inputs: string[];
+  artifact_binding_ids: string[];
+  satisfied_conditions: string[];
+  blocking_conditions: string[];
+  allowed_actions: string[];
+  prohibited_actions: string[];
+  apply_automatically: boolean;
+  human_approval_required: boolean;
+  priority: string;
+  warnings: string[];
+}
+
+export interface BobaWorkflowControllerSetV1 {
+  schema_version: "boba_workflow_controller_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  workflow_definition_snapshots: BobaWorkflowDefinitionSnapshotV1[];
+  stage_definitions: BobaWorkflowStageDefinitionV1[];
+  workflow_runs: BobaWorkflowRunV1[];
+  stage_instances: BobaWorkflowStageInstanceV1[];
+  transition_requests: BobaWorkflowTransitionRequestV1[];
+  transition_decisions: BobaWorkflowTransitionDecisionV1[];
+  artifact_bindings: BobaWorkflowArtifactBindingV1[];
+  dependency_checks: BobaWorkflowDependencyCheckV1[];
+  pause_records: BobaWorkflowPauseRecordV1[];
+  recovery_holds: BobaWorkflowRecoveryHoldV1[];
+  resume_eligibility_reviews: BobaWorkflowResumeEligibilityReviewV1[];
+  execution_leases: BobaWorkflowExecutionLeaseV1[];
+  incidents: BobaWorkflowIncidentV1[];
+  human_decisions: BobaWorkflowHumanDecisionV1[];
+  workflow_events: BobaWorkflowEventV1[];
+  handoffs: BobaWorkflowHandoffV1[];
+  controller_summary: {
+    workflow_definition_count: number;
+    total_workflow_runs: number;
+    active_workflow_run_count: number;
+    paused_workflow_run_count: number;
+    recovery_hold_count: number;
+    blocked_workflow_run_count: number;
+    completed_internal_output_count: number;
+    total_stage_instance_count: number;
+    completed_stage_count: number;
+    failed_stage_count: number;
+    blocked_stage_count: number;
+    total_transition_request_count: number;
+    allowed_transition_count: number;
+    denied_transition_count: number;
+    stale_transition_count: number;
+    recovery_transition_count: number;
+    quality_block_count: number;
+    safety_block_count: number;
+    rights_block_count: number;
+    concurrency_block_count: number;
+    current_workflow_run_id: string | null;
+    current_project_state: string;
+    current_stage: string;
+    next_valid_stage: string;
+    current_pause_reason: string;
+    next_required_human_action: string;
+    safest_next_action: string;
+    limitations: string[];
+  };
+  signal_usage: Record<string, boolean | string[]>;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaWorkflowRunInspectionV1 {
+  schema_version: "boba_workflow_run_inspection_v1";
+  project_id: string;
+  workflow_run: BobaWorkflowRunV1;
+  workflow_definition: BobaWorkflowDefinitionSnapshotV1 | null;
+  stage_instances: BobaWorkflowStageInstanceV1[];
+  artifact_bindings: BobaWorkflowArtifactBindingV1[];
+  transition_requests: BobaWorkflowTransitionRequestV1[];
+  transition_decisions: BobaWorkflowTransitionDecisionV1[];
+  dependency_checks: BobaWorkflowDependencyCheckV1[];
+  pause_records: BobaWorkflowPauseRecordV1[];
+  recovery_holds: BobaWorkflowRecoveryHoldV1[];
+  resume_eligibility_reviews: BobaWorkflowResumeEligibilityReviewV1[];
+  incidents: BobaWorkflowIncidentV1[];
+  human_decisions: BobaWorkflowHumanDecisionV1[];
+  events: BobaWorkflowEventV1[];
+  handoffs: BobaWorkflowHandoffV1[];
+  summary: BobaWorkflowControllerSetV1["controller_summary"];
+  signal_usage: Record<string, boolean | string[]>;
+}
+
+export interface BobaWorkflowCreateRunInputV1 {
+  source_id?: string;
+  project_snapshot?: Record<string, unknown>;
+  source_storage_reference?: string;
+  source_artifact_digest?: string;
+  clip_ids?: string[];
+  output_ids_by_clip?: Record<string, string>;
+  rights_status?: string;
+}
+
+export interface BobaWorkflowTransitionCreateInputV1 {
+  source_stage_instance_id: string;
+  target_stage_id: string;
+  expected_revision: number;
+  transition_type:
+    | "create_initial_stage"
+    | "advance_read_only"
+    | "advance_exact_internal_stage"
+    | "retry_stage"
+    | "supersede_failed_stage"
+    | "enter_recovery"
+    | "return_from_recovery"
+    | "complete_internal_output"
+    | "pause"
+    | "cancel"
+    | "unknown";
+  reason: string;
+  clip_id?: string;
+  output_id?: string;
+  approval_record_id?: string;
+  safety_decision_id?: string;
+  integration_request_id?: string;
+  checkpoint_reference?: string;
+  checkpoint_digest?: string;
+  quality_decision_id?: string;
+  human_decision_id?: string;
+  expires_in_seconds?: number;
+  idempotency_key?: string;
+}
+
+export interface BobaWorkflowTransitionEvaluateInputV1 {
+  expected_revision: number;
+  current_project_snapshot_digest: string;
+  rights_clear?: boolean;
+  approval_record?: Record<string, unknown>;
+  safety_decision?: Record<string, unknown>;
+  checkpoint_valid?: boolean;
+  technical_validation?: Record<string, unknown>;
+  quality_decision?: Record<string, unknown>;
+  human_decision?: Record<string, unknown>;
+}
+
+export interface BobaWorkflowAdvanceInputV1 {
+  transition_decision_id: string;
+  expected_revision: number;
+  integration_parameters?: Record<string, unknown>;
+}
+
+export interface BobaWorkflowCoordinateInputV1
+  extends BobaWorkflowAdvanceInputV1 {
+  approval_binding?: Record<string, unknown>;
+  safety_binding?: Record<string, unknown>;
+}
+
+export interface BobaWorkflowPauseInputV1 {
+  expected_revision: number;
+  reason: string;
+  category?: string;
+  stage_instance_id?: string;
+}
+
+export interface BobaWorkflowRecoveryHoldInputV1 {
+  expected_revision: number;
+  failed_stage_instance_id: string;
+  reason: string;
+  observer_record_id?: string;
+}
+
+export interface BobaWorkflowResumeEligibilityInputV1 {
+  expected_revision: number;
+  recovery_hold_id: string;
+  current_project_snapshot_digest: string;
+  rights_clear: boolean;
+  approval_record?: Record<string, unknown>;
+  safety_decision?: Record<string, unknown>;
+  checkpoint_valid: boolean;
+  rollback_state_clear: boolean;
+  technical_validation?: Record<string, unknown>;
+  quality_decision?: Record<string, unknown>;
+  human_decision?: Record<string, unknown>;
+}
+
+export interface BobaWorkflowHumanDecisionInputV1 {
+  expected_revision: number;
+  decision_type: string;
+  decision: string;
+  reason: string;
+  reviewer_reference: string;
+  explicit_confirmation: boolean;
+  stage_instance_id?: string;
+  transition_request_id?: string;
+  conditions?: string[];
+  expires_in_seconds?: number;
+}
+
+export interface BobaWorkflowNextStagePlanV1 {
+  schema_version: "boba_workflow_next_stage_plan_v1";
+  project_id: string;
+  workflow_run_id: string;
+  available: boolean;
+  reason: string;
+  stage_instance: BobaWorkflowStageInstanceV1 | null;
+  stage_definition: BobaWorkflowStageDefinitionV1 | null;
+  transition_type?: "advance_read_only" | "advance_exact_internal_stage";
+  execution_started?: false;
+}
+
+export interface BobaIntegrationResponseV1 {
+  response_id: string;
+  request_id: string;
+  project_id: string;
+  run_id: string;
+  target_module_id: string;
+  target_operation_id: string;
+  status: string;
+  bounded_result: Record<string, unknown>;
+  result_digest: string;
+  idempotency_reused: boolean;
+  warnings: string[];
+  limitations: string[];
+}
+
 export interface BobaSafetyActionInputV1 {
   autopilot_run_id?: string;
   autopilot_action_id?: string;

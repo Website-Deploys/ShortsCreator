@@ -110,6 +110,28 @@ import type {
   BobaSafetyGateSetV1,
   BobaSafetyHumanReviewInputV1,
   BobaSafetyPolicySnapshotV1,
+  BobaWorkflowAdvanceInputV1,
+  BobaWorkflowControllerSetV1,
+  BobaWorkflowCoordinateInputV1,
+  BobaWorkflowCreateRunInputV1,
+  BobaWorkflowDefinitionSnapshotV1,
+  BobaWorkflowEventV1,
+  BobaWorkflowHumanDecisionInputV1,
+  BobaWorkflowHumanDecisionV1,
+  BobaWorkflowNextStagePlanV1,
+  BobaWorkflowPauseInputV1,
+  BobaWorkflowPauseRecordV1,
+  BobaWorkflowRecoveryHoldInputV1,
+  BobaWorkflowRecoveryHoldV1,
+  BobaWorkflowResumeEligibilityInputV1,
+  BobaWorkflowResumeEligibilityReviewV1,
+  BobaWorkflowRunInspectionV1,
+  BobaWorkflowRunV1,
+  BobaWorkflowTransitionCreateInputV1,
+  BobaWorkflowTransitionDecisionV1,
+  BobaWorkflowTransitionEvaluateInputV1,
+  BobaWorkflowTransitionRequestV1,
+  BobaIntegrationResponseV1,
   BobaCandidateV1,
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
@@ -748,6 +770,205 @@ export const api = {
     }>(`/boba/projects/${projectId}/output-quality-reviewer`, {
       method: "DELETE",
     }),
+  createBobaWorkflowDefinition: (
+    projectId: string,
+    sourceId?: string,
+  ) =>
+    request<BobaWorkflowDefinitionSnapshotV1>(
+      `/boba/projects/${projectId}/workflow-controller/definitions`,
+      {
+        method: "POST",
+        body: JSON.stringify({ source_id: sourceId }),
+      },
+    ),
+  getBobaWorkflowController: (projectId: string) =>
+    request<BobaWorkflowControllerSetV1>(
+      `/boba/projects/${projectId}/workflow-controller`,
+    ),
+  createBobaWorkflowRun: (
+    projectId: string,
+    input: BobaWorkflowCreateRunInputV1 = {},
+  ) =>
+    request<BobaWorkflowControllerSetV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  getBobaWorkflowRun: (projectId: string, runId: string) =>
+    request<BobaWorkflowRunInspectionV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}`,
+    ),
+  planBobaWorkflowNext: (projectId: string, runId: string) =>
+    request<BobaWorkflowNextStagePlanV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/plan-next`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    ),
+  createBobaWorkflowTransition: (
+    projectId: string,
+    runId: string,
+    input: BobaWorkflowTransitionCreateInputV1,
+  ) =>
+    request<BobaWorkflowTransitionRequestV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/transitions`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  evaluateBobaWorkflowTransition: (
+    projectId: string,
+    runId: string,
+    transitionId: string,
+    input: BobaWorkflowTransitionEvaluateInputV1,
+  ) =>
+    request<BobaWorkflowTransitionDecisionV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/transitions/${transitionId}/evaluate`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  advanceBobaWorkflowSafe: (
+    projectId: string,
+    runId: string,
+    input: BobaWorkflowAdvanceInputV1,
+  ) =>
+    request<BobaIntegrationResponseV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/advance-safe`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  coordinateBobaWorkflowApproved: (
+    projectId: string,
+    runId: string,
+    input: BobaWorkflowCoordinateInputV1,
+  ) =>
+    request<BobaIntegrationResponseV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/coordinate-approved-transition`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  pauseBobaWorkflow: (
+    projectId: string,
+    runId: string,
+    input: BobaWorkflowPauseInputV1,
+  ) =>
+    request<BobaWorkflowPauseRecordV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/pause`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  continueBobaWorkflowController: (
+    projectId: string,
+    runId: string,
+    expectedRevision: number,
+  ) =>
+    request<BobaWorkflowRunV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/continue`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expected_revision: expectedRevision }),
+      },
+    ),
+  cancelBobaWorkflow: (
+    projectId: string,
+    runId: string,
+    expectedRevision: number,
+    reason: string,
+  ) =>
+    request<BobaWorkflowRunV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/cancel`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expected_revision: expectedRevision,
+          reason,
+        }),
+      },
+    ),
+  createBobaWorkflowRecoveryHold: (
+    projectId: string,
+    runId: string,
+    input: BobaWorkflowRecoveryHoldInputV1,
+  ) =>
+    request<BobaWorkflowRecoveryHoldV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/recovery-holds`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  receiveBobaWorkflowRecoveryResult: (
+    projectId: string,
+    runId: string,
+    expectedRevision: number,
+    recoveryHoldId: string,
+    recoveryResult: Record<string, unknown>,
+  ) =>
+    request<BobaWorkflowRecoveryHoldV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/recovery-result`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expected_revision: expectedRevision,
+          recovery_hold_id: recoveryHoldId,
+          recovery_result: recoveryResult,
+        }),
+      },
+    ),
+  evaluateBobaWorkflowResumeEligibility: (
+    projectId: string,
+    runId: string,
+    input: BobaWorkflowResumeEligibilityInputV1,
+  ) =>
+    request<BobaWorkflowResumeEligibilityReviewV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/resume-eligibility`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  recordBobaWorkflowHumanDecision: (
+    projectId: string,
+    runId: string,
+    input: BobaWorkflowHumanDecisionInputV1,
+  ) =>
+    request<BobaWorkflowHumanDecisionV1>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/human-decision`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  getBobaWorkflowEvents: (projectId: string, runId: string) =>
+    request<{
+      schema_version: "boba_workflow_event_stream_v1";
+      project_id: string;
+      run_id: string;
+      events: BobaWorkflowEventV1[];
+    }>(
+      `/boba/projects/${projectId}/workflow-controller/runs/${runId}/events`,
+    ),
+  exportBobaWorkflowController: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/workflow-controller/export`,
+    ),
+  resetBobaWorkflowController: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/workflow-controller`,
+      { method: "DELETE" },
+    ),
   getBobaAutopilotController: (projectId: string) =>
     request<BobaAutopilotControllerSetV1>(
       `/boba/projects/${projectId}/autopilot`,

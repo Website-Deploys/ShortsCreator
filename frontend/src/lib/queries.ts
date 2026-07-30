@@ -87,6 +87,16 @@ import type {
   BobaSafetyDecisionV1,
   BobaSafetyGateSetV1,
   BobaSafetyHumanReviewInputV1,
+  BobaWorkflowAdvanceInputV1,
+  BobaWorkflowControllerSetV1,
+  BobaWorkflowCoordinateInputV1,
+  BobaWorkflowCreateRunInputV1,
+  BobaWorkflowHumanDecisionInputV1,
+  BobaWorkflowPauseInputV1,
+  BobaWorkflowRecoveryHoldInputV1,
+  BobaWorkflowResumeEligibilityInputV1,
+  BobaWorkflowTransitionCreateInputV1,
+  BobaWorkflowTransitionEvaluateInputV1,
   BobaCandidatesResponse,
   BobaClipBriefSetV1,
   BobaClipRankingV1,
@@ -162,6 +172,8 @@ export const queryKeys = {
     ["boba", "projects", id, "safety-gate"] as const,
   bobaIntegrationLayer: (id: string) =>
     ["boba", "projects", id, "integration-layer"] as const,
+  bobaWorkflowController: (id: string) =>
+    ["boba", "projects", id, "workflow-controller"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -996,6 +1008,283 @@ export function useResetBobaOutputQualityReviewer(projectId: string) {
     onSuccess: () => {
       queryClient.setQueryData(
         queryKeys.bobaOutputQualityReviewer(projectId),
+        null,
+      );
+    },
+  });
+}
+
+export function useBobaWorkflowController(projectId: string) {
+  return useQuery<BobaWorkflowControllerSetV1 | null>({
+    queryKey: queryKeys.bobaWorkflowController(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaWorkflowController(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useCreateBobaWorkflowDefinition(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sourceId?: string) =>
+      api.createBobaWorkflowDefinition(projectId, sourceId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useCreateBobaWorkflowRun(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaWorkflowCreateRunInputV1 = {}) =>
+      api.createBobaWorkflowRun(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(
+        queryKeys.bobaWorkflowController(projectId),
+        result,
+      );
+    },
+  });
+}
+
+export function usePlanBobaWorkflowNext(projectId: string, runId: string) {
+  return useMutation({
+    mutationFn: () => api.planBobaWorkflowNext(projectId, runId),
+  });
+}
+
+export function useCreateBobaWorkflowTransition(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaWorkflowTransitionCreateInputV1) =>
+      api.createBobaWorkflowTransition(projectId, runId, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useEvaluateBobaWorkflowTransition(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      transitionId,
+      input,
+    }: {
+      transitionId: string;
+      input: BobaWorkflowTransitionEvaluateInputV1;
+    }) =>
+      api.evaluateBobaWorkflowTransition(
+        projectId,
+        runId,
+        transitionId,
+        input,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useAdvanceBobaWorkflowSafe(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaWorkflowAdvanceInputV1) =>
+      api.advanceBobaWorkflowSafe(projectId, runId, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useCoordinateBobaWorkflowApproved(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaWorkflowCoordinateInputV1) =>
+      api.coordinateBobaWorkflowApproved(projectId, runId, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function usePauseBobaWorkflow(projectId: string, runId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaWorkflowPauseInputV1) =>
+      api.pauseBobaWorkflow(projectId, runId, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useContinueBobaWorkflowController(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (expectedRevision: number) =>
+      api.continueBobaWorkflowController(
+        projectId,
+        runId,
+        expectedRevision,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useCancelBobaWorkflow(projectId: string, runId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      expectedRevision,
+      reason,
+    }: {
+      expectedRevision: number;
+      reason: string;
+    }) =>
+      api.cancelBobaWorkflow(
+        projectId,
+        runId,
+        expectedRevision,
+        reason,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useCreateBobaWorkflowRecoveryHold(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaWorkflowRecoveryHoldInputV1) =>
+      api.createBobaWorkflowRecoveryHold(projectId, runId, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useReceiveBobaWorkflowRecoveryResult(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      expectedRevision,
+      recoveryHoldId,
+      recoveryResult,
+    }: {
+      expectedRevision: number;
+      recoveryHoldId: string;
+      recoveryResult: Record<string, unknown>;
+    }) =>
+      api.receiveBobaWorkflowRecoveryResult(
+        projectId,
+        runId,
+        expectedRevision,
+        recoveryHoldId,
+        recoveryResult,
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useEvaluateBobaWorkflowResumeEligibility(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaWorkflowResumeEligibilityInputV1) =>
+      api.evaluateBobaWorkflowResumeEligibility(projectId, runId, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useRecordBobaWorkflowHumanDecision(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaWorkflowHumanDecisionInputV1) =>
+      api.recordBobaWorkflowHumanDecision(projectId, runId, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useExportBobaWorkflowController(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaWorkflowController(projectId),
+  });
+}
+
+export function useResetBobaWorkflowController(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaWorkflowController(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(
+        queryKeys.bobaWorkflowController(projectId),
         null,
       );
     },

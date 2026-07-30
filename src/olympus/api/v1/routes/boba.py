@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter
@@ -48,6 +51,10 @@ from olympus.boba.performance_feedback import (
 )
 from olympus.boba.scout import BobaCandidateV1
 from olympus.boba.tool_recovery import BobaToolRecoveryApprovalV1
+from olympus.boba.workflow_controller import (
+    BobaWorkflowPauseCategoryV1,
+    BobaWorkflowTransitionTypeV1,
+)
 from olympus.platform.errors import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/boba", tags=["boba"])
@@ -482,6 +489,146 @@ class AutopilotHumanDecisionRequest(BaseModel):
     selected_alternative_id: str | None = Field(default=None, max_length=180)
 
 
+class WorkflowDefinitionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str | None = Field(default=None, max_length=512)
+
+
+class WorkflowCreateRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str | None = Field(default=None, max_length=512)
+    project_snapshot: dict[str, Any] = Field(default_factory=dict, max_length=128)
+    source_storage_reference: str | None = Field(default=None, max_length=500)
+    source_artifact_digest: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+    )
+    clip_ids: list[str] = Field(default_factory=list, max_length=256)
+    output_ids_by_clip: dict[str, str] = Field(
+        default_factory=dict,
+        max_length=256,
+    )
+    rights_status: str = Field(default="unknown", max_length=160)
+
+
+class WorkflowTransitionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_stage_instance_id: str = Field(min_length=1, max_length=180)
+    target_stage_id: str = Field(min_length=1, max_length=160)
+    expected_revision: int = Field(ge=1)
+    transition_type: BobaWorkflowTransitionTypeV1
+    reason: str = Field(min_length=1, max_length=900)
+    clip_id: str | None = Field(default=None, max_length=160)
+    output_id: str | None = Field(default=None, max_length=160)
+    approval_record_id: str | None = Field(default=None, max_length=180)
+    safety_decision_id: str | None = Field(default=None, max_length=180)
+    integration_request_id: str | None = Field(default=None, max_length=180)
+    checkpoint_reference: str | None = Field(default=None, max_length=500)
+    checkpoint_digest: str | None = Field(default=None, max_length=128)
+    quality_decision_id: str | None = Field(default=None, max_length=180)
+    human_decision_id: str | None = Field(default=None, max_length=180)
+    expires_in_seconds: int = Field(default=300, ge=1, le=3_600)
+    idempotency_key: str | None = Field(default=None, max_length=180)
+
+
+class WorkflowTransitionEvaluateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)
+    current_project_snapshot_digest: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+    )
+    rights_clear: bool | None = None
+    approval_record: dict[str, Any] | None = None
+    safety_decision: dict[str, Any] | None = None
+    checkpoint_valid: bool | None = None
+    technical_validation: dict[str, Any] | None = None
+    quality_decision: dict[str, Any] | None = None
+    human_decision: dict[str, Any] | None = None
+
+
+class WorkflowAdvanceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transition_decision_id: str = Field(min_length=1, max_length=180)
+    expected_revision: int = Field(ge=1)
+    integration_parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        max_length=128,
+    )
+
+
+class WorkflowCoordinateApprovedRequest(WorkflowAdvanceRequest):
+    approval_binding: BobaIntegrationApprovalBindingV1 | None = None
+    safety_binding: BobaIntegrationSafetyBindingV1 | None = None
+
+
+class WorkflowPauseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=900)
+    category: BobaWorkflowPauseCategoryV1 = "manual"
+    stage_instance_id: str | None = Field(default=None, max_length=180)
+
+
+class WorkflowRevisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)
+
+
+class WorkflowCancelRequest(WorkflowRevisionRequest):
+    reason: str = Field(min_length=1, max_length=900)
+
+
+class WorkflowRecoveryHoldRequest(WorkflowRevisionRequest):
+    failed_stage_instance_id: str = Field(min_length=1, max_length=180)
+    reason: str = Field(min_length=1, max_length=900)
+    observer_record_id: str | None = Field(default=None, max_length=180)
+
+
+class WorkflowRecoveryResultRequest(WorkflowRevisionRequest):
+    recovery_hold_id: str = Field(min_length=1, max_length=180)
+    recovery_result: dict[str, Any]
+
+
+class WorkflowResumeEligibilityRequest(WorkflowRevisionRequest):
+    recovery_hold_id: str = Field(min_length=1, max_length=180)
+    current_project_snapshot_digest: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+    )
+    rights_clear: bool
+    approval_record: dict[str, Any] | None = None
+    safety_decision: dict[str, Any] | None = None
+    checkpoint_valid: bool
+    rollback_state_clear: bool
+    technical_validation: dict[str, Any] | None = None
+    quality_decision: dict[str, Any] | None = None
+    human_decision: dict[str, Any] | None = None
+
+
+class WorkflowHumanDecisionRequest(WorkflowRevisionRequest):
+    decision_type: str = Field(min_length=1, max_length=160)
+    decision: str = Field(min_length=1, max_length=160)
+    reason: str = Field(min_length=1, max_length=900)
+    reviewer_reference: str = Field(min_length=1, max_length=160)
+    explicit_confirmation: bool
+    stage_instance_id: str | None = Field(default=None, max_length=180)
+    transition_request_id: str | None = Field(default=None, max_length=180)
+    conditions: list[str] = Field(default_factory=list, max_length=64)
+    expires_in_seconds: int | None = Field(default=None, ge=1, le=86_400)
+
+
 class SafetyPolicyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -610,6 +757,25 @@ def _require_memory_enabled(settings: SettingsDep) -> None:
 async def _require_project(project_id: str, boba: BobaIntegrationDep) -> None:
     if await boba.projects.get(project_id) is None:
         raise NotFoundError("Project was not found.", details={"id": project_id})
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+async def _source_artifact_digest(
+    boba: BobaIntegrationDep,
+    storage_key: str,
+) -> str:
+    local_path = boba.storage.local_path(storage_key)
+    if local_path:
+        return await asyncio.to_thread(_sha256_file, local_path)
+    source_bytes = await boba.storage.get(storage_key)
+    return hashlib.sha256(source_bytes).hexdigest()
 
 
 @router.get("/projects/{project_id}/integration-layer")
@@ -2474,6 +2640,435 @@ async def reset_output_quality_reviewer(
         "publication_used": False,
         "destructive_action_used": False,
     }
+
+
+@router.post("/projects/{project_id}/workflow-controller/definitions")
+async def create_workflow_definition(
+    project_id: str,
+    body: WorkflowDefinitionRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    definition = boba.build_boba_workflow_definition(
+        project_id,
+        source_id=body.source_id,
+    )
+    return definition.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/workflow-controller/runs")
+async def create_workflow_run(
+    project_id: str,
+    body: WorkflowCreateRunRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    project = await boba.projects.get(project_id)
+    if project is None:
+        raise NotFoundError("Project was not found.", details={"id": project_id})
+    if bool(body.source_storage_reference) != bool(body.source_artifact_digest):
+        raise ValidationError(
+            "Source storage reference and source artifact digest must be "
+            "provided together."
+        )
+    source_storage_reference = (
+        body.source_storage_reference or project.storage_key
+    )
+    source_artifact_digest = body.source_artifact_digest or (
+        await _source_artifact_digest(boba, project.storage_key)
+    )
+    project_snapshot = body.project_snapshot or {
+        "project_id": project.id,
+        "project_status": project.status.value,
+        "source_type": project.source_type,
+        "source_filename": project.source_filename,
+        "source_storage_reference": project.storage_key,
+        "desired_clip_count": project.desired_clip_count,
+        "updated_at": project.updated_at.isoformat(),
+    }
+    controller = boba.create_boba_workflow_run(
+        project_id,
+        source_id=body.source_id or project.id,
+        project_snapshot=project_snapshot,
+        source_storage_reference=source_storage_reference,
+        source_artifact_digest=source_artifact_digest,
+        clip_ids=body.clip_ids,
+        output_ids_by_clip=body.output_ids_by_clip,
+        rights_status=body.rights_status,
+    )
+    return controller.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/workflow-controller")
+async def get_workflow_controller(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    controller = boba.load_boba_workflow_controller(project_id)
+    if controller is None:
+        raise NotFoundError(
+            "BOBA Workflow Controller V1 is not available.",
+            details={"project_id": project_id},
+        )
+    return controller.model_dump(mode="json")
+
+
+@router.get(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}"
+)
+async def get_workflow_run(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_workflow_run(project_id, run_id)
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/plan-next"
+)
+async def plan_workflow_next_stage(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.plan_boba_workflow_next_stage(project_id, run_id)
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/transitions"
+)
+async def create_workflow_transition(
+    project_id: str,
+    run_id: str,
+    body: WorkflowTransitionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    request = boba.create_boba_workflow_transition_request(
+        project_id,
+        run_id,
+        source_stage_instance_id=body.source_stage_instance_id,
+        target_stage_id=body.target_stage_id,
+        expected_revision=body.expected_revision,
+        transition_type=body.transition_type,
+        reason=body.reason,
+        clip_id=body.clip_id,
+        output_id=body.output_id,
+        approval_record_id=body.approval_record_id,
+        safety_decision_id=body.safety_decision_id,
+        integration_request_id=body.integration_request_id,
+        checkpoint_reference=body.checkpoint_reference,
+        checkpoint_digest=body.checkpoint_digest,
+        quality_decision_id=body.quality_decision_id,
+        human_decision_id=body.human_decision_id,
+        expires_in_seconds=body.expires_in_seconds,
+        idempotency_key=body.idempotency_key,
+    )
+    return request.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/"
+    "transitions/{transition_id}/evaluate"
+)
+async def evaluate_workflow_transition(
+    project_id: str,
+    run_id: str,
+    transition_id: str,
+    body: WorkflowTransitionEvaluateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    decision = boba.evaluate_boba_workflow_transition(
+        project_id,
+        run_id,
+        transition_id,
+        expected_revision=body.expected_revision,
+        current_project_snapshot_digest=body.current_project_snapshot_digest,
+        rights_clear=body.rights_clear,
+        approval_record=body.approval_record,
+        safety_decision=body.safety_decision,
+        checkpoint_valid=body.checkpoint_valid,
+        technical_validation=body.technical_validation,
+        quality_decision=body.quality_decision,
+        human_decision=body.human_decision,
+    )
+    return decision.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/advance-safe"
+)
+async def advance_workflow_safe_stage(
+    project_id: str,
+    run_id: str,
+    body: WorkflowAdvanceRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    response = await boba.advance_boba_workflow_safe_read_only_stage(
+        project_id,
+        run_id,
+        body.transition_decision_id,
+        expected_revision=body.expected_revision,
+        integration_parameters=body.integration_parameters or None,
+    )
+    return response.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/"
+    "coordinate-approved-transition"
+)
+async def coordinate_approved_workflow_transition(
+    project_id: str,
+    run_id: str,
+    body: WorkflowCoordinateApprovedRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    response = await boba.coordinate_approved_boba_workflow_transition(
+        project_id,
+        run_id,
+        body.transition_decision_id,
+        expected_revision=body.expected_revision,
+        integration_parameters=body.integration_parameters or None,
+        approval_binding=body.approval_binding,
+        safety_binding=body.safety_binding,
+    )
+    return response.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/pause"
+)
+async def pause_workflow_run(
+    project_id: str,
+    run_id: str,
+    body: WorkflowPauseRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    pause = boba.pause_boba_workflow(
+        project_id,
+        run_id,
+        expected_revision=body.expected_revision,
+        reason=body.reason,
+        category=body.category,
+        stage_instance_id=body.stage_instance_id,
+    )
+    return pause.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/continue"
+)
+async def continue_workflow_controller(
+    project_id: str,
+    run_id: str,
+    body: WorkflowRevisionRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    run = boba.continue_boba_workflow_controller(
+        project_id,
+        run_id,
+        expected_revision=body.expected_revision,
+    )
+    return run.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/cancel"
+)
+async def cancel_workflow_run(
+    project_id: str,
+    run_id: str,
+    body: WorkflowCancelRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    run = boba.cancel_boba_workflow_run(
+        project_id,
+        run_id,
+        expected_revision=body.expected_revision,
+        reason=body.reason,
+    )
+    return run.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/recovery-holds"
+)
+async def create_workflow_recovery_hold(
+    project_id: str,
+    run_id: str,
+    body: WorkflowRecoveryHoldRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    hold = boba.create_boba_workflow_recovery_hold(
+        project_id,
+        run_id,
+        failed_stage_instance_id=body.failed_stage_instance_id,
+        expected_revision=body.expected_revision,
+        reason=body.reason,
+        observer_record_id=body.observer_record_id,
+    )
+    return hold.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/recovery-result"
+)
+async def receive_workflow_recovery_result(
+    project_id: str,
+    run_id: str,
+    body: WorkflowRecoveryResultRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    hold = boba.receive_boba_autopilot_recovery_result(
+        project_id,
+        run_id,
+        body.recovery_hold_id,
+        body.recovery_result,
+        expected_revision=body.expected_revision,
+    )
+    return hold.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/"
+    "resume-eligibility"
+)
+async def evaluate_workflow_resume_eligibility(
+    project_id: str,
+    run_id: str,
+    body: WorkflowResumeEligibilityRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    review = boba.evaluate_boba_workflow_resume_eligibility(
+        project_id,
+        run_id,
+        body.recovery_hold_id,
+        expected_revision=body.expected_revision,
+        current_project_snapshot_digest=body.current_project_snapshot_digest,
+        rights_clear=body.rights_clear,
+        approval_record=body.approval_record,
+        safety_decision=body.safety_decision,
+        checkpoint_valid=body.checkpoint_valid,
+        rollback_state_clear=body.rollback_state_clear,
+        technical_validation=body.technical_validation,
+        quality_decision=body.quality_decision,
+        human_decision=body.human_decision,
+    )
+    return review.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/human-decision"
+)
+async def record_workflow_human_decision(
+    project_id: str,
+    run_id: str,
+    body: WorkflowHumanDecisionRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    decision = boba.record_boba_workflow_human_decision(
+        project_id,
+        run_id,
+        expected_revision=body.expected_revision,
+        decision_type=body.decision_type,
+        decision=body.decision,
+        reason=body.reason,
+        reviewer_reference=body.reviewer_reference,
+        explicit_confirmation=body.explicit_confirmation,
+        stage_instance_id=body.stage_instance_id,
+        transition_request_id=body.transition_request_id,
+        conditions=body.conditions,
+        expires_in_seconds=body.expires_in_seconds,
+    )
+    return decision.model_dump(mode="json")
+
+
+@router.get(
+    "/projects/{project_id}/workflow-controller/runs/{run_id}/events"
+)
+async def get_workflow_events(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    events = boba.inspect_boba_workflow_events(project_id, run_id)
+    return {
+        "schema_version": "boba_workflow_event_stream_v1",
+        "project_id": project_id,
+        "run_id": run_id,
+        "events": [item.model_dump(mode="json") for item in events],
+    }
+
+
+@router.get("/projects/{project_id}/workflow-controller/export")
+async def export_workflow_controller(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_workflow_controller(project_id)
+
+
+@router.delete("/projects/{project_id}/workflow-controller")
+async def reset_workflow_controller(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_workflow_controller(project_id)
 
 
 @router.post("/projects/{project_id}/autopilot/runs")

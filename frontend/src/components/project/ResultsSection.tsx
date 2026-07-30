@@ -5,6 +5,7 @@ import { useState } from "react";
 import { CopyIcon, DownloadIcon, ServerIcon, SparklesIcon } from "@/components/icons";
 import { BobaIntegrationLayerPanel } from "@/components/project/BobaIntegrationLayerPanel";
 import { BobaSafetyGatePanel } from "@/components/project/BobaSafetyGatePanel";
+import { BobaWorkflowControllerPanel } from "@/components/project/BobaWorkflowControllerPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { mediaUrls } from "@/lib/apiClient";
 import {
@@ -12138,6 +12139,21 @@ export function ResultsSection({
   );
   const safetyGatePanel = <BobaSafetyGatePanel projectId={projectId} />;
   const autopilotPanel = <BobaAutopilotPanel projectId={projectId} />;
+  const workflowClipIds = Array.from(
+    new Set([...plans.map((plan) => plan.id), ...renders.map((item) => item.clip_id)]),
+  );
+  const workflowControllerPanel = (
+    <BobaWorkflowControllerPanel
+      clipIds={workflowClipIds}
+      outputIdsByClip={Object.fromEntries(
+        workflowClipIds.map((clipId) => [
+          clipId,
+          `output_${clipId}`.slice(0, 160),
+        ]),
+      )}
+      projectId={projectId}
+    />
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -12173,6 +12189,7 @@ export function ResultsSection({
         {integrationLayerPanel}
         {safetyGatePanel}
         {autopilotPanel}
+        {workflowControllerPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -12220,6 +12237,7 @@ export function ResultsSection({
         {integrationLayerPanel}
         {safetyGatePanel}
         {autopilotPanel}
+        {workflowControllerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -12263,6 +12281,7 @@ export function ResultsSection({
         {integrationLayerPanel}
         {safetyGatePanel}
         {autopilotPanel}
+        {workflowControllerPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -12306,6 +12325,7 @@ export function ResultsSection({
       {integrationLayerPanel}
       {safetyGatePanel}
       {autopilotPanel}
+      {workflowControllerPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}
