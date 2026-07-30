@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -89,6 +90,18 @@ from olympus.boba.global_memory import build_and_save_global_memory
 from olympus.boba.hook_retention import (
     BobaHookRetentionBrainV1,
     BobaHookRetentionSetV1,
+)
+from olympus.boba.integration_layer import (
+    BobaIntegrationApprovalBindingV1,
+    BobaIntegrationArtifactReferenceV1,
+    BobaIntegrationEnvelopeV1,
+    BobaIntegrationLayerSetV1,
+    BobaIntegrationLayerV1,
+    BobaIntegrationRequestV1,
+    BobaIntegrationResponseV1,
+    BobaIntegrationSafetyBindingV1,
+    BobaIntegrationTransactionV1,
+    sanitize_integration_export,
 )
 from olympus.boba.memory_application import create_memory_application
 from olympus.boba.memory_contracts import BobaProjectMemoryV1
@@ -187,6 +200,49 @@ def _list(value: Any) -> list[Any]:
 
 def _data(stage: dict[str, Any]) -> dict[str, Any]:
     return _dict(stage.get("data"))
+
+
+_INTEGRATION_FACADE_OPERATION_IDS = (
+    "observer.generate",
+    "observer.load",
+    "observer.export",
+    "error_doctor.generate",
+    "error_doctor.load",
+    "error_doctor.export",
+    "root_cause_analyzer.generate",
+    "root_cause_analyzer.load",
+    "root_cause_analyzer.export",
+    "repair_planner.generate",
+    "repair_planner.load",
+    "repair_planner.export",
+    "code_surgeon.propose",
+    "code_surgeon.load",
+    "code_surgeon.export",
+    "tool_recovery_brain.plan",
+    "tool_recovery_brain.health_check",
+    "tool_recovery_brain.validate_output",
+    "tool_recovery_brain.load",
+    "tool_recovery_brain.export",
+    "output_quality_reviewer.review",
+    "output_quality_reviewer.compare",
+    "output_quality_reviewer.load",
+    "output_quality_reviewer.export",
+    "autopilot_controller.create_run",
+    "autopilot_controller.plan_next",
+    "autopilot_controller.advance_safe",
+    "autopilot_controller.coordinate_approved",
+    "autopilot_controller.pause",
+    "autopilot_controller.continue_controller",
+    "autopilot_controller.cancel",
+    "autopilot_controller.load",
+    "autopilot_controller.export",
+    "safety_gate.create_policy",
+    "safety_gate.create_request",
+    "safety_gate.evaluate",
+    "safety_gate.revalidate",
+    "safety_gate.load",
+    "safety_gate.export",
+)
 
 
 class BobaIntegration:
@@ -289,6 +345,567 @@ class BobaIntegration:
             *self.output_quality_reviewer.validator_registry,
         }
         return {"available_validators": sorted(available_validators)}
+
+    async def _integration_project_exists(self, project_id: str) -> bool:
+        return await self.projects.get(project_id) is not None
+
+    async def _integration_context(
+        self,
+        project_id: str,
+        request: BobaIntegrationRequestV1,
+    ) -> dict[str, Any]:
+        layer = self.store.load_boba_integration_layer(project_id)
+        envelope = next(
+            (
+                item
+                for item in layer.request_envelopes
+                if item.envelope_id == request.envelope_id
+            ),
+            None,
+        ) if layer is not None else None
+        approval_records: dict[str, Any] = {}
+        approval_record = request.request_parameters.get("approval_record")
+        if (
+            envelope is not None
+            and envelope.approval_binding is not None
+            and isinstance(approval_record, dict)
+        ):
+            approval_records[
+                envelope.approval_binding.approval_record_id
+            ] = approval_record
+        safety_decisions: dict[str, Any] = {}
+        if envelope is not None and envelope.safety_binding is not None:
+            decision = self.store.load_boba_safety_decision(
+                project_id,
+                envelope.safety_binding.safety_decision_id,
+            )
+            if decision is not None:
+                safety_decisions[decision.safety_decision_id] = decision
+        controller = self.store.load_boba_autopilot_controller(project_id)
+        action_id = str(
+            request.request_parameters.get("autopilot_action_id") or ""
+        )
+        action = next(
+            (
+                item
+                for item in controller.planned_actions
+                if item.action_id == action_id and item.run_id == request.run_id
+            ),
+            None,
+        ) if controller is not None and action_id else None
+        target_operation = request.target_operation_id.split(".", 1)[-1]
+        action_matches_target = bool(
+            action is not None
+            and (
+                request.target_module_id == "autopilot_controller"
+                or (
+                    action.target_module == request.target_module_id
+                    and action.target_operation == target_operation
+                )
+            )
+        )
+        rights = self.store.load_rights_permission_gate(project_id)
+        rights_allowed = bool(
+            rights is not None
+            and rights.gate_decisions
+            and all(not item.blocked for item in rights.gate_decisions)
+        )
+        return {
+            "expected_run_id": action.run_id if action is not None else "",
+            "approval_records": approval_records,
+            "safety_decisions": safety_decisions,
+            "autopilot_action_valid": action_matches_target,
+            "rights_allowed": rights_allowed,
+            "project_state_uncertain": False,
+            "active_target_operation_ids": [],
+            "retry_allowed": False,
+        }
+
+    def _integration_handlers(self) -> dict[str, Any]:
+        handlers: dict[str, Any] = {}
+        for operation_id in _INTEGRATION_FACADE_OPERATION_IDS:
+            handlers[operation_id] = (
+                self._invoke_registered_boba_integration_operation
+            )
+        return handlers
+
+    def _integration_layer(
+        self,
+        project_id: str,
+        *,
+        source_id: str | None = None,
+    ) -> BobaIntegrationLayerV1:
+        return BobaIntegrationLayerV1(
+            self.store,
+            project_id=project_id,
+            source_id=source_id or project_id,
+            handlers=self._integration_handlers(),
+            project_exists=self._integration_project_exists,
+            context_provider=self._integration_context,
+        )
+
+    @staticmethod
+    def _bounded_integration_target_result(
+        value: object | None,
+        *,
+        target_revalidated: bool = False,
+        side_effects: list[str] | None = None,
+    ) -> dict[str, Any]:
+        payload = BobaIntegration._model_payload(value)
+        safe = sanitize_integration_export(payload)
+        safe_payload = safe if isinstance(safe, dict) else {"value": safe}
+        encoded = json.dumps(
+            safe_payload,
+            sort_keys=True,
+            ensure_ascii=True,
+        ).encode("utf-8")
+        if len(encoded) > 18_000:
+            digest = hashlib.sha256(encoded).hexdigest()
+            safe_payload = {
+                "available": bool(payload),
+                "schema_version": str(payload.get("schema_version") or "unknown"),
+                "result_digest": digest,
+                "top_level_fields": sorted(str(key) for key in payload)[:64],
+                "summary": (
+                    "The target result was persisted by its owning module; "
+                    "Integration Layer retained only a bounded reference summary."
+                ),
+            }
+        safe_payload["_integration_target_revalidated"] = target_revalidated
+        safe_payload["_integration_side_effects"] = side_effects or []
+        return safe_payload
+
+    async def _invoke_registered_boba_integration_operation(
+        self,
+        request: BobaIntegrationRequestV1,
+    ) -> dict[str, Any]:
+        operation_id = request.target_operation_id
+        project_id = request.project_id
+        values = dict(request.request_parameters)
+        result: object | None
+        side_effects: list[str] = []
+        target_revalidated = False
+
+        load_handlers = {
+            "observer.load": self.load_observer_report,
+            "error_doctor.load": self.load_boba_error_doctor,
+            "root_cause_analyzer.load": self.load_boba_root_cause_analyzer,
+            "repair_planner.load": self.load_boba_repair_planner,
+            "code_surgeon.load": self.load_boba_code_surgeon,
+            "tool_recovery_brain.load": self.load_boba_tool_recovery,
+            "output_quality_reviewer.load": (
+                self.load_boba_output_quality_reviewer
+            ),
+            "autopilot_controller.load": self.load_boba_autopilot_controller,
+            "safety_gate.load": self.load_boba_safety_gate,
+        }
+        export_handlers = {
+            "observer.export": self.export_observer_report,
+            "error_doctor.export": self.export_boba_error_doctor,
+            "root_cause_analyzer.export": self.export_boba_root_cause_analyzer,
+            "repair_planner.export": self.export_boba_repair_planner,
+            "code_surgeon.export": self.export_boba_code_surgeon,
+            "tool_recovery_brain.export": self.export_boba_tool_recovery,
+            "output_quality_reviewer.export": (
+                self.export_boba_output_quality_reviewer
+            ),
+            "autopilot_controller.export": (
+                self.export_boba_autopilot_controller
+            ),
+            "safety_gate.export": self.export_boba_safety_gate,
+        }
+        if operation_id in load_handlers:
+            result = load_handlers[operation_id](project_id)
+        elif operation_id in export_handlers:
+            result = export_handlers[operation_id](project_id)
+        elif operation_id == "observer.generate":
+            result = await self.generate_observer_report(
+                project_id,
+                workflow_context=_dict(values.get("workflow_context")),
+                dry_run=bool(values.get("dry_run")),
+            )
+            if not bool(values.get("dry_run")):
+                side_effects.append("observer_metadata_updated")
+        elif operation_id == "error_doctor.generate":
+            error_summaries = values.get("error_summaries")
+            result = await self.generate_boba_error_doctor(
+                project_id,
+                diagnostic_context=_dict(values.get("diagnostic_context")),
+                error_summaries=(
+                    list(error_summaries)
+                    if isinstance(error_summaries, list)
+                    else None
+                ),
+                dry_run=bool(values.get("dry_run")),
+            )
+            if not bool(values.get("dry_run")):
+                side_effects.append("error_doctor_metadata_updated")
+        elif operation_id == "root_cause_analyzer.generate":
+            result = await self.generate_boba_root_cause_analyzer(
+                project_id,
+                diagnostic_context=_dict(values.get("diagnostic_context")),
+                dry_run=bool(values.get("dry_run")),
+            )
+            if not bool(values.get("dry_run")):
+                side_effects.append("root_cause_metadata_updated")
+        elif operation_id == "repair_planner.generate":
+            result = await self.generate_boba_repair_planner(
+                project_id,
+                planning_context=_dict(values.get("planning_context")),
+                dry_run=bool(values.get("dry_run")),
+            )
+            if not bool(values.get("dry_run")):
+                side_effects.append("repair_plan_metadata_updated")
+        elif operation_id == "code_surgeon.propose":
+            template_identifier = str(
+                values.get("deterministic_template_identifier") or ""
+            )
+            if not template_identifier:
+                raise ValidationError(
+                    "Integration Layer Code Surgeon proposals require a "
+                    "registered deterministic template identifier."
+                )
+            result = await self.generate_boba_code_surgeon_proposal(
+                project_id,
+                repair_case_id=str(values.get("repair_case_id") or "") or None,
+                repair_strategy_id=(
+                    str(values.get("repair_strategy_id") or "") or None
+                ),
+                proposal_source="deterministic_template",
+                deterministic_template_identifier=template_identifier,
+                template_parameters=_dict(values.get("template_parameters")),
+                base_branch=str(values.get("base_branch") or "main"),
+                affected_paths=[
+                    str(item)
+                    for item in values.get("affected_paths", [])
+                    if isinstance(item, str)
+                ],
+                approved_special_paths=[
+                    str(item)
+                    for item in values.get("approved_special_paths", [])
+                    if isinstance(item, str)
+                ],
+            )
+            side_effects.append("code_surgeon_proposal_metadata_updated")
+        elif operation_id == "tool_recovery_brain.plan":
+            result = await self.generate_boba_tool_recovery_plan(
+                project_id,
+                selected_handoff_id=(
+                    str(values.get("selected_handoff_id") or "") or None
+                ),
+                selected_repair_strategy_id=(
+                    str(values.get("selected_repair_strategy_id") or "") or None
+                ),
+                failure_context=_dict(values.get("failure_context")),
+                run_health_checks=(
+                    bool(values["run_health_checks"])
+                    if "run_health_checks" in values
+                    else None
+                ),
+            )
+            side_effects.append("tool_recovery_plan_metadata_updated")
+        elif operation_id == "tool_recovery_brain.health_check":
+            tool_ids = values.get("tool_ids")
+            result = await self.run_boba_tool_health_checks(
+                project_id,
+                tool_ids=(
+                    [str(item) for item in tool_ids]
+                    if isinstance(tool_ids, list)
+                    else None
+                ),
+            )
+            side_effects.append("tool_health_metadata_updated")
+        elif operation_id == "tool_recovery_brain.validate_output":
+            result = await self.validate_boba_recovered_output(
+                project_id,
+                recovery_attempt_id=str(
+                    values.get("recovery_attempt_id") or ""
+                ),
+            )
+            side_effects.append("recovery_validation_metadata_updated")
+        elif operation_id == "output_quality_reviewer.review":
+            result = await self.generate_boba_output_quality_review(
+                project_id,
+                output_reference=str(values.get("output_reference") or ""),
+                baseline_reference=(
+                    str(values.get("baseline_reference") or "") or None
+                ),
+                rights_status=str(values.get("rights_status") or "unknown"),
+                safety_status=str(values.get("safety_status") or "unknown"),
+                workflow_stage=str(
+                    values.get("workflow_stage") or "quality_review"
+                ),
+            )
+            side_effects.append("output_quality_metadata_updated")
+        elif operation_id == "output_quality_reviewer.compare":
+            result = await self.compare_boba_output_quality_baseline(
+                project_id,
+                output_reference=str(values.get("output_reference") or ""),
+                baseline_reference=str(
+                    values.get("baseline_reference") or ""
+                ),
+                rights_status=str(values.get("rights_status") or "unknown"),
+                safety_status=str(values.get("safety_status") or "unknown"),
+            )
+            side_effects.append("quality_comparison_metadata_updated")
+        elif operation_id == "autopilot_controller.create_run":
+            result = await self.create_boba_autopilot_run(project_id)
+            side_effects.append("autopilot_metadata_updated")
+        elif operation_id == "autopilot_controller.plan_next":
+            result = await self.plan_boba_autopilot_next_action(
+                project_id,
+                request.run_id,
+            )
+            side_effects.append("autopilot_plan_metadata_updated")
+        elif operation_id == "autopilot_controller.advance_safe":
+            result = await self.advance_boba_autopilot_safe_read_only(
+                project_id,
+                request.run_id,
+                maximum_steps=max(
+                    1,
+                    min(int(values.get("maximum_steps") or 12), 12),
+                ),
+            )
+            side_effects.append("autopilot_read_only_metadata_updated")
+        elif operation_id == "autopilot_controller.coordinate_approved":
+            approval_record = _dict(values.get("approval_record"))
+            result = await self.coordinate_approved_boba_autopilot_action(
+                project_id,
+                request.run_id,
+                action_id=str(values.get("autopilot_action_id") or ""),
+                approval_record=approval_record,
+                safety_decision_id=str(
+                    values.get("safety_decision_id") or ""
+                ),
+            )
+            action_id = str(values.get("autopilot_action_id") or "")
+            target_revalidated = any(
+                item.action_id == action_id
+                and item.independently_revalidated_by_target
+                for item in result.module_invocations
+            )
+            side_effects.append("autopilot_coordination_metadata_updated")
+        elif operation_id == "autopilot_controller.pause":
+            result = self.pause_boba_autopilot_run(
+                project_id,
+                request.run_id,
+                reason=str(
+                    values.get("reason")
+                    or "Integration Layer requested an explicit pause."
+                ),
+            )
+            side_effects.append("autopilot_metadata_updated")
+        elif operation_id == "autopilot_controller.continue_controller":
+            result = self.continue_boba_autopilot_run(project_id, request.run_id)
+            side_effects.append("autopilot_metadata_updated")
+        elif operation_id == "autopilot_controller.cancel":
+            result = self.cancel_boba_autopilot_run(
+                project_id,
+                request.run_id,
+                reason=str(
+                    values.get("reason")
+                    or "Integration Layer received an explicit cancellation."
+                ),
+            )
+            side_effects.append("autopilot_metadata_updated")
+        elif operation_id == "safety_gate.create_policy":
+            result = await self.create_boba_safety_policy_snapshot(
+                project_id,
+                project_policy=_dict(values.get("project_policy")),
+            )
+            side_effects.append("safety_policy_metadata_updated")
+        elif operation_id == "safety_gate.create_request":
+            allowed_keys = {
+                "autopilot_run_id",
+                "autopilot_action_id",
+                "requesting_module",
+                "target_module",
+                "target_operation",
+                "action_class",
+                "action_description",
+                "action_parameters",
+                "project_snapshot_id",
+                "project_snapshot_digest",
+                "plan_id",
+                "strategy_id",
+                "approval_record_id",
+                "patch_proposal_id",
+                "patch_diff_sha256",
+                "code_base_sha",
+                "tool_id",
+                "capability_id",
+                "configuration_digest",
+                "checkpoint_reference",
+                "checkpoint_digest",
+                "rollback_plan_id",
+                "validation_plan_id",
+                "quality_plan_id",
+                "retry_budget_digest",
+                "time_budget_seconds",
+                "requested_by",
+            }
+            result = await self.create_boba_safety_action_request(
+                project_id,
+                **{
+                    key: value
+                    for key, value in values.items()
+                    if key in allowed_keys
+                },
+            )
+            side_effects.append("safety_request_metadata_updated")
+        elif operation_id == "safety_gate.evaluate":
+            result = await self.evaluate_boba_safety_action(
+                project_id,
+                str(values.get("action_request_id") or ""),
+                approval_record=_dict(values.get("approval_record")) or None,
+            )
+            side_effects.append("safety_decision_metadata_updated")
+        elif operation_id == "safety_gate.revalidate":
+            result = self.revalidate_boba_safety_decision(
+                project_id,
+                str(values.get("safety_decision_id") or ""),
+                approval_record=_dict(values.get("approval_record")) or None,
+                current_bindings=_dict(values.get("current_bindings")) or None,
+            )
+            side_effects.append("safety_revalidation_metadata_updated")
+        else:
+            raise ValidationError(
+                "Integration Layer facade has no fixed typed adapter for this "
+                "registered operation."
+            )
+        return self._bounded_integration_target_result(
+            result,
+            target_revalidated=target_revalidated,
+            side_effects=side_effects,
+        )
+
+    async def build_boba_integration_registry(
+        self,
+        project_id: str,
+    ) -> BobaIntegrationLayerSetV1:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        engine = self._integration_layer(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+        )
+        engine.build_registry_snapshot()
+        return engine._load_layer()
+
+    async def inspect_boba_integration_registry(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        layer = await self.build_boba_integration_registry(project_id)
+        return {
+            "registry_snapshot": layer.registry_snapshot.model_dump(mode="json"),
+            "modules": [
+                item.model_dump(mode="json")
+                for item in layer.module_descriptors
+            ],
+            "operations": [
+                item.model_dump(mode="json")
+                for item in layer.operation_descriptors
+            ],
+        }
+
+    async def create_boba_integration_request(
+        self,
+        project_id: str,
+        *,
+        requesting_module_id: str,
+        target_module_id: str,
+        target_operation_id: str,
+        request_parameters: dict[str, Any] | None = None,
+        run_id: str = "",
+        request_schema_id: str = "boba.integration.request",
+        request_schema_version: str = "1.0",
+        artifact_references: list[
+            BobaIntegrationArtifactReferenceV1
+        ] | None = None,
+        approval_binding: BobaIntegrationApprovalBindingV1 | None = None,
+        safety_binding: BobaIntegrationSafetyBindingV1 | None = None,
+        project_snapshot_digest: str = "",
+        expires_in_seconds: int = 300,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        project = await self.projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project was not found.", details={"id": project_id})
+        engine = self._integration_layer(
+            project_id,
+            source_id=project.link_ingestion_id or project_id,
+        )
+        envelope, request, transaction = await engine.create_validated_request(
+            requesting_module_id=requesting_module_id,
+            target_module_id=target_module_id,
+            target_operation_id=target_operation_id,
+            request_parameters=request_parameters,
+            run_id=run_id,
+            request_schema_id=request_schema_id,
+            request_schema_version=request_schema_version,
+            artifact_references=artifact_references or [],
+            approval_binding=approval_binding,
+            safety_binding=safety_binding,
+            project_snapshot_digest=project_snapshot_digest,
+            expires_in_seconds=expires_in_seconds,
+            idempotency_key=idempotency_key,
+        )
+        return {
+            "envelope": envelope.model_dump(mode="json"),
+            "request": request.model_dump(mode="json"),
+            "transaction": transaction.model_dump(mode="json"),
+            "routed": False,
+        }
+
+    async def validate_boba_integration_request(
+        self,
+        project_id: str,
+        envelope: BobaIntegrationEnvelopeV1,
+    ) -> BobaIntegrationTransactionV1:
+        return await self._integration_layer(
+            project_id
+        ).validate_request_envelope(envelope)
+
+    async def route_boba_integration_request(
+        self,
+        project_id: str,
+        transaction_id: str,
+    ) -> BobaIntegrationResponseV1:
+        return await self._integration_layer(project_id).route_typed_request(
+            transaction_id
+        )
+
+    def inspect_boba_integration_transaction(
+        self,
+        project_id: str,
+        transaction_id: str,
+    ) -> BobaIntegrationTransactionV1:
+        return self._integration_layer(project_id).inspect_transaction(
+            transaction_id
+        )
+
+    def inspect_boba_integration_events(
+        self,
+        project_id: str,
+        transaction_id: str,
+    ) -> list[Any]:
+        return self._integration_layer(project_id).inspect_transaction_events(
+            transaction_id
+        )
+
+    def load_boba_integration_layer(
+        self,
+        project_id: str,
+    ) -> BobaIntegrationLayerSetV1 | None:
+        return self.store.load_boba_integration_layer(project_id)
+
+    def export_boba_integration_layer(self, project_id: str) -> dict[str, Any]:
+        return self.store.export_boba_integration_layer(project_id)
+
+    def reset_boba_integration_layer(self, project_id: str) -> dict[str, Any]:
+        return self.store.reset_boba_integration_layer(project_id)
 
     def _creator_learning_artifacts(self, project_id: str) -> dict[str, Any]:
         return {

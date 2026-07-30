@@ -53,6 +53,7 @@ import type {
   BobaAutopilotCreateRunInputV1,
   BobaAutopilotHumanDecisionInputV1,
   BobaBrainStateV1,
+  BobaIntegrationLayerSetV1,
   BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
   BobaCodeSurgeonCommitInputV1,
@@ -159,6 +160,8 @@ export const queryKeys = {
     ["boba", "projects", id, "autopilot"] as const,
   bobaSafetyGate: (id: string) =>
     ["boba", "projects", id, "safety-gate"] as const,
+  bobaIntegrationLayer: (id: string) =>
+    ["boba", "projects", id, "integration-layer"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -1275,6 +1278,39 @@ export function useResetBobaSafetyGate(projectId: string) {
     mutationFn: () => api.resetBobaSafetyGate(projectId),
     onSuccess: () => {
       queryClient.setQueryData(queryKeys.bobaSafetyGate(projectId), null);
+    },
+  });
+}
+
+export function useBobaIntegrationLayer(projectId: string) {
+  return useQuery<BobaIntegrationLayerSetV1 | null>({
+    queryKey: queryKeys.bobaIntegrationLayer(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaIntegrationLayer(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useExportBobaIntegrationLayer(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaIntegrationLayer(projectId),
+  });
+}
+
+export function useResetBobaIntegrationLayer(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaIntegrationLayer(projectId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaIntegrationLayer(projectId),
+      });
     },
   });
 }

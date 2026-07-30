@@ -616,4 +616,44 @@ describe("V2 output flow UI contracts", () => {
     expect(apiClient).toContain("/coordinate-approved");
     expect(apiClient).toContain("/autopilot/export");
   });
+
+  it("shows BOBA Integration Layer V1 without execution authority claims", () => {
+    const resultsSection = source("./ResultsSection.tsx");
+    const integrationPanel = source("./BobaIntegrationLayerPanel.tsx");
+    const apiClient = source("../../lib/apiClient.ts");
+    const queries = source("../../lib/queries.ts");
+
+    expect(resultsSection).toContain("BobaIntegrationLayerPanel");
+    expect(integrationPanel).toContain(
+      "BOBA Integration Layer connects registered modules through typed,",
+    );
+    expect(integrationPanel).toContain(
+      "It does not decide which repair to use and does not",
+    );
+    expect(integrationPanel).toContain(
+      "Execution requests still require Autopilot coordination",
+    );
+    expect(integrationPanel).toContain(
+      "Unknown modules and operations cannot be invoked.",
+    );
+    for (const heading of [
+      "MODULE REGISTRY",
+      "OPERATION REGISTRY",
+      "COMPATIBILITY",
+      "DEPENDENCIES",
+      "REQUEST",
+      "APPROVAL AND SAFETY",
+      "TRANSACTION",
+      "RESULT",
+      "INTEGRATION FAILURES",
+      "WHAT HAPPENS NEXT",
+    ]) {
+      expect(integrationPanel).toContain(heading);
+    }
+    expect(integrationPanel).not.toContain("Execute operation");
+    expect(integrationPanel).not.toContain("Approve action");
+    expect(apiClient).toContain("/integration-layer/export");
+    expect(queries).toContain("useBobaIntegrationLayer");
+    expect(queries).toContain("useResetBobaIntegrationLayer");
+  });
 });

@@ -59,6 +59,14 @@ from olympus.boba.experimentation import (
 )
 from olympus.boba.explanation import BobaExplanationSetV1
 from olympus.boba.hook_retention import BobaHookRetentionSetV1
+from olympus.boba.integration_layer import (
+    BobaIntegrationEventV1,
+    BobaIntegrationIdempotencyRecordV1,
+    BobaIntegrationLayerSetV1,
+    BobaIntegrationRegistrySnapshotV1,
+    BobaIntegrationTransactionV1,
+    sanitize_integration_export,
+)
 from olympus.boba.memory import sanitize_memory_payload
 from olympus.boba.memory_contracts import (
     BobaCreatorMemoryV1,
@@ -3813,3 +3821,326 @@ class BobaMemoryStore:
                 {"schema_version": "boba_memory_index_v1", "index": values},
             )
         return indexes
+
+    @staticmethod
+    def _validate_integration_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", value):
+            raise ValidationError(f"Invalid BOBA Integration Layer {label}.")
+        return value
+
+    def boba_integration_layer_path(self, project_id: str) -> Path:
+        return self._path(project_id, "integration_layer/index.json")
+
+    def boba_integration_registry_path(
+        self,
+        project_id: str,
+        registry_snapshot_id: str,
+    ) -> Path:
+        registry_id = self._validate_integration_record_id(
+            registry_snapshot_id,
+            label="registry snapshot id",
+        )
+        return self._path(
+            project_id,
+            f"integration_layer/registries/{registry_id}.json",
+        )
+
+    def boba_integration_transaction_path(
+        self,
+        project_id: str,
+        transaction_id: str,
+    ) -> Path:
+        safe_transaction_id = self._validate_integration_record_id(
+            transaction_id,
+            label="transaction id",
+        )
+        return self._path(
+            project_id,
+            f"integration_layer/transactions/{safe_transaction_id}/index.json",
+        )
+
+    def boba_integration_events_path(
+        self,
+        project_id: str,
+        transaction_id: str,
+    ) -> Path:
+        return self.boba_integration_transaction_path(
+            project_id,
+            transaction_id,
+        ).with_name("events.jsonl")
+
+    def boba_integration_idempotency_path(self, project_id: str) -> Path:
+        return self._path(project_id, "integration_layer/idempotency/index.json")
+
+    def save_boba_integration_layer(
+        self,
+        layer: BobaIntegrationLayerSetV1,
+    ) -> BobaIntegrationLayerSetV1:
+        safe = sanitize_integration_export(layer.model_dump(mode="json"))
+        validated = BobaIntegrationLayerSetV1.model_validate(safe)
+        with self._lock:
+            self._atomic_write(
+                self.boba_integration_layer_path(layer.project_id),
+                validated.model_dump(mode="json"),
+            )
+        return validated
+
+    def load_boba_integration_layer(
+        self,
+        project_id: str,
+    ) -> BobaIntegrationLayerSetV1 | None:
+        raw = self._read(self.boba_integration_layer_path(project_id), None)
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return BobaIntegrationLayerSetV1.model_validate(raw)
+        except PydanticValidationError:
+            return None
+
+    def save_boba_integration_registry_snapshot(
+        self,
+        project_id: str,
+        snapshot: BobaIntegrationRegistrySnapshotV1,
+    ) -> BobaIntegrationRegistrySnapshotV1:
+        path = self.boba_integration_registry_path(
+            project_id,
+            snapshot.registry_snapshot_id,
+        )
+        with self._lock:
+            existing = self._read(path, None)
+            if isinstance(existing, dict):
+                try:
+                    saved = BobaIntegrationRegistrySnapshotV1.model_validate(
+                        existing
+                    )
+                except PydanticValidationError as exc:
+                    raise ValidationError(
+                        "Stored Integration Layer registry snapshot is malformed."
+                    ) from exc
+                if saved.registry_sha256 != snapshot.registry_sha256:
+                    raise ValidationError(
+                        "Integration Layer registry snapshots are immutable."
+                    )
+                return saved
+            self._atomic_write(path, snapshot.model_dump(mode="json"))
+        return snapshot
+
+    def save_boba_integration_transaction(
+        self,
+        transaction: BobaIntegrationTransactionV1,
+    ) -> BobaIntegrationTransactionV1:
+        path = self.boba_integration_transaction_path(
+            transaction.project_id,
+            transaction.transaction_id,
+        )
+        terminal_states = {
+            "blocked",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "cancelled",
+            "duplicate_reused",
+            "future_gated",
+        }
+        safe = BobaIntegrationTransactionV1.model_validate(
+            sanitize_integration_export(transaction.model_dump(mode="json"))
+        )
+        with self._lock:
+            existing = self._read(path, None)
+            if isinstance(existing, dict):
+                try:
+                    saved = BobaIntegrationTransactionV1.model_validate(existing)
+                except PydanticValidationError:
+                    saved = None
+                if (
+                    saved is not None
+                    and saved.state in terminal_states
+                    and saved.model_dump(mode="json")
+                    != safe.model_dump(mode="json")
+                ):
+                    raise ValidationError(
+                        "Completed Integration Layer transactions are immutable."
+                    )
+            self._atomic_write(path, safe.model_dump(mode="json"))
+        return safe
+
+    def load_boba_integration_transaction(
+        self,
+        project_id: str,
+        transaction_id: str,
+    ) -> BobaIntegrationTransactionV1 | None:
+        raw = self._read(
+            self.boba_integration_transaction_path(project_id, transaction_id),
+            None,
+        )
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return BobaIntegrationTransactionV1.model_validate(raw)
+        except PydanticValidationError:
+            return None
+
+    def append_boba_integration_event(
+        self,
+        event: BobaIntegrationEventV1,
+    ) -> None:
+        path = self.boba_integration_events_path(
+            event.project_id,
+            event.transaction_id,
+        )
+        with self._lock:
+            existing = self.load_boba_integration_events(
+                event.project_id,
+                event.transaction_id,
+            )
+            if any(item.event_id == event.event_id for item in existing):
+                return
+            if existing and event.sequence <= existing[-1].sequence:
+                raise ValidationError(
+                    "Integration Layer event sequence must be monotonic."
+                )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            safe = BobaIntegrationEventV1.model_validate(
+                sanitize_integration_export(event.model_dump(mode="json"))
+            )
+            with path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(
+                    json.dumps(
+                        safe.model_dump(mode="json"),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+
+    def load_boba_integration_events(
+        self,
+        project_id: str,
+        transaction_id: str,
+    ) -> list[BobaIntegrationEventV1]:
+        path = self.boba_integration_events_path(project_id, transaction_id)
+        if not path.exists():
+            return []
+        events: list[BobaIntegrationEventV1] = []
+        try:
+            for line in path.read_text(encoding="utf-8-sig").splitlines():
+                try:
+                    raw = json.loads(line)
+                    events.append(BobaIntegrationEventV1.model_validate(raw))
+                except (json.JSONDecodeError, PydanticValidationError):
+                    continue
+        except OSError as exc:
+            raise ValidationError(
+                "BOBA Integration Layer event stream is unreadable."
+            ) from exc
+        return sorted(events, key=lambda item: item.sequence)
+
+    def save_boba_integration_idempotency_records(
+        self,
+        project_id: str,
+        records: list[BobaIntegrationIdempotencyRecordV1],
+    ) -> list[BobaIntegrationIdempotencyRecordV1]:
+        if len(records) > 512:
+            records = records[-512:]
+        safe_records = [
+            BobaIntegrationIdempotencyRecordV1.model_validate(
+                sanitize_integration_export(item.model_dump(mode="json"))
+            )
+            for item in records
+        ]
+        payload = {
+            "schema_version": "boba_integration_idempotency_v1",
+            "project_id": project_id,
+            "records": [item.model_dump(mode="json") for item in safe_records],
+        }
+        with self._lock:
+            self._atomic_write(
+                self.boba_integration_idempotency_path(project_id),
+                payload,
+            )
+        return safe_records
+
+    def load_boba_integration_idempotency_records(
+        self,
+        project_id: str,
+    ) -> list[BobaIntegrationIdempotencyRecordV1]:
+        raw = self._read(
+            self.boba_integration_idempotency_path(project_id),
+            {},
+        )
+        values = raw.get("records", []) if isinstance(raw, dict) else []
+        records: list[BobaIntegrationIdempotencyRecordV1] = []
+        for value in values if isinstance(values, list) else []:
+            try:
+                records.append(
+                    BobaIntegrationIdempotencyRecordV1.model_validate(value)
+                )
+            except PydanticValidationError:
+                continue
+        return records
+
+    def export_boba_integration_layer(self, project_id: str) -> dict[str, Any]:
+        layer = self.load_boba_integration_layer(project_id)
+        payload = (
+            layer.model_dump(mode="json")
+            if layer is not None
+            else {
+                "schema_version": "boba_integration_layer_v1",
+                "project_id": project_id,
+                "available": False,
+            }
+        )
+        safe = sanitize_integration_export(payload)
+        if not isinstance(safe, dict):
+            raise ValidationError("Integration Layer export is malformed.")
+        safe["export_metadata"] = {
+            "private_paths_removed": True,
+            "secrets_removed": True,
+            "raw_patches_removed": True,
+            "full_logs_removed": True,
+            "source_media_included": False,
+            "accepted_outputs_modified": False,
+        }
+        return safe
+
+    def reset_boba_integration_layer(self, project_id: str) -> dict[str, Any]:
+        layer = self.load_boba_integration_layer(project_id)
+        if layer is not None and any(
+            item.state
+            not in {
+                "blocked",
+                "succeeded",
+                "failed",
+                "timed_out",
+                "cancelled",
+                "duplicate_reused",
+                "future_gated",
+            }
+            for item in layer.integration_transactions
+        ):
+            raise ValidationError(
+                "Active Integration Layer transaction history cannot be erased."
+            )
+        active_path = self.boba_integration_layer_path(project_id)
+        idempotency_path = self.boba_integration_idempotency_path(project_id)
+        with self._lock:
+            active_removed = active_path.exists()
+            idempotency_removed = idempotency_path.exists()
+            active_path.unlink(missing_ok=True)
+            idempotency_path.unlink(missing_ok=True)
+        return {
+            "schema_version": "boba_integration_layer_reset_v1",
+            "project_id": project_id,
+            "active_metadata_removed": active_removed,
+            "idempotency_metadata_removed": idempotency_removed,
+            "immutable_transactions_preserved": True,
+            "registry_snapshots_preserved": True,
+            "upstream_boba_artifacts_removed": False,
+            "approvals_removed": False,
+            "safety_decisions_removed": False,
+            "autopilot_history_removed": False,
+            "source_media_removed": False,
+            "accepted_outputs_removed": False,
+        }

@@ -29,6 +29,11 @@ from olympus.boba.creator_learning import (
 from olympus.boba.creator_memory import build_and_save_creator_memory
 from olympus.boba.experimentation import BobaExperimentOutcomeLabel
 from olympus.boba.global_memory import build_and_save_global_memory
+from olympus.boba.integration_layer import (
+    BobaIntegrationApprovalBindingV1,
+    BobaIntegrationArtifactReferenceV1,
+    BobaIntegrationSafetyBindingV1,
+)
 from olympus.boba.memory_contracts import BobaMemoryQueryV1
 from olympus.boba.memory_learning import BobaMemoryLearner
 from olympus.boba.output_quality_reviewer import (
@@ -558,6 +563,39 @@ class SafetyHumanReviewRequest(BaseModel):
     project_snapshot_digest: str = Field(min_length=64, max_length=64)
 
 
+class IntegrationLayerCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requesting_module_id: str = Field(min_length=1, max_length=160)
+    target_module_id: str = Field(min_length=1, max_length=160)
+    target_operation_id: str = Field(min_length=1, max_length=240)
+    request_parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        max_length=128,
+    )
+    run_id: str = Field(default="", max_length=180)
+    request_schema_id: str = Field(
+        default="boba.integration.request",
+        max_length=160,
+    )
+    request_schema_version: str = Field(default="1.0", max_length=80)
+    artifact_references: list[BobaIntegrationArtifactReferenceV1] = Field(
+        default_factory=list,
+        max_length=64,
+    )
+    approval_binding: BobaIntegrationApprovalBindingV1 | None = None
+    safety_binding: BobaIntegrationSafetyBindingV1 | None = None
+    project_snapshot_digest: str = Field(default="", max_length=64)
+    expires_in_seconds: int = Field(default=300, ge=1, le=3_600)
+    idempotency_key: str | None = Field(default=None, max_length=180)
+
+
+class IntegrationLayerRouteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transaction_id: str = Field(min_length=1, max_length=180)
+
+
 def _require_enabled(settings: SettingsDep) -> None:
     if not settings.boba.enabled:
         raise ValidationError("BOBA Core Brain is disabled by configuration.")
@@ -572,6 +610,146 @@ def _require_memory_enabled(settings: SettingsDep) -> None:
 async def _require_project(project_id: str, boba: BobaIntegrationDep) -> None:
     if await boba.projects.get(project_id) is None:
         raise NotFoundError("Project was not found.", details={"id": project_id})
+
+
+@router.get("/projects/{project_id}/integration-layer")
+async def get_integration_layer(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> Any:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    existing = boba.load_boba_integration_layer(project_id)
+    if existing is not None:
+        return existing
+    return await boba.build_boba_integration_registry(project_id)
+
+
+@router.get("/projects/{project_id}/integration-layer/modules")
+async def get_integration_layer_modules(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    registry = await boba.inspect_boba_integration_registry(project_id)
+    return {
+        "registry_snapshot": registry["registry_snapshot"],
+        "modules": registry["modules"],
+    }
+
+
+@router.get("/projects/{project_id}/integration-layer/operations")
+async def get_integration_layer_operations(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    registry = await boba.inspect_boba_integration_registry(project_id)
+    return {
+        "registry_snapshot": registry["registry_snapshot"],
+        "operations": registry["operations"],
+    }
+
+
+@router.post("/projects/{project_id}/integration-layer/requests")
+async def create_integration_layer_request(
+    project_id: str,
+    body: IntegrationLayerCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return await boba.create_boba_integration_request(
+        project_id,
+        requesting_module_id=body.requesting_module_id,
+        target_module_id=body.target_module_id,
+        target_operation_id=body.target_operation_id,
+        request_parameters=body.request_parameters,
+        run_id=body.run_id,
+        request_schema_id=body.request_schema_id,
+        request_schema_version=body.request_schema_version,
+        artifact_references=body.artifact_references,
+        approval_binding=body.approval_binding,
+        safety_binding=body.safety_binding,
+        project_snapshot_digest=body.project_snapshot_digest,
+        expires_in_seconds=body.expires_in_seconds,
+        idempotency_key=body.idempotency_key,
+    )
+
+
+@router.post("/projects/{project_id}/integration-layer/route")
+async def route_integration_layer_request(
+    project_id: str,
+    body: IntegrationLayerRouteRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> Any:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return await boba.route_boba_integration_request(
+        project_id,
+        body.transaction_id,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/integration-layer/transactions/{transaction_id}"
+)
+async def get_integration_layer_transaction(
+    project_id: str,
+    transaction_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> Any:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_integration_transaction(
+        project_id,
+        transaction_id,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/integration-layer/transactions/"
+    "{transaction_id}/events"
+)
+async def get_integration_layer_events(
+    project_id: str,
+    transaction_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> list[Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_integration_events(project_id, transaction_id)
+
+
+@router.get("/projects/{project_id}/integration-layer/export")
+async def export_integration_layer(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_integration_layer(project_id)
+
+
+@router.delete("/projects/{project_id}/integration-layer")
+async def reset_integration_layer(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_integration_layer(project_id)
 
 
 @router.post("/candidates")
