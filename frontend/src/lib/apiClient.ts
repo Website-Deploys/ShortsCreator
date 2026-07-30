@@ -74,6 +74,7 @@ import type {
   BobaAutopilotCreateRunInputV1,
   BobaAutopilotHumanDecisionInputV1,
   BobaBrainStateV1,
+  BobaIntegrationLayerSetV1,
   BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
   BobaCodeSurgeonCommitInputV1,
@@ -974,6 +975,19 @@ export const api = {
     }>(`/boba/projects/${projectId}/safety-gate`, {
       method: "DELETE",
     }),
+  getBobaIntegrationLayer: (projectId: string) =>
+    request<BobaIntegrationLayerSetV1>(
+      `/boba/projects/${projectId}/integration-layer`,
+    ),
+  exportBobaIntegrationLayer: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/integration-layer/export`,
+    ),
+  resetBobaIntegrationLayer: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/integration-layer`,
+      { method: "DELETE" },
+    ),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>
     request<BobaCandidateV1>("/boba/candidates", {
       method: "POST",

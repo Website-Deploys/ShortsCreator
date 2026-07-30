@@ -5404,6 +5404,125 @@ export interface BobaSafetyGateSetV1 {
   limitations: string[];
 }
 
+export interface BobaIntegrationRegistrySnapshotV1 {
+  registry_snapshot_id: string;
+  registry_version: string;
+  created_at: string;
+  module_ids: string[];
+  operation_ids: string[];
+  module_versions: Record<string, string>;
+  schema_versions: Record<string, string[]>;
+  unavailable_module_ids: string[];
+  future_module_ids: string[];
+  registry_sha256: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaIntegrationModuleDescriptorV1 {
+  module_id: string;
+  display_name: string;
+  module_version: string;
+  implementation_status: string;
+  supported_schema_versions: string[];
+  operation_ids: string[];
+  read_only: boolean;
+  planning_capable: boolean;
+  execution_capable: boolean;
+  requires_rights_gate: boolean;
+  requires_target_approval: boolean;
+  requires_safety_gate: boolean;
+  requires_checkpoint: boolean;
+  artifact_path_pattern: string;
+  dependency_module_ids: string[];
+  health_status: string;
+  health_reason: string;
+  known_limitations: string[];
+  warnings: string[];
+}
+
+export interface BobaIntegrationOperationDescriptorV1 {
+  operation_id: string;
+  module_id: string;
+  display_name: string;
+  operation_class: string;
+  side_effect_class: string;
+  request_schema_id: string;
+  response_schema_id: string;
+  supported_schema_versions: string[];
+  required_artifact_types: string[];
+  optional_artifact_types: string[];
+  target_approval_required: boolean;
+  required_approval_type: string;
+  safety_gate_required: boolean;
+  rights_gate_required: boolean;
+  checkpoint_required: boolean;
+  idempotency_required: boolean;
+  future_gated: boolean;
+  prohibited: boolean;
+  timeout_seconds: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaIntegrationTransactionV1 {
+  transaction_id: string;
+  project_id: string;
+  run_id: string;
+  correlation_id: string;
+  request_id: string;
+  response_id: string;
+  registry_snapshot_id: string;
+  target_module_id: string;
+  target_operation_id: string;
+  operation_class: string;
+  state: string;
+  created_at: string;
+  validated_at: string | null;
+  routed_at: string | null;
+  completed_at: string | null;
+  request_digest: string;
+  snapshot_digest: string;
+  approval_binding_valid: boolean;
+  safety_binding_valid: boolean;
+  compatibility_check_ids: string[];
+  dependency_check_ids: string[];
+  idempotency_record_id: string;
+  target_invocation_started: boolean;
+  target_invocation_completed: boolean;
+  target_independent_revalidation_confirmed: boolean;
+  side_effects_reported: string[];
+  failure_id: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaIntegrationLayerSetV1 {
+  schema_version: "boba_integration_layer_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  registry_snapshot: BobaIntegrationRegistrySnapshotV1;
+  module_descriptors: BobaIntegrationModuleDescriptorV1[];
+  operation_descriptors: BobaIntegrationOperationDescriptorV1[];
+  request_envelopes: Array<Record<string, unknown>>;
+  integration_requests: Array<Record<string, unknown>>;
+  response_envelopes: Array<Record<string, unknown>>;
+  integration_responses: Array<Record<string, unknown>>;
+  artifact_references: Array<Record<string, unknown>>;
+  integration_transactions: BobaIntegrationTransactionV1[];
+  compatibility_checks: Array<Record<string, unknown>>;
+  dependency_checks: Array<Record<string, unknown>>;
+  idempotency_records: Array<Record<string, unknown>>;
+  integration_events: Array<Record<string, unknown>>;
+  integration_failures: Array<Record<string, unknown>>;
+  integration_handoffs: Array<Record<string, unknown>>;
+  integration_summary: Record<string, number | string | string[]>;
+  signal_usage: Record<string, boolean | string[]>;
+  warnings: string[];
+  limitations: string[];
+}
+
 export interface BobaSafetyActionInputV1 {
   autopilot_run_id?: string;
   autopilot_action_id?: string;

@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { CopyIcon, DownloadIcon, ServerIcon, SparklesIcon } from "@/components/icons";
+import { BobaIntegrationLayerPanel } from "@/components/project/BobaIntegrationLayerPanel";
 import { BobaSafetyGatePanel } from "@/components/project/BobaSafetyGatePanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { mediaUrls } from "@/lib/apiClient";
@@ -12132,6 +12133,9 @@ export function ResultsSection({
   const outputQualityReviewerPanel = (
     <BobaOutputQualityReviewerPanel projectId={projectId} renders={renders} />
   );
+  const integrationLayerPanel = (
+    <BobaIntegrationLayerPanel projectId={projectId} />
+  );
   const safetyGatePanel = <BobaSafetyGatePanel projectId={projectId} />;
   const autopilotPanel = <BobaAutopilotPanel projectId={projectId} />;
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
@@ -12166,6 +12170,7 @@ export function ResultsSection({
         {codeSurgeonPanel}
         {toolRecoveryPanel}
         {outputQualityReviewerPanel}
+        {integrationLayerPanel}
         {safetyGatePanel}
         {autopilotPanel}
         {scoutCreativePanel}
@@ -12212,6 +12217,7 @@ export function ResultsSection({
         {codeSurgeonPanel}
         {toolRecoveryPanel}
         {outputQualityReviewerPanel}
+        {integrationLayerPanel}
         {safetyGatePanel}
         {autopilotPanel}
         {scoutCreativePanel}
@@ -12254,6 +12260,7 @@ export function ResultsSection({
         {codeSurgeonPanel}
         {toolRecoveryPanel}
         {outputQualityReviewerPanel}
+        {integrationLayerPanel}
         {safetyGatePanel}
         {autopilotPanel}
         {scoutCreativePanel}
@@ -12296,6 +12303,7 @@ export function ResultsSection({
       {codeSurgeonPanel}
       {toolRecoveryPanel}
       {outputQualityReviewerPanel}
+      {integrationLayerPanel}
       {safetyGatePanel}
       {autopilotPanel}
       {scoutCreativePanel}
