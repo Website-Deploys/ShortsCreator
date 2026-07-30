@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { CopyIcon, DownloadIcon, ServerIcon, SparklesIcon } from "@/components/icons";
+import { BobaSafetyGatePanel } from "@/components/project/BobaSafetyGatePanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { mediaUrls } from "@/lib/apiClient";
 import {
@@ -6514,6 +6515,7 @@ function BobaAutopilotPanel({ projectId }: { projectId: string }) {
     "advisory_only" | "safe_read_only_automatic" | "approved_execution_coordination"
   >("safe_read_only_automatic");
   const [approvalJson, setApprovalJson] = useState("");
+  const [safetyDecisionId, setSafetyDecisionId] = useState("");
   const [reviewerIdentity, setReviewerIdentity] = useState("local_operator");
   const [decisionReason, setDecisionReason] = useState("");
   const [status, setStatus] = useState("");
@@ -6607,6 +6609,10 @@ function BobaAutopilotPanel({ projectId }: { projectId: string }) {
 
   function coordinate() {
     if (!runId || !activeAction) return;
+    if (!safetyDecisionId.trim()) {
+      setStatus("The exact Safety Gate decision ID is required.");
+      return;
+    }
     let approvalRecord: Record<string, unknown>;
     try {
       const parsed: unknown = JSON.parse(approvalJson);
@@ -6623,6 +6629,7 @@ function BobaAutopilotPanel({ projectId }: { projectId: string }) {
     coordinateApproved.mutate(
       {
         action_id: activeAction.action_id,
+        safety_decision_id: safetyDecisionId.trim(),
         approval_record: approvalRecord,
       },
       {
@@ -7002,9 +7009,22 @@ function BobaAutopilotPanel({ projectId }: { projectId: string }) {
                 placeholder="Paste the exact approval record exported by Code Surgeon or Tool Recovery."
                 className="mt-3 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-xs text-white"
               />
+              <input
+                value={safetyDecisionId}
+                onChange={(event) => setSafetyDecisionId(event.target.value)}
+                placeholder="Exact Safety Gate decision ID"
+                className="mt-2 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-xs text-white"
+              />
+              <p className="mt-2 text-xs text-muted">
+                Autopilot revalidates this exact decision before invoking the
+                target module. A denial, expiry, invalidation, or evidence gap
+                remains blocked.
+              </p>
               <button
                 type="button"
-                disabled={busy || !approvalJson.trim()}
+                disabled={
+                  busy || !approvalJson.trim() || !safetyDecisionId.trim()
+                }
                 onClick={coordinate}
                 className="mt-2 rounded border border-amber-200/30 px-3 py-2 text-xs text-amber-100 disabled:opacity-50"
               >
@@ -12112,6 +12132,7 @@ export function ResultsSection({
   const outputQualityReviewerPanel = (
     <BobaOutputQualityReviewerPanel projectId={projectId} renders={renders} />
   );
+  const safetyGatePanel = <BobaSafetyGatePanel projectId={projectId} />;
   const autopilotPanel = <BobaAutopilotPanel projectId={projectId} />;
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
@@ -12145,6 +12166,7 @@ export function ResultsSection({
         {codeSurgeonPanel}
         {toolRecoveryPanel}
         {outputQualityReviewerPanel}
+        {safetyGatePanel}
         {autopilotPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
@@ -12190,6 +12212,7 @@ export function ResultsSection({
         {codeSurgeonPanel}
         {toolRecoveryPanel}
         {outputQualityReviewerPanel}
+        {safetyGatePanel}
         {autopilotPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -12231,6 +12254,7 @@ export function ResultsSection({
         {codeSurgeonPanel}
         {toolRecoveryPanel}
         {outputQualityReviewerPanel}
+        {safetyGatePanel}
         {autopilotPanel}
         {scoutCreativePanel}
         <EmptyState
@@ -12272,6 +12296,7 @@ export function ResultsSection({
       {codeSurgeonPanel}
       {toolRecoveryPanel}
       {outputQualityReviewerPanel}
+      {safetyGatePanel}
       {autopilotPanel}
       {scoutCreativePanel}
       <EmptyState

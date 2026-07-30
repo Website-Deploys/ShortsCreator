@@ -221,6 +221,13 @@ BobaAutopilotEventTypeV1 = Literal[
     "quality_rejected",
     "rights_blocked",
     "safety_blocked",
+    "safety_review_started",
+    "safety_allowed",
+    "safety_denied",
+    "safety_human_review_required",
+    "safety_more_evidence_required",
+    "safety_decision_expired",
+    "safety_decision_invalidated",
     "budget_warning",
     "budget_exhausted",
     "controller_paused",
@@ -540,6 +547,7 @@ class BobaAutopilotActionV1(BobaContract):
     parameters: dict[str, Any] = Field(default_factory=dict, max_length=32)
     planned_snapshot_sha256: str = Field(default="", max_length=64)
     approval_binding_id: str | None = Field(default=None, max_length=180)
+    safety_decision_id: str | None = Field(default=None, max_length=180)
     budget_cost: dict[str, float] = Field(default_factory=dict, max_length=16)
     risk_level: str = Field(default="low", max_length=80)
     idempotency_key: str = Field(min_length=1, max_length=180)
@@ -557,6 +565,18 @@ class BobaAutopilotActionV1(BobaContract):
     human_approval_required: bool = False
     warnings: list[str] = Field(default_factory=list, max_length=32)
     limitations: list[str] = Field(default_factory=list, max_length=32)
+
+
+AutopilotSafetyDecisionValidator: TypeAlias = Callable[
+    [
+        str,
+        str,
+        BobaAutopilotActionV1,
+        str,
+        Mapping[str, Any] | BobaContract,
+    ],
+    Mapping[str, Any] | BobaContract,
+]
 
 
 class BobaAutopilotModuleInvocationV1(BobaContract):
@@ -804,6 +824,7 @@ class BobaAutopilotControllerSignalUsageV1(BobaContract):
     tool_recovery_used: bool = False
     output_quality_reviewer_used: bool = False
     rights_gate_used: bool = False
+    safety_gate_used: bool = False
     target_module_approval_used: bool = False
     project_snapshot_used: bool = False
     recovery_budget_used: bool = False
@@ -1671,12 +1692,14 @@ class BobaAutopilotControllerV1:
         *,
         context_provider: AutopilotContextProvider | None = None,
         module_invoker: AutopilotModuleInvoker | None = None,
+        safety_decision_validator: AutopilotSafetyDecisionValidator | None = None,
         lock_owner: str = "local_boba_api",
         lock_lease_seconds: int = 300,
     ) -> None:
         self.store = store
         self.context_provider = context_provider
         self.module_invoker = module_invoker
+        self.safety_decision_validator = safety_decision_validator
         self.lock_owner = _text(lock_owner, maximum=160) or "local_boba_api"
         self.lock_lease_seconds = max(30, min(lock_lease_seconds, 900))
 
@@ -5175,6 +5198,7 @@ class BobaAutopilotControllerV1:
         *,
         action_id: str,
         approval_record: Mapping[str, Any] | BobaContract,
+        safety_decision_id: str,
     ) -> BobaAutopilotControllerSetV1:
         """Coordinate one exact target-approved typed operation."""
 
@@ -5251,6 +5275,146 @@ class BobaAutopilotControllerV1:
         except ValidationError:
             self._persist(controller)
             raise
+        if not safety_decision_id:
+            self._append_event(
+                controller,
+                run,
+                event_type="safety_more_evidence_required",
+                technical_message=(
+                    "Approved action coordination requires an exact Safety Gate "
+                    "decision ID."
+                ),
+                easy_message=(
+                    "BOBA did not start the action because its exact Safety Gate "
+                    "decision is missing."
+                ),
+                severity="warning",
+                action=action,
+                module_name="safety_gate",
+                requires_attention=True,
+                available_user_actions=["Evaluate this exact action in Safety Gate"],
+            )
+            self._persist(controller)
+            raise ValidationError(
+                "An exact BOBA Safety Gate decision ID is required."
+            )
+        self._append_event(
+            controller,
+            run,
+            event_type="safety_review_started",
+            technical_message=(
+                f"Revalidating Safety Gate decision {safety_decision_id} for "
+                f"action {action.action_id}."
+            ),
+            easy_message=(
+                "BOBA is checking that the exact safety decision still matches "
+                "this action and current project state."
+            ),
+            action=action,
+            module_name="safety_gate",
+            evidence_ids=[safety_decision_id],
+        )
+        try:
+            if self.safety_decision_validator is None:
+                raise ValidationError(
+                    "BOBA Safety Gate validation is unavailable.",
+                    details={"decision": "more_evidence_required"},
+                )
+            safety_decision = self.safety_decision_validator(
+                project_id,
+                run_id,
+                action,
+                safety_decision_id,
+                verified_approval,
+            )
+            decision_payload = (
+                safety_decision.model_dump(mode="json")
+                if isinstance(safety_decision, BobaContract)
+                else dict(safety_decision)
+            )
+            if (
+                decision_payload.get("safety_decision_id") != safety_decision_id
+                or decision_payload.get("decision")
+                != "allowed_for_exact_internal_execution"
+                or not decision_payload.get("decision_valid")
+            ):
+                raise ValidationError(
+                    "Safety Gate did not allow exact internal execution.",
+                    details={
+                        "decision": str(
+                            decision_payload.get("decision") or "unknown"
+                        )
+                    },
+                )
+        except ValidationError as exc:
+            safety_value = str(exc.details.get("decision") or "")
+            invalidated = bool(exc.details.get("invalidated"))
+            event_type: BobaAutopilotEventTypeV1 = (
+                "safety_decision_expired"
+                if safety_value == "expired"
+                else "safety_decision_invalidated"
+                if invalidated or safety_value == "blocked_stale_state"
+                else "safety_human_review_required"
+                if safety_value == "human_review_required"
+                else "safety_more_evidence_required"
+                if safety_value in {"more_evidence_required", "unknown"}
+                else "safety_denied"
+            )
+            action.status = "blocked"
+            action.failure_summary = _text(exc, maximum=1_200)
+            self._incident(
+                controller,
+                run,
+                incident_type="safety_block",
+                title="Safety Gate blocked target-module coordination",
+                summary=action.failure_summary,
+                severity="high",
+                action=action,
+                fingerprint=_digest(
+                    [action.idempotency_key, safety_decision_id, safety_value]
+                ),
+            )
+            self._append_event(
+                controller,
+                run,
+                event_type=event_type,
+                technical_message=action.failure_summary,
+                easy_message=(
+                    "BOBA did not start the target action because the exact "
+                    "Safety Gate decision is not currently valid."
+                ),
+                severity="warning",
+                action=action,
+                module_name="safety_gate",
+                confirmed_fact="The target module was not invoked.",
+                assessment=safety_value or "Safety evidence is incomplete.",
+                requires_attention=True,
+                available_user_actions=[
+                    "Inspect or re-evaluate this exact Safety Gate request"
+                ],
+                evidence_ids=[safety_decision_id],
+            )
+            self._persist(controller)
+            raise
+        controller.signal_usage.safety_gate_used = True
+        action.safety_decision_id = safety_decision_id
+        self._append_event(
+            controller,
+            run,
+            event_type="safety_allowed",
+            technical_message=(
+                f"Safety Gate decision {safety_decision_id} allows this exact "
+                "internal execution subject to target-module revalidation."
+            ),
+            easy_message=(
+                "BOBA confirmed this one exact safety decision. The target module "
+                "must still check the approval and safety again."
+            ),
+            action=action,
+            module_name="safety_gate",
+            confirmed_fact="Safety Gate revalidation passed for this exact action.",
+            evidence_ids=[safety_decision_id],
+        )
         action.approval_binding_id = binding.approval_binding_id
         action.status = "ready"
         action.failure_summary = None
