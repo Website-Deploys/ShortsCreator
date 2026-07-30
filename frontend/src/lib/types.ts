@@ -4818,6 +4818,290 @@ export interface BobaOutputHumanReviewInputV1 {
   notes?: string;
 }
 
+export type BobaAutopilotControlModeV1 =
+  | "advisory_only"
+  | "safe_read_only_automatic"
+  | "approved_execution_coordination"
+  | "manual_step";
+
+export interface BobaAutopilotRunV1 {
+  run_id: string;
+  project_id: string;
+  correlation_id: string;
+  created_at: string;
+  started_at: string | null;
+  updated_at: string;
+  completed_at: string | null;
+  current_state: string;
+  previous_state: string;
+  run_status: string;
+  control_mode: BobaAutopilotControlModeV1;
+  trigger: string;
+  source_event_id: string | null;
+  project_snapshot_id: string;
+  rights_status: string;
+  safety_status: string;
+  active_action_id: string | null;
+  active_module_invocation_id: string | null;
+  pending_approval_ids: string[];
+  completed_action_ids: string[];
+  failed_action_ids: string[];
+  skipped_action_ids: string[];
+  budget_id: string;
+  checkpoint_requirement_id: string | null;
+  decision_ids: string[];
+  incident_ids: string[];
+  handoff_ids: string[];
+  live_event_ids: string[];
+  stop_reason: string | null;
+  human_review_required: boolean;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaAutopilotActionV1 {
+  action_id: string;
+  run_id: string;
+  action_type: string;
+  action_class: string;
+  target_module: string;
+  target_operation: string;
+  description: string;
+  rationale: string;
+  parameters: Record<string, unknown>;
+  approval_binding_id: string | null;
+  budget_cost: Record<string, number>;
+  risk_level: string;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  failure_summary: string | null;
+  human_approval_required: boolean;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaAutopilotEventV1 {
+  event_id: string;
+  run_id: string;
+  sequence: number;
+  created_at: string;
+  event_type: string;
+  severity: string;
+  state: string;
+  action_id: string | null;
+  module_name: string;
+  technical_message: string;
+  easy_message: string;
+  confirmed_fact: string;
+  assessment: string;
+  progress_current: number | null;
+  progress_total: number | null;
+  progress_percent: number | null;
+  requires_attention: boolean;
+  available_user_actions: string[];
+  evidence_reference_ids: string[];
+  warnings: string[];
+}
+
+export interface BobaAutopilotBudgetV1 {
+  budget_id: string;
+  run_id: string;
+  maximum_total_actions: number;
+  maximum_execution_actions: number;
+  maximum_module_invocations: number;
+  maximum_total_retries: number;
+  maximum_total_duration_seconds: number;
+  maximum_execution_duration_seconds: number;
+  maximum_code_repair_attempts: number;
+  maximum_tool_recovery_attempts: number;
+  maximum_quality_review_attempts: number;
+  execution_coordination_allowed: boolean;
+  budget_reset_requires_human_approval: boolean;
+  warnings: string[];
+}
+
+export interface BobaAutopilotBudgetUsageV1 {
+  budget_usage_id: string;
+  budget_id: string;
+  actions_used: number;
+  execution_actions_used: number;
+  module_invocations_used: number;
+  retries_used: number;
+  total_duration_seconds: number;
+  execution_duration_seconds: number;
+  code_repair_attempts_used: number;
+  tool_recovery_attempts_used: number;
+  quality_review_attempts_used: number;
+  exhausted_dimensions: string[];
+  budget_exhausted: boolean;
+  next_action_allowed: boolean;
+  warnings: string[];
+}
+
+export interface BobaAutopilotCheckpointRequirementV1 {
+  checkpoint_requirement_id: string;
+  run_id: string;
+  required: boolean;
+  checkpoint_reference: string;
+  checkpoint_status: string;
+  checkpoint_validated: boolean;
+  rollback_plan_reference: string;
+  rollback_ready: boolean;
+  blocks_execution: boolean;
+  human_review_required: boolean;
+  warnings: string[];
+}
+
+export interface BobaAutopilotIncidentV1 {
+  incident_id: string;
+  run_id: string;
+  incident_type: string;
+  severity: string;
+  title: string;
+  summary: string;
+  observed_at: string;
+  occurrence_count: number;
+  loop_risk: boolean;
+  project_state_uncertain: boolean;
+  source_media_risk: boolean;
+  accepted_output_risk: boolean;
+  human_review_required: boolean;
+  warnings: string[];
+}
+
+export interface BobaAutopilotHandoffV1 {
+  handoff_id: string;
+  run_id: string;
+  target_module: string;
+  reason: string;
+  current_state: string;
+  budget_status: string;
+  checkpoint_status: string;
+  quality_status: string;
+  rights_status: string;
+  safety_status: string;
+  apply_automatically: boolean;
+  human_approval_required: boolean;
+  priority: string;
+  warnings: string[];
+}
+
+export interface BobaAutopilotControllerSetV1 {
+  schema_version: "boba_autopilot_controller_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  active_run_id: string | null;
+  runs: BobaAutopilotRunV1[];
+  project_snapshots: Array<{
+    project_snapshot_id: string;
+    captured_at: string;
+    rights_status: string;
+    safety_status: string;
+    current_workflow_stage: string;
+    snapshot_sha256: string;
+    warnings: string[];
+  }>;
+  state_transitions: Array<{
+    transition_id: string;
+    run_id: string;
+    sequence: number;
+    from_state: string;
+    to_state: string;
+    transition_reason: string;
+    transition_status: string;
+    created_at: string;
+    warnings: string[];
+  }>;
+  planned_actions: BobaAutopilotActionV1[];
+  module_invocations: Array<{
+    module_invocation_id: string;
+    run_id: string;
+    action_id: string;
+    module_name: string;
+    operation_name: string;
+    status: string;
+    bounded_result_summary: string;
+    failure_summary: string;
+    timeout_occurred: boolean;
+    source_media_untouched: boolean;
+    accepted_outputs_untouched: boolean;
+    warnings: string[];
+  }>;
+  approval_bindings: Array<{
+    approval_binding_id: string;
+    run_id: string;
+    action_id: string;
+    target_module: string;
+    target_plan_id: string;
+    target_strategy_id: string;
+    approval_record_id: string;
+    approved: boolean;
+    exact_match: boolean;
+    invalidation_reason: string | null;
+    warnings: string[];
+  }>;
+  recovery_budgets: BobaAutopilotBudgetV1[];
+  budget_usages: BobaAutopilotBudgetUsageV1[];
+  checkpoint_requirements: BobaAutopilotCheckpointRequirementV1[];
+  incidents: BobaAutopilotIncidentV1[];
+  decisions: Array<{
+    decision_id: string;
+    run_id: string;
+    decision_type: string;
+    decision: string;
+    reason: string;
+    human_review_required: boolean;
+    next_state: string;
+    warnings: string[];
+    limitations: string[];
+  }>;
+  event_stream: BobaAutopilotEventV1[];
+  handoffs: BobaAutopilotHandoffV1[];
+  controller_summary: {
+    total_runs: number;
+    current_run_id: string | null;
+    current_state: string;
+    current_action: string;
+    next_required_human_action: string;
+    safest_next_action: string;
+    limitations: string[];
+  };
+  signal_usage: Record<string, boolean | string[]>;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaAutopilotCreateRunInputV1 {
+  control_mode?: BobaAutopilotControlModeV1;
+  trigger?: string;
+  source_event_id?: string;
+  recovery_budget?: Record<string, number | boolean>;
+}
+
+export interface BobaAutopilotCoordinateInputV1 {
+  action_id: string;
+  approval_record: Record<string, unknown>;
+}
+
+export interface BobaAutopilotHumanDecisionInputV1 {
+  decision:
+    | "reject_proposed_action"
+    | "select_repair_alternative"
+    | "request_more_evidence"
+    | "pause_autopilot"
+    | "cancel_autopilot"
+    | "approve_disclosed_quality_limitation"
+    | "reject_output"
+    | "approve_budget_reset"
+    | "acknowledge_uncertain_project_state";
+  reason: string;
+  reviewer_identity: string;
+  action_id?: string;
+  selected_alternative_id?: string;
+}
+
 export interface BobaCreativeBriefV1 {
   clip_id: string;
   project_id: string;

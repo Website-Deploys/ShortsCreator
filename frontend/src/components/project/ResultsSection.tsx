@@ -8,6 +8,7 @@ import { mediaUrls } from "@/lib/apiClient";
 import {
   useActivateCreatorProfile,
   useBobaApprovalRejectionLearning,
+  useBobaAutopilot,
   useBobaBrain,
   useBobaCaptionMotion,
   useBobaCandidateClipDiscovery,
@@ -39,6 +40,7 @@ import {
   useBobaTrendTopicWatcher,
   useBobaWholeVideoUnderstanding,
   useCreateCreatorProfile,
+  useCreateBobaAutopilotRun,
   useCreateBobaEditorialDecisions,
   useCreateBobaClipBriefs,
   useCreateBobaCaptionMotion,
@@ -48,6 +50,7 @@ import {
   useCreateBobaMusicMood,
   useCreatorProfiles,
   useExportCreatorProfile,
+  useExportBobaAutopilot,
   useExportBobaApprovalRejectionLearning,
   useExportBobaCandidateVideoScorer,
   useExportBobaCodeSurgeon,
@@ -85,9 +88,14 @@ import {
   useGenerateBobaWholeVideoUnderstanding,
   useExecuteBobaCodeSurgeonPatch,
   useExecuteBobaToolRecovery,
+  useAdvanceBobaAutopilotSafe,
+  useCancelBobaAutopilot,
+  useContinueBobaAutopilot,
+  useCoordinateBobaAutopilotApproved,
   usePlans,
   useRenderManifest,
   useResetCreatorProfile,
+  useResetBobaAutopilot,
   useResetBobaApprovalRejectionLearning,
   useResetBobaCandidateVideoScorer,
   useResetBobaCodeSurgeon,
@@ -105,6 +113,7 @@ import {
   useResetBobaTrendTopicWatcher,
   useRankBobaCandidateClips,
   useRecordBobaCreatorLearningEvent,
+  useRecordBobaAutopilotHumanDecision,
   useRecordBobaPerformanceFeedbackEvent,
   useResetBobaCreatorLearning,
   usePrepareBobaCodeSurgeonCommit,
@@ -115,6 +124,9 @@ import {
   useValidateBobaCodeSurgeonPatch,
   useValidateBobaToolRecoveryOutput,
   useRollbackBobaToolRecovery,
+  usePauseBobaAutopilot,
+  usePlanBobaAutopilotNext,
+  useRequestBobaAutopilotBudgetReset,
   useRunBobaToolRecoveryHealthChecks,
   useReviewBobaOutputQuality,
   useCompareBobaOutputQuality,
@@ -6477,6 +6489,617 @@ function BobaRightsPermissionGatePanel({
   );
 }
 
+function BobaAutopilotPanel({ projectId }: { projectId: string }) {
+  const autopilotQuery = useBobaAutopilot(projectId);
+  const createRun = useCreateBobaAutopilotRun(projectId);
+  const exportController = useExportBobaAutopilot(projectId);
+  const resetController = useResetBobaAutopilot(projectId);
+  const controller = autopilotQuery.data;
+  const run =
+    controller?.runs.find((item) => item.run_id === controller.active_run_id) ??
+    controller?.runs.at(-1);
+  const runId = run?.run_id ?? "";
+  const planNext = usePlanBobaAutopilotNext(projectId, runId);
+  const advanceSafe = useAdvanceBobaAutopilotSafe(projectId, runId);
+  const coordinateApproved = useCoordinateBobaAutopilotApproved(
+    projectId,
+    runId,
+  );
+  const pauseRun = usePauseBobaAutopilot(projectId, runId);
+  const continueRun = useContinueBobaAutopilot(projectId, runId);
+  const cancelRun = useCancelBobaAutopilot(projectId, runId);
+  const humanDecision = useRecordBobaAutopilotHumanDecision(projectId, runId);
+  const budgetReset = useRequestBobaAutopilotBudgetReset(projectId, runId);
+  const [controlMode, setControlMode] = useState<
+    "advisory_only" | "safe_read_only_automatic" | "approved_execution_coordination"
+  >("safe_read_only_automatic");
+  const [approvalJson, setApprovalJson] = useState("");
+  const [reviewerIdentity, setReviewerIdentity] = useState("local_operator");
+  const [decisionReason, setDecisionReason] = useState("");
+  const [status, setStatus] = useState("");
+  const actions =
+    controller?.planned_actions.filter((item) => item.run_id === runId) ?? [];
+  const activeAction =
+    actions.find((item) => item.action_id === run?.active_action_id) ??
+    [...actions]
+      .reverse()
+      .find((item) =>
+        ["planned", "ready", "running", "awaiting_approval"].includes(
+          item.status,
+        ),
+      );
+  const budget = controller?.recovery_budgets.find(
+    (item) => item.budget_id === run?.budget_id,
+  );
+  const usage = controller?.budget_usages.find(
+    (item) => item.budget_id === run?.budget_id,
+  );
+  const checkpoint = controller?.checkpoint_requirements
+    .filter((item) => item.run_id === runId)
+    .at(-1);
+  const latestDecision = controller?.decisions
+    .filter((item) => item.run_id === runId)
+    .at(-1);
+  const nextHandoff = controller?.handoffs
+    .filter((item) => item.run_id === runId)
+    .at(-1);
+  const incidents =
+    controller?.incidents.filter((item) => item.run_id === runId).slice(-4) ??
+    [];
+  const events =
+    controller?.event_stream.filter((item) => item.run_id === runId).slice(-8) ??
+    [];
+  const transitions =
+    controller?.state_transitions.filter((item) => item.run_id === runId) ?? [];
+  const safeActions = actions.filter(
+    (item) => item.action_class === "automatic_read_only",
+  );
+  const approvalActions = actions.filter((item) =>
+    item.action_class.startsWith("approval_required"),
+  );
+  const busy = [
+    createRun,
+    planNext,
+    advanceSafe,
+    coordinateApproved,
+    pauseRun,
+    continueRun,
+    cancelRun,
+    humanDecision,
+    budgetReset,
+    exportController,
+    resetController,
+  ].some((mutation) => mutation.isPending);
+
+  function startRun() {
+    setStatus("");
+    createRun.mutate(
+      {
+        control_mode: controlMode,
+        trigger: "manual",
+      },
+      {
+        onSuccess: () =>
+          setStatus("Controlled Autopilot run created. No repair was executed."),
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function plan() {
+    if (!runId) return;
+    setStatus("");
+    planNext.mutate(undefined, {
+      onSuccess: () => setStatus("Next bounded controller action planned."),
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function advance() {
+    if (!runId) return;
+    setStatus("");
+    advanceSafe.mutate(12, {
+      onSuccess: () =>
+        setStatus("Safe read-only steps advanced until the next required stop."),
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function coordinate() {
+    if (!runId || !activeAction) return;
+    let approvalRecord: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(approvalJson);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        setStatus("The exact target-module approval must be one JSON object.");
+        return;
+      }
+      approvalRecord = parsed as Record<string, unknown>;
+    } catch {
+      setStatus("The exact target-module approval JSON is invalid.");
+      return;
+    }
+    setStatus("");
+    coordinateApproved.mutate(
+      {
+        action_id: activeAction.action_id,
+        approval_record: approvalRecord,
+      },
+      {
+        onSuccess: () =>
+          setStatus("Exact approved target-module action coordinated."),
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  function exportArtifact() {
+    exportController.mutate(undefined, {
+      onSuccess: (payload) => {
+        downloadJson(`boba-autopilot-controller-v1-${projectId}.json`, payload);
+        setStatus("Safe Autopilot export downloaded.");
+      },
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function reset() {
+    if (
+      !window.confirm(
+        "Reset Autopilot metadata only? Active runs must be cancelled first; upstream BOBA artifacts and outputs remain untouched.",
+      )
+    ) {
+      return;
+    }
+    resetController.mutate(undefined, {
+      onSuccess: () => setStatus("Autopilot metadata reset safely."),
+      onError: (error) => setStatus(error.message),
+    });
+  }
+
+  function decide(decision: "request_more_evidence" | "reject_proposed_action") {
+    if (!runId || !reviewerIdentity.trim() || !decisionReason.trim()) {
+      setStatus("Reviewer identity and a bounded decision reason are required.");
+      return;
+    }
+    humanDecision.mutate(
+      {
+        decision,
+        reason: decisionReason.trim(),
+        reviewer_identity: reviewerIdentity.trim(),
+        action_id: activeAction?.action_id,
+      },
+      {
+        onSuccess: () => setStatus("Bounded human decision recorded."),
+        onError: (error) => setStatus(error.message),
+      },
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-indigo-300/20 bg-indigo-300/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-4xl">
+          <p className="text-sm font-semibold text-white">
+            BOBA Autopilot Controller V1
+          </p>
+          <p className="text-xs text-muted">
+            BOBA Autopilot coordinates approved self-healing actions. It does
+            not have unrestricted control.
+          </p>
+          <p className="text-xs text-muted">
+            BOBA will stop for rights, safety, approval, checkpoint, budget or
+            quality blocks.
+          </p>
+          <p className="text-xs text-amber-100">
+            Autopilot completion does not mean Olympus resumed, uploaded content
+            or published anything.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy || !controller}
+            onClick={exportArtifact}
+            className="rounded border border-indigo-200/30 px-2.5 py-1.5 text-[11px] text-indigo-100 disabled:opacity-50"
+          >
+            Export safe controller record
+          </button>
+          <button
+            type="button"
+            disabled={busy || !controller}
+            onClick={reset}
+            className="rounded border border-rose-300/30 px-2.5 py-1.5 text-[11px] text-rose-100 disabled:opacity-50"
+          >
+            Reset Autopilot metadata
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+        <label className="text-xs text-muted">
+          Controller mode
+          <select
+            value={controlMode}
+            onChange={(event) =>
+              setControlMode(
+                event.target.value as
+                  | "advisory_only"
+                  | "safe_read_only_automatic"
+                  | "approved_execution_coordination",
+              )
+            }
+            disabled={Boolean(controller?.active_run_id)}
+            className="mt-1 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 text-white"
+          >
+            <option value="safe_read_only_automatic">
+              Safe read-only automatic
+            </option>
+            <option value="approved_execution_coordination">
+              Approved execution coordination
+            </option>
+            <option value="advisory_only">Advisory inspection only</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          disabled={busy || Boolean(controller?.active_run_id)}
+          onClick={startRun}
+          className="self-end rounded border border-indigo-200/30 px-3 py-2 text-xs text-indigo-100 disabled:opacity-50"
+        >
+          Start safe analysis
+        </button>
+      </div>
+
+      {status && <p className="mt-3 text-xs text-indigo-100">{status}</p>}
+      {autopilotQuery.isError && (
+        <p className="mt-3 text-xs text-rose-100">
+          Autopilot controller state could not be loaded.
+        </p>
+      )}
+
+      {!run ? (
+        <p className="mt-4 text-xs text-muted">
+          No Autopilot run exists. Starting safe analysis creates a bounded
+          snapshot and does not execute a repair.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold uppercase tracking-wide text-white/70">
+                CURRENT STATE
+              </p>
+              <p className="mt-2 text-sm font-semibold text-white">
+                {run.current_state.replace(/_/g, " ")}
+              </p>
+              <p>Status: {run.run_status.replace(/_/g, " ")}</p>
+              <p>Rights: {run.rights_status.replace(/_/g, " ")}</p>
+              <p>Safety: {run.safety_status.replace(/_/g, " ")}</p>
+              <p>
+                Snapshot:{" "}
+                {controller?.project_snapshots
+                  .find(
+                    (item) =>
+                      item.project_snapshot_id === run.project_snapshot_id,
+                  )
+                  ?.captured_at.slice(0, 19) ?? "Not available"}
+              </p>
+            </div>
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold uppercase tracking-wide text-white/70">
+                WHAT BOBA IS DOING
+              </p>
+              <p className="mt-2 text-white">
+                {activeAction?.description ?? "No active controller action."}
+              </p>
+              <p>
+                Module:{" "}
+                {run.active_module_invocation_id
+                  ? activeAction?.target_module.replace(/_/g, " ")
+                  : "None"}
+              </p>
+              <p>
+                Safe automatic actions: {safeActions.length} · Approval-required
+                actions: {approvalActions.length}
+              </p>
+            </div>
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold uppercase tracking-wide text-white/70">
+                WHAT BOBA FINISHED
+              </p>
+              <p className="mt-2">
+                Completed actions: {run.completed_action_ids.length}
+              </p>
+              <p>
+                Completed states:{" "}
+                {transitions
+                  .filter((item) => item.transition_status === "applied")
+                  .map((item) => item.to_state.replace(/_/g, " "))
+                  .slice(-6)
+                  .join(" → ") || "None"}
+              </p>
+              <p>
+                Pending states/actions:{" "}
+                {actions
+                  .filter((item) =>
+                    ["planned", "ready", "awaiting_approval"].includes(
+                      item.status,
+                    ),
+                  )
+                  .map((item) => item.action_type.replace(/_/g, " "))
+                  .slice(0, 5)
+                  .join(", ") || "None"}
+              </p>
+            </div>
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold uppercase tracking-wide text-white/70">
+                WHAT BOBA FOUND
+              </p>
+              <p className="mt-2">
+                Incidents: {incidents.length} recent · Failed actions:{" "}
+                {run.failed_action_ids.length}
+              </p>
+              {incidents.map((incident) => (
+                <p
+                  key={incident.incident_id}
+                  className={incident.loop_risk ? "text-amber-100" : ""}
+                >
+                  {incident.title}: {incident.summary}
+                </p>
+              ))}
+            </div>
+            <div className="rounded border border-amber-300/20 bg-amber-300/[0.03] p-3 text-xs text-muted">
+              <p className="font-semibold uppercase tracking-wide text-amber-100/80">
+                APPROVAL REQUIRED
+              </p>
+              <p className="mt-2">
+                {activeAction?.human_approval_required
+                  ? `${activeAction.target_module.replace(/_/g, " ")} · ${activeAction.target_operation.replace(/_/g, " ")}`
+                  : "No exact approval is pending."}
+              </p>
+              <p>
+                Plan:{" "}
+                {String(
+                  activeAction?.parameters.recovery_plan_id ??
+                    activeAction?.parameters.patch_proposal_id ??
+                    "Not available",
+                )}
+              </p>
+              <p>
+                Strategy:{" "}
+                {String(
+                  activeAction?.parameters.recovery_strategy_id ??
+                    activeAction?.parameters.repair_strategy_id ??
+                    "Not available",
+                )}
+              </p>
+              <p className="mt-2 text-amber-100">
+                Autopilot cannot approve this action. Complete the exact approval
+                inside the target BOBA module first.
+              </p>
+            </div>
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold uppercase tracking-wide text-white/70">
+                RECOVERY BUDGET
+              </p>
+              <p className="mt-2">
+                Actions: {usage?.actions_used ?? 0}/{budget?.maximum_total_actions ?? "?"}
+              </p>
+              <p>
+                Execution: {usage?.execution_actions_used ?? 0}/
+                {budget?.maximum_execution_actions ?? "?"}
+              </p>
+              <p>
+                Retries: {usage?.retries_used ?? 0}/
+                {budget?.maximum_total_retries ?? "?"}
+              </p>
+              <p>
+                Time: {Math.round(usage?.total_duration_seconds ?? 0)}s/
+                {budget?.maximum_total_duration_seconds ?? "?"}s
+              </p>
+              {usage?.budget_exhausted && (
+                <p className="text-rose-100">
+                  Exhausted: {usage.exhausted_dimensions.join(", ")}
+                </p>
+              )}
+            </div>
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold uppercase tracking-wide text-white/70">
+                CHECKPOINT AND ROLLBACK
+              </p>
+              <p className="mt-2">
+                Checkpoint: {checkpoint?.checkpoint_status ?? "Not available"}
+              </p>
+              <p>
+                Validated: {checkpoint?.checkpoint_validated ? "Yes" : "No"}
+              </p>
+              <p>Rollback ready: {checkpoint?.rollback_ready ? "Yes" : "No"}</p>
+            </div>
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold uppercase tracking-wide text-white/70">
+                QUALITY REVIEW
+              </p>
+              <p className="mt-2">
+                {latestDecision?.decision.replace(/_/g, " ") ?? "Not available"}
+              </p>
+              <p>{latestDecision?.reason ?? "No quality decision is recorded."}</p>
+            </div>
+            <div className="rounded border border-white/10 p-3 text-xs text-muted">
+              <p className="font-semibold uppercase tracking-wide text-white/70">
+                WHAT HAPPENS NEXT
+              </p>
+              <p className="mt-2">
+                {nextHandoff
+                  ? `${nextHandoff.target_module.replace(/_/g, " ")}: ${nextHandoff.reason}`
+                  : controller?.controller_summary.safest_next_action ||
+                    "No handoff is prepared."}
+              </p>
+              <p>
+                Human action:{" "}
+                {controller?.controller_summary.next_required_human_action ||
+                  "None"}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy || !runId || run.current_state === "paused"}
+              onClick={plan}
+              className="rounded border border-indigo-200/30 px-3 py-2 text-xs text-indigo-100 disabled:opacity-50"
+            >
+              Plan next action
+            </button>
+            <button
+              type="button"
+              disabled={busy || !runId || run.current_state === "paused"}
+              onClick={advance}
+              className="rounded border border-sky-200/30 px-3 py-2 text-xs text-sky-100 disabled:opacity-50"
+            >
+              Continue safe read-only steps
+            </button>
+            <button
+              type="button"
+              disabled={busy || !runId || run.current_state === "paused"}
+              onClick={() =>
+                pauseRun.mutate("Human paused BOBA controller coordination.")
+              }
+              className="rounded border border-amber-200/30 px-3 py-2 text-xs text-amber-100 disabled:opacity-50"
+            >
+              Pause BOBA
+            </button>
+            <button
+              type="button"
+              disabled={busy || run.current_state !== "paused"}
+              onClick={() => continueRun.mutate()}
+              className="rounded border border-emerald-200/30 px-3 py-2 text-xs text-emerald-100 disabled:opacity-50"
+            >
+              Continue BOBA controller
+            </button>
+            <button
+              type="button"
+              disabled={busy || ["cancelled", "failed", "blocked"].includes(run.current_state)}
+              onClick={() =>
+                cancelRun.mutate("Human cancelled future Autopilot actions.")
+              }
+              className="rounded border border-rose-300/30 px-3 py-2 text-xs text-rose-100 disabled:opacity-50"
+            >
+              Cancel BOBA run
+            </button>
+          </div>
+
+          {activeAction?.human_approval_required && (
+            <details className="mt-4 rounded border border-amber-300/20 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-amber-100">
+                Review required approval
+              </summary>
+              <textarea
+                value={approvalJson}
+                onChange={(event) => setApprovalJson(event.target.value)}
+                rows={6}
+                placeholder="Paste the exact approval record exported by Code Surgeon or Tool Recovery."
+                className="mt-3 w-full rounded border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-xs text-white"
+              />
+              <button
+                type="button"
+                disabled={busy || !approvalJson.trim()}
+                onClick={coordinate}
+                className="mt-2 rounded border border-amber-200/30 px-3 py-2 text-xs text-amber-100 disabled:opacity-50"
+              >
+                Coordinate exact approved action
+              </button>
+            </details>
+          )}
+
+          {run.human_review_required && (
+            <details className="mt-4 rounded border border-white/10 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-white">
+                Record bounded human decision
+              </summary>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <input
+                  value={reviewerIdentity}
+                  onChange={(event) => setReviewerIdentity(event.target.value)}
+                  placeholder="Reviewer identity"
+                  className="rounded border border-white/10 bg-black/30 px-2.5 py-2 text-xs text-white"
+                />
+                <input
+                  value={decisionReason}
+                  onChange={(event) => setDecisionReason(event.target.value)}
+                  placeholder="Bounded decision reason"
+                  className="rounded border border-white/10 bg-black/30 px-2.5 py-2 text-xs text-white"
+                />
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => decide("request_more_evidence")}
+                  className="rounded border border-sky-200/30 px-3 py-2 text-xs text-sky-100 disabled:opacity-50"
+                >
+                  Request more evidence
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => decide("reject_proposed_action")}
+                  className="rounded border border-rose-300/30 px-3 py-2 text-xs text-rose-100 disabled:opacity-50"
+                >
+                  Reject proposed action
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    budgetReset.mutate(
+                      decisionReason.trim() ||
+                        "Additional bounded attempts require explicit review.",
+                    )
+                  }
+                  className="rounded border border-amber-200/30 px-3 py-2 text-xs text-amber-100 disabled:opacity-50"
+                >
+                  Request budget reset review
+                </button>
+              </div>
+            </details>
+          )}
+
+          <details className="mt-4 rounded border border-white/10 p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold text-white">
+              LIVE BOBA FEED
+            </summary>
+            <div className="mt-3 space-y-2">
+              {events.length === 0 ? (
+                <p className="text-xs text-muted">No controller events yet.</p>
+              ) : (
+                events.map((event) => (
+                  <div
+                    key={event.event_id}
+                    className="rounded border border-white/10 p-2 text-xs text-muted"
+                  >
+                    <p className="text-white">{event.easy_message}</p>
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-[11px] text-white/60">
+                        Technical event details
+                      </summary>
+                      <p className="mt-1 font-mono text-[11px]">
+                        #{event.sequence} · {event.event_type} ·{" "}
+                        {event.technical_message}
+                      </p>
+                    </details>
+                  </div>
+                ))
+              )}
+            </div>
+          </details>
+        </>
+      )}
+    </section>
+  );
+}
+
 function BobaObserverPanel({ projectId }: { projectId: string }) {
   const observerQuery = useBobaObserver(projectId);
   const generateObserver = useGenerateBobaObserver(projectId);
@@ -11489,6 +12112,7 @@ export function ResultsSection({
   const outputQualityReviewerPanel = (
     <BobaOutputQualityReviewerPanel projectId={projectId} renders={renders} />
   );
+  const autopilotPanel = <BobaAutopilotPanel projectId={projectId} />;
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -11521,6 +12145,7 @@ export function ResultsSection({
         {codeSurgeonPanel}
         {toolRecoveryPanel}
         {outputQualityReviewerPanel}
+        {autopilotPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -11565,6 +12190,7 @@ export function ResultsSection({
         {codeSurgeonPanel}
         {toolRecoveryPanel}
         {outputQualityReviewerPanel}
+        {autopilotPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -11605,6 +12231,7 @@ export function ResultsSection({
         {codeSurgeonPanel}
         {toolRecoveryPanel}
         {outputQualityReviewerPanel}
+        {autopilotPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -11645,6 +12272,7 @@ export function ResultsSection({
       {codeSurgeonPanel}
       {toolRecoveryPanel}
       {outputQualityReviewerPanel}
+      {autopilotPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

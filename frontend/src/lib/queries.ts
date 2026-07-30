@@ -48,6 +48,10 @@ import type {
   AlertsResponse,
   AuditResponse,
   BobaApprovalRejectionLearningSetV1,
+  BobaAutopilotControllerSetV1,
+  BobaAutopilotCoordinateInputV1,
+  BobaAutopilotCreateRunInputV1,
+  BobaAutopilotHumanDecisionInputV1,
   BobaBrainStateV1,
   BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
@@ -146,6 +150,8 @@ export const queryKeys = {
     ["boba", "projects", id, "tool-recovery"] as const,
   bobaOutputQualityReviewer: (id: string) =>
     ["boba", "projects", id, "output-quality-reviewer"] as const,
+  bobaAutopilot: (id: string) =>
+    ["boba", "projects", id, "autopilot"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
   bobaCreativeBriefs: (id: string) => ["boba", "projects", id, "creative-briefs"] as const,
   bobaWholeVideoUnderstanding: (id: string) =>
@@ -982,6 +988,145 @@ export function useResetBobaOutputQualityReviewer(projectId: string) {
         queryKeys.bobaOutputQualityReviewer(projectId),
         null,
       );
+    },
+  });
+}
+
+export function useBobaAutopilot(projectId: string) {
+  return useQuery<BobaAutopilotControllerSetV1 | null>({
+    queryKey: queryKeys.bobaAutopilot(projectId),
+    queryFn: async () => {
+      try {
+        return await api.getBobaAutopilotController(projectId);
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useCreateBobaAutopilotRun(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaAutopilotCreateRunInputV1 = {}) =>
+      api.createBobaAutopilotRun(projectId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaAutopilot(projectId), result);
+    },
+  });
+}
+
+export function usePlanBobaAutopilotNext(projectId: string, runId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.planBobaAutopilotNext(projectId, runId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaAutopilot(projectId),
+      });
+    },
+  });
+}
+
+export function useAdvanceBobaAutopilotSafe(projectId: string, runId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (maximumSteps: number = 12) =>
+      api.advanceBobaAutopilotSafe(projectId, runId, maximumSteps),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaAutopilot(projectId), result);
+    },
+  });
+}
+
+export function useCoordinateBobaAutopilotApproved(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaAutopilotCoordinateInputV1) =>
+      api.coordinateBobaAutopilotApproved(projectId, runId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaAutopilot(projectId), result);
+    },
+  });
+}
+
+export function usePauseBobaAutopilot(projectId: string, runId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (reason: string = "") =>
+      api.pauseBobaAutopilot(projectId, runId, reason),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaAutopilot(projectId), result);
+    },
+  });
+}
+
+export function useContinueBobaAutopilot(projectId: string, runId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.continueBobaAutopilot(projectId, runId),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaAutopilot(projectId), result);
+    },
+  });
+}
+
+export function useCancelBobaAutopilot(projectId: string, runId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (reason: string = "") =>
+      api.cancelBobaAutopilot(projectId, runId, reason),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaAutopilot(projectId), result);
+    },
+  });
+}
+
+export function useRecordBobaAutopilotHumanDecision(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BobaAutopilotHumanDecisionInputV1) =>
+      api.recordBobaAutopilotHumanDecision(projectId, runId, input),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaAutopilot(projectId), result);
+    },
+  });
+}
+
+export function useRequestBobaAutopilotBudgetReset(
+  projectId: string,
+  runId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (reason: string) =>
+      api.requestBobaAutopilotBudgetReset(projectId, runId, reason),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.bobaAutopilot(projectId), result);
+    },
+  });
+}
+
+export function useExportBobaAutopilot(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaAutopilot(projectId),
+  });
+}
+
+export function useResetBobaAutopilot(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.resetBobaAutopilot(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData(queryKeys.bobaAutopilot(projectId), null);
     },
   });
 }

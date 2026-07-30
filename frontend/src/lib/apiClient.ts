@@ -69,6 +69,10 @@ import type {
   AlertsResponse,
   AuditResponse,
   BobaApprovalRejectionLearningSetV1,
+  BobaAutopilotControllerSetV1,
+  BobaAutopilotCoordinateInputV1,
+  BobaAutopilotCreateRunInputV1,
+  BobaAutopilotHumanDecisionInputV1,
   BobaBrainStateV1,
   BobaCaptionMotionRecommendationSetV1,
   BobaCandidateClipDiscoveryV1,
@@ -734,6 +738,121 @@ export const api = {
       publication_used: false;
       destructive_action_used: false;
     }>(`/boba/projects/${projectId}/output-quality-reviewer`, {
+      method: "DELETE",
+    }),
+  getBobaAutopilotController: (projectId: string) =>
+    request<BobaAutopilotControllerSetV1>(
+      `/boba/projects/${projectId}/autopilot`,
+    ),
+  createBobaAutopilotRun: (
+    projectId: string,
+    input: BobaAutopilotCreateRunInputV1 = {},
+  ) =>
+    request<BobaAutopilotControllerSetV1>(
+      `/boba/projects/${projectId}/autopilot/runs`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  planBobaAutopilotNext: (projectId: string, runId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/autopilot/runs/${runId}/plan-next`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    ),
+  advanceBobaAutopilotSafe: (
+    projectId: string,
+    runId: string,
+    maximumSteps = 12,
+  ) =>
+    request<BobaAutopilotControllerSetV1>(
+      `/boba/projects/${projectId}/autopilot/runs/${runId}/advance-safe`,
+      {
+        method: "POST",
+        body: JSON.stringify({ maximum_steps: maximumSteps }),
+      },
+    ),
+  coordinateBobaAutopilotApproved: (
+    projectId: string,
+    runId: string,
+    input: BobaAutopilotCoordinateInputV1,
+  ) =>
+    request<BobaAutopilotControllerSetV1>(
+      `/boba/projects/${projectId}/autopilot/runs/${runId}/coordinate-approved`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  pauseBobaAutopilot: (projectId: string, runId: string, reason = "") =>
+    request<BobaAutopilotControllerSetV1>(
+      `/boba/projects/${projectId}/autopilot/runs/${runId}/pause`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    ),
+  continueBobaAutopilot: (projectId: string, runId: string) =>
+    request<BobaAutopilotControllerSetV1>(
+      `/boba/projects/${projectId}/autopilot/runs/${runId}/continue`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    ),
+  cancelBobaAutopilot: (projectId: string, runId: string, reason = "") =>
+    request<BobaAutopilotControllerSetV1>(
+      `/boba/projects/${projectId}/autopilot/runs/${runId}/cancel`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    ),
+  recordBobaAutopilotHumanDecision: (
+    projectId: string,
+    runId: string,
+    input: BobaAutopilotHumanDecisionInputV1,
+  ) =>
+    request<BobaAutopilotControllerSetV1>(
+      `/boba/projects/${projectId}/autopilot/runs/${runId}/human-decision`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
+  requestBobaAutopilotBudgetReset: (
+    projectId: string,
+    runId: string,
+    reason: string,
+  ) =>
+    request<BobaAutopilotControllerSetV1>(
+      `/boba/projects/${projectId}/autopilot/runs/${runId}/budget-reset-request`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    ),
+  exportBobaAutopilot: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/autopilot/export`,
+    ),
+  resetBobaAutopilot: (projectId: string) =>
+    request<{
+      reset: boolean;
+      project_id: string;
+      autopilot_metadata_removed: boolean;
+      upstream_boba_artifacts_deleted: false;
+      source_media_deleted: false;
+      accepted_outputs_deleted: false;
+      code_surgeon_worktrees_deleted: false;
+      tool_recovery_workspaces_deleted: false;
+      checkpoints_deleted: false;
+      workflow_resumed: false;
+      publication_used: false;
+    }>(`/boba/projects/${projectId}/autopilot`, {
       method: "DELETE",
     }),
   createBobaCandidate: (input: Omit<BobaCandidateV1, "created_at">) =>
