@@ -5534,6 +5534,38 @@ class BobaWorkflowControllerV1:
         )
         if not payload:
             return False
+        suite_value = payload.get("suite_decision")
+        suite = (
+            dict(suite_value)
+            if isinstance(suite_value, Mapping)
+            else payload
+            if str(payload.get("schema_version") or "").startswith(
+                "boba_validation_suite"
+            )
+            or "technical_validation_passed" in payload
+            else {}
+        )
+        if suite:
+            return bool(
+                suite.get("decision")
+                in {"passed", "passed_with_optional_warnings"}
+                and suite.get("technical_validation_passed") is True
+                and suite.get("required_checks_complete") is True
+                and suite.get("required_checks_passed") is True
+                and suite.get("acceptance_criteria_met") is True
+                and suite.get("evidence_complete") is True
+                and suite.get("target_digest_unchanged") is True
+                and suite.get("environment_digest_unchanged") is True
+                and suite.get("project_snapshot_current") is True
+                and not suite.get("failed_required_check_ids")
+                and not suite.get("incomplete_required_check_ids")
+                and not suite.get("unavailable_required_check_ids")
+                and not suite.get("timed_out_required_check_ids")
+                and suite.get("workflow_transition_authorized") is not True
+                and suite.get("output_quality_authorized") is not True
+                and suite.get("upload_authorized") is not True
+                and suite.get("publication_authorized") is not True
+            )
         validators = payload.get("validators")
         if isinstance(validators, list):
             for validator in validators:

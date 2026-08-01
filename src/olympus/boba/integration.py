@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from olympus.boba.approval_rejection_learning import (
     BobaApprovalRejectionLearningSetV1,
@@ -174,6 +174,8 @@ from olympus.boba.trend_topic_watcher import (
     BobaTrendTopicWatcherV1,
 )
 from olympus.boba.validation import compact_boba_summary
+from olympus.boba.validator_runner import BobaValidationTargetTypeV1
+from olympus.boba.validator_runner_execution import BobaValidatorRunnerV1
 from olympus.boba.whole_video import (
     BobaWholeVideoUnderstandingEngine,
     BobaWholeVideoUnderstandingV1,
@@ -285,7 +287,21 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "workflow_controller.load",
     "workflow_controller.export",
     "workflow_controller.reset",
-    "workflow_controller.complete_internal_output",
+"workflow_controller.complete_internal_output",
+    "validator_runner.build_registry",
+    "validator_runner.inspect_registry",
+    "validator_runner.inspect_availability",
+    "validator_runner.create_plan",
+    "validator_runner.validate_plan",
+    "validator_runner.create_run",
+    "validator_runner.execute_run",
+    "validator_runner.cancel_run",
+    "validator_runner.retry_check",
+    "validator_runner.inspect_results",
+    "validator_runner.load",
+    "validator_runner.export",
+    "validator_runner.reset",
+
 )
 
 
@@ -339,6 +355,13 @@ class BobaIntegration:
             evidence_root=(
                 store.root / "output_quality_reviewer" / "samples"
             ),
+            ffmpeg_binary=runtime_settings.rendering.ffmpeg_binary,
+            ffprobe_binary=runtime_settings.rendering.ffprobe_binary,
+        )
+        self.validator_runner = BobaValidatorRunnerV1(
+            store,
+            repository_root=repository_root,
+            storage_root=runtime_settings.storage.local_root,
             ffmpeg_binary=runtime_settings.rendering.ffmpeg_binary,
             ffprobe_binary=runtime_settings.rendering.ffprobe_binary,
         )
@@ -940,6 +963,20 @@ class BobaIntegration:
         safe_payload["_integration_side_effects"] = side_effects or []
         return safe_payload
 
+    def load_boba_validator_runner(
+        self,
+        project_id: str,
+    ) -> Any:
+        runner = self.store.load_boba_validator_runner(project_id)
+        if runner is None:
+            raise NotFoundError("BOBA Validator Runner is unavailable.")
+        return runner
+
+    def export_boba_validator_runner(self, project_id: str) -> dict[str, Any]:
+        return self.validator_runner.export_validator_runner(project_id)
+
+    def reset_boba_validator_runner(self, project_id: str) -> dict[str, Any]:
+        return self.validator_runner.reset_validator_runner(project_id)
     async def _invoke_registered_boba_integration_operation(
         self,
         request: BobaIntegrationRequestV1,
@@ -964,6 +1001,7 @@ class BobaIntegration:
             "autopilot_controller.load": self.load_boba_autopilot_controller,
             "safety_gate.load": self.load_boba_safety_gate,
             "workflow_controller.load": self.load_boba_workflow_controller,
+            "validator_runner.load": self.load_boba_validator_runner,
         }
         export_handlers = {
             "observer.export": self.export_observer_report,
@@ -980,11 +1018,141 @@ class BobaIntegration:
             ),
             "safety_gate.export": self.export_boba_safety_gate,
             "workflow_controller.export": self.export_boba_workflow_controller,
+            "validator_runner.export": self.export_boba_validator_runner,
         }
         if operation_id in load_handlers:
             result = load_handlers[operation_id](project_id)
         elif operation_id in export_handlers:
             result = export_handlers[operation_id](project_id)
+        elif operation_id == "validator_runner.build_registry":
+            result = self.validator_runner.build_registry(
+                project_id,
+                source_id=str(values.get("source_id") or ""),
+            )
+            side_effects.append("validator_registry_metadata_updated")
+        elif operation_id == "validator_runner.inspect_registry":
+            result = self.validator_runner.inspect_registry(project_id)
+        elif operation_id == "validator_runner.inspect_availability":
+            result = self.validator_runner.inspect_availability(project_id)
+        elif operation_id == "validator_runner.create_plan":
+            result = self.validator_runner.create_validation_plan(
+                project_id,
+                source_id=str(values.get("source_id") or ""),
+                target_type=cast(
+                    BobaValidationTargetTypeV1,
+                    str(values.get("target_type") or "unknown"),
+                ),
+                target_id=str(values.get("target_id") or ""),
+                checks=[
+                    dict(item)
+                    for item in values.get("checks", [])
+                    if isinstance(item, dict)
+                ],
+                input_bindings=[
+                    dict(item)
+                    for item in values.get("input_bindings", [])
+                    if isinstance(item, dict)
+                ],
+                validation_objective=str(
+                    values.get("validation_objective") or ""
+                ),
+                acceptance_criteria=[
+                    str(item) for item in values.get("acceptance_criteria", [])
+                ],
+                rejection_criteria=[
+                    str(item) for item in values.get("rejection_criteria", [])
+                ],
+                plan_source_module=str(
+                    values.get("plan_source_module") or "integration_layer"
+                ),
+                plan_source_record_id=str(
+                    values.get("plan_source_record_id") or ""
+                ),
+                target_digest=str(values.get("target_digest") or ""),
+                project_snapshot_digest=str(
+                    values.get("project_snapshot_digest") or ""
+                ),
+                workflow_run_id=str(values.get("workflow_run_id") or ""),
+                stage_instance_id=str(values.get("stage_instance_id") or ""),
+                workflow_revision=int(values.get("workflow_revision") or 0),
+                approval_record_id=str(
+                    values.get("approval_record_id") or ""
+                ),
+                safety_decision_id=str(
+                    values.get("safety_decision_id") or ""
+                ),
+                policy_mode=cast(
+                    Literal[
+                        "artifact_only",
+                        "media_inspection",
+                        "isolated_code",
+                    ] | None,
+                    str(values["policy_mode"])
+                    if values.get("policy_mode")
+                    else None,
+                ),
+                resource_budget_overrides=(
+                    {
+                        str(key): int(value)
+                        for key, value in _dict(
+                            values.get("resource_budget_overrides")
+                        ).items()
+                    }
+                    or None
+                ),
+                allow_unavailable_required=bool(
+                    values.get("allow_unavailable_required", False)
+                ),
+            )
+            side_effects.append("validator_plan_metadata_updated")
+        elif operation_id == "validator_runner.validate_plan":
+            result = self.validator_runner.validate_validation_plan(
+                project_id,
+                validation_plan_id=str(
+                    values.get("validation_plan_id") or ""
+                ),
+                allow_unavailable_required=bool(
+                    values.get("allow_unavailable_required", False)
+                ),
+            )
+        elif operation_id == "validator_runner.create_run":
+            result = self.validator_runner.create_validation_run(
+                project_id,
+                str(values.get("validation_plan_id") or ""),
+            )
+            side_effects.append("validator_run_metadata_updated")
+        elif operation_id == "validator_runner.execute_run":
+            result = self.validator_runner.execute_validation_run(
+                project_id,
+                str(values.get("validation_run_id") or ""),
+                confirm_stale_lease=bool(
+                    values.get("confirm_stale_lease", False)
+                ),
+            )
+            target_revalidated = True
+            side_effects.append("validator_evidence_metadata_updated")
+        elif operation_id == "validator_runner.cancel_run":
+            result = self.validator_runner.cancel_validation_run(
+                project_id,
+                str(values.get("validation_run_id") or ""),
+            )
+            side_effects.append("validator_cancellation_metadata_updated")
+        elif operation_id == "validator_runner.retry_check":
+            result = self.validator_runner.retry_validation_check(
+                project_id,
+                str(values.get("validation_run_id") or ""),
+                str(values.get("plan_check_id") or ""),
+            )
+            target_revalidated = True
+            side_effects.append("validator_retry_metadata_updated")
+        elif operation_id == "validator_runner.inspect_results":
+            result = self.validator_runner.inspect_results(
+                project_id,
+                str(values.get("validation_run_id") or ""),
+            )
+        elif operation_id == "validator_runner.reset":
+            result = self.reset_boba_validator_runner(project_id)
+            side_effects.append("validator_active_metadata_reset")
         elif operation_id == "observer.generate":
             result = await self.generate_observer_report(
                 project_id,

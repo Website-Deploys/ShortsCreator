@@ -6,6 +6,7 @@ import { CopyIcon, DownloadIcon, ServerIcon, SparklesIcon } from "@/components/i
 import { BobaIntegrationLayerPanel } from "@/components/project/BobaIntegrationLayerPanel";
 import { BobaSafetyGatePanel } from "@/components/project/BobaSafetyGatePanel";
 import { BobaWorkflowControllerPanel } from "@/components/project/BobaWorkflowControllerPanel";
+import { BobaValidatorRunnerPanel } from "@/components/project/BobaValidatorRunnerPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { mediaUrls } from "@/lib/apiClient";
 import {
@@ -12153,6 +12154,9 @@ export function ResultsSection({
       )}
       projectId={projectId}
     />
+  );
+  const validatorRunnerPanel = (
+    <BobaValidatorRunnerPanel projectId={projectId} />
   );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 

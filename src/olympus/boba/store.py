@@ -104,6 +104,12 @@ from olympus.boba.safety_gate import (
 from olympus.boba.scout import BobaCandidateV1, BobaScoutScoreV1
 from olympus.boba.tool_recovery import BobaToolRecoveryBrainSetV1
 from olympus.boba.trend_topic_watcher import BobaTrendTopicWatcherSetV1
+from olympus.boba.validator_runner import (
+    BobaValidationEventV1,
+    BobaValidationLeaseV1,
+    BobaValidatorRunnerSetV1,
+    sanitize_validator_export,
+)
 from olympus.boba.whole_video import BobaWholeVideoUnderstandingV1
 from olympus.boba.workflow_controller import (
     BobaWorkflowControllerSetV1,
@@ -4769,5 +4775,539 @@ class BobaMemoryStore:
             "autopilot_history_removed": False,
             "safety_decisions_removed": False,
             "integration_transactions_removed": False,
+            "approvals_removed": False,
+        }
+    @staticmethod
+    def _validate_validator_runner_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
+            raise ValidationError(f"Invalid BOBA Validator Runner {label}.")
+        return value
+
+    def boba_validator_runner_path(self, project_id: str) -> Path:
+        return self._path(project_id, "validator_runner/index.json")
+
+    def boba_validator_registry_path(
+        self,
+        project_id: str,
+        registry_snapshot_id: str,
+    ) -> Path:
+        safe_id = self._validate_validator_runner_record_id(
+            registry_snapshot_id,
+            label="registry snapshot id",
+        )
+        return self._path(
+            project_id,
+            f"validator_runner/registries/{safe_id}.json",
+        )
+
+    def boba_validation_plan_path(
+        self,
+        project_id: str,
+        validation_plan_id: str,
+    ) -> Path:
+        safe_id = self._validate_validator_runner_record_id(
+            validation_plan_id,
+            label="plan id",
+        )
+        return self._path(
+            project_id,
+            f"validator_runner/plans/{safe_id}/index.json",
+        )
+
+    def boba_validation_run_path(
+        self,
+        project_id: str,
+        validation_run_id: str,
+    ) -> Path:
+        safe_id = self._validate_validator_runner_record_id(
+            validation_run_id,
+            label="run id",
+        )
+        return self._path(
+            project_id,
+            f"validator_runner/runs/{safe_id}/index.json",
+        )
+
+    def boba_validation_check_path(
+        self,
+        project_id: str,
+        validation_run_id: str,
+        check_run_id: str,
+    ) -> Path:
+        safe_id = self._validate_validator_runner_record_id(
+            check_run_id,
+            label="check run id",
+        )
+        return self.boba_validation_run_path(
+            project_id,
+            validation_run_id,
+        ).parent / "checks" / f"{safe_id}.json"
+
+    def boba_validation_events_path(
+        self,
+        project_id: str,
+        validation_run_id: str,
+    ) -> Path:
+        return self.boba_validation_run_path(
+            project_id,
+            validation_run_id,
+        ).with_name("events.jsonl")
+
+    def boba_validation_lease_path(self, project_id: str) -> Path:
+        return self._path(project_id, "validator_runner/active.lock.json")
+
+    def save_boba_validator_runner(
+        self,
+        runner: BobaValidatorRunnerSetV1,
+    ) -> BobaValidatorRunnerSetV1:
+        validated = BobaValidatorRunnerSetV1.model_validate(
+            runner.model_dump(mode="json")
+        )
+        with self._lock:
+            for snapshot in validated.registry_snapshots:
+                path = self.boba_validator_registry_path(
+                    validated.project_id,
+                    snapshot.registry_snapshot_id,
+                )
+                payload = {
+                    "schema_version": "boba_validator_registry_record_v1",
+                    "project_id": validated.project_id,
+                    "registry_snapshot": snapshot.model_dump(mode="json"),
+                    "validator_descriptors": [
+                        item.model_dump(mode="json")
+                        for item in validated.validator_descriptors
+                        if item.validator_id in snapshot.validator_ids
+                        and snapshot.validator_versions.get(item.validator_id)
+                        == item.validator_version
+                    ],
+                }
+                existing = self._read(path, None)
+                if isinstance(existing, dict) and existing != payload:
+                    raise ValidationError(
+                        "Completed Validator Runner registry snapshots are immutable."
+                    )
+                self._atomic_write_compact(path, payload)
+            for plan in validated.validation_plans:
+                path = self.boba_validation_plan_path(
+                    validated.project_id,
+                    plan.validation_plan_id,
+                )
+                execution_policy_payload: dict[str, Any] | None = None
+                for execution_policy in validated.execution_policies:
+                    if execution_policy.execution_policy_id == plan.execution_policy_id:
+                        execution_policy_payload = execution_policy.model_dump(mode="json")
+                        break
+                resource_budget_payload: dict[str, Any] | None = None
+                for resource_budget in validated.resource_budgets:
+                    if resource_budget.resource_budget_id == plan.resource_budget_id:
+                        resource_budget_payload = resource_budget.model_dump(mode="json")
+                        break
+                plan_payload: dict[str, Any] = {
+                    "schema_version": "boba_validation_plan_record_v1",
+                    "project_id": validated.project_id,
+                    "plan": plan.model_dump(mode="json"),
+                    "checks": [
+                        item.model_dump(mode="json")
+                        for item in validated.plan_checks
+                        if item.validation_plan_id == plan.validation_plan_id
+                    ],
+                    "input_bindings": [
+                        item.model_dump(mode="json")
+                        for item in validated.input_bindings
+                        if item.validation_plan_id == plan.validation_plan_id
+                    ],
+                    "execution_policy": execution_policy_payload,
+                    "resource_budget": resource_budget_payload,
+                }
+                existing = self._read(path, None)
+                if isinstance(existing, dict) and existing != plan_payload:
+                    raise ValidationError(
+                        "Completed Validator Runner plans are immutable."
+                    )
+                self._atomic_write_compact(path, plan_payload)
+            for run in validated.validation_runs:
+                run_checks = [
+                    item
+                    for item in validated.check_runs
+                    if item.validation_run_id == run.validation_run_id
+                ]
+                for check in run_checks:
+                    path = self.boba_validation_check_path(
+                        validated.project_id,
+                        run.validation_run_id,
+                        check.check_run_id,
+                    )
+                    result_payload: dict[str, Any] | None = None
+                    for result in validated.validation_results:
+                        if result.check_run_id == check.check_run_id:
+                            result_payload = result.model_dump(mode="json")
+                            break
+                    check_payload: dict[str, Any] = {
+                        "schema_version": "boba_validation_check_record_v1",
+                        "project_id": validated.project_id,
+                        "check_run": check.model_dump(mode="json"),
+                        "result": result_payload,
+                        "evidence": [
+                            item.model_dump(mode="json")
+                            for item in validated.evidence_records
+                            if item.check_run_id == check.check_run_id
+                        ],
+                    }
+                    existing = self._read(path, None)
+                    existing_check = (
+                        existing.get("check_run")
+                        if isinstance(existing, dict)
+                        else None
+                    )
+                    existing_status = (
+                        str(existing_check.get("status") or "")
+                        if isinstance(existing_check, dict)
+                        else ""
+                    )
+                    if (
+                        existing_status
+                        in {
+                            "passed",
+                            "failed",
+                            "unavailable",
+                            "blocked",
+                            "errored",
+                            "timed_out",
+                            "cancelled",
+                            "skipped_not_required",
+                            "superseded",
+                            "dependency_blocked",
+                        }
+                        and existing != check_payload
+                    ):
+                        raise ValidationError(
+                            "Completed Validator Runner check records are immutable."
+                        )
+                    self._atomic_write_compact(path, check_payload)
+                run_path = self.boba_validation_run_path(
+                    validated.project_id,
+                    run.validation_run_id,
+                )
+                run_payload = {
+                    "schema_version": "boba_validation_run_record_v1",
+                    "project_id": validated.project_id,
+                    "run": run.model_dump(mode="json"),
+                    "environment_snapshot": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in validated.environment_snapshots
+                            if item.environment_snapshot_id
+                            == run.environment_snapshot_id
+                        ),
+                        None,
+                    ),
+                    "check_run_ids": [item.check_run_id for item in run_checks],
+                    "suite_decision": next(
+                        (
+                            item.model_dump(mode="json")
+                            for item in validated.suite_decisions
+                            if item.validation_run_id == run.validation_run_id
+                        ),
+                        None,
+                    ),
+                    "incident_ids": [
+                        item.incident_id
+                        for item in validated.incidents
+                        if item.validation_run_id == run.validation_run_id
+                    ],
+                    "handoff_ids": [
+                        item.handoff_id
+                        for item in validated.handoffs
+                        if item.validation_run_id == run.validation_run_id
+                    ],
+                }
+                existing = self._read(run_path, None)
+                existing_run = (
+                    existing.get("run") if isinstance(existing, dict) else None
+                )
+                existing_status = (
+                    str(existing_run.get("run_status") or "")
+                    if isinstance(existing_run, dict)
+                    else ""
+                )
+                if (
+                    existing_status
+                    in {
+                        "completed",
+                        "failed",
+                        "blocked",
+                        "incomplete",
+                        "timed_out",
+                        "cancelled",
+                    }
+                    and existing != run_payload
+                ):
+                    raise ValidationError(
+                        "Completed Validator Runner run records are immutable."
+                    )
+                self._atomic_write_compact(run_path, run_payload)
+                self.append_boba_validation_events(
+                    validated.project_id,
+                    run.validation_run_id,
+                    [
+                        item
+                        for item in validated.events
+                        if item.validation_run_id == run.validation_run_id
+                    ],
+                )
+            self._atomic_write_compact(
+                self.boba_validator_runner_path(validated.project_id),
+                {
+                    "schema_version": "boba_validator_runner_record_v1",
+                    "validator_runner": validated.model_dump(mode="json"),
+                },
+            )
+        return validated
+
+    def load_boba_validator_runner(
+        self,
+        project_id: str,
+    ) -> BobaValidatorRunnerSetV1 | None:
+        try:
+            raw = self._read(self.boba_validator_runner_path(project_id), None)
+        except ValidationError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        payload = raw.get("validator_runner", raw)
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return BobaValidatorRunnerSetV1.model_validate(payload)
+        except PydanticValidationError:
+            return None
+
+    def append_boba_validation_events(
+        self,
+        project_id: str,
+        validation_run_id: str,
+        events: list[BobaValidationEventV1],
+    ) -> None:
+        path = self.boba_validation_events_path(project_id, validation_run_id)
+        existing_ids: set[str] = set()
+        sequence = 0
+        if path.exists():
+            try:
+                for line in path.read_text(encoding="utf-8-sig").splitlines():
+                    payload = json.loads(line)
+                    if isinstance(payload, dict):
+                        existing_ids.add(str(payload.get("event_id") or ""))
+                        sequence = max(sequence, int(payload.get("sequence") or 0))
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise ValidationError(
+                    "BOBA Validator Runner event stream is unreadable."
+                ) from exc
+        new_events = sorted(
+            [item for item in events if item.event_id not in existing_ids],
+            key=lambda item: item.sequence,
+        )
+        if not new_events:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            for event in new_events:
+                if event.sequence <= sequence:
+                    raise ValidationError(
+                        "Validator Runner event sequence must be monotonic."
+                    )
+                sequence = event.sequence
+                handle.write(
+                    json.dumps(
+                        event.model_dump(mode="json"),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def load_boba_validation_lease(
+        self,
+        project_id: str,
+    ) -> BobaValidationLeaseV1 | None:
+        raw = self._read(self.boba_validation_lease_path(project_id), None)
+        if not isinstance(raw, dict):
+            return None
+        try:
+            lease = BobaValidationLeaseV1.model_validate(raw)
+        except PydanticValidationError as exc:
+            raise ValidationError(
+                "BOBA Validator Runner lease metadata is malformed."
+            ) from exc
+        expires_at = self._autopilot_time(lease.expires_at)
+        lease.stale = expires_at is None or expires_at <= datetime.now(UTC)
+        if lease.stale:
+            lease.lease_status = "expired"
+        return lease
+
+    def acquire_boba_validation_lease(
+        self,
+        project_id: str,
+        *,
+        validation_run_id: str,
+        validation_plan_id: str,
+        target_id: str,
+        owner_id: str,
+        environment_digest: str,
+        workspace_reference: str,
+        lease_seconds: int = 300,
+        confirm_stale: bool = False,
+    ) -> BobaValidationLeaseV1:
+        path = self.boba_validation_lease_path(project_id)
+        with self._lock:
+            existing = self.load_boba_validation_lease(project_id)
+            if existing is not None and not existing.stale:
+                if (
+                    existing.validation_run_id == validation_run_id
+                    and existing.owner_id == owner_id
+                ):
+                    return existing
+                raise ValidationError(
+                    "A conflicting Validator Runner execution lease is active."
+                )
+            warnings: list[str] = []
+            if existing is not None:
+                if not confirm_stale:
+                    raise ValidationError(
+                        "A stale Validator Runner lease requires explicit replacement."
+                    )
+                stale_path = path.with_name(
+                    f"active.lock.stale.{uuid4().hex}.json"
+                )
+                with suppress(FileNotFoundError):
+                    os.replace(path, stale_path)
+                warnings.append("The explicitly replaced stale lease was preserved.")
+            now = datetime.now(UTC)
+            lease = BobaValidationLeaseV1(
+                lease_id=f"validation_lease_{uuid4().hex}",
+                project_id=project_id,
+                validation_run_id=validation_run_id,
+                validation_plan_id=validation_plan_id,
+                target_id=target_id,
+                owner_id=owner_id,
+                acquired_at=now.isoformat(),
+                refreshed_at=now.isoformat(),
+                expires_at=(
+                    now + timedelta(seconds=max(30, min(lease_seconds, 900)))
+                ).isoformat(),
+                lease_status="active",
+                stale=False,
+                environment_digest=environment_digest,
+                workspace_reference=workspace_reference,
+                warnings=warnings,
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with path.open("x", encoding="utf-8", newline="\n") as handle:
+                    json.dump(
+                        lease.model_dump(mode="json"),
+                        handle,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except FileExistsError as exc:
+                raise ValidationError(
+                    "A Validator Runner lease was acquired concurrently."
+                ) from exc
+            return lease
+
+    def release_boba_validation_lease(
+        self,
+        project_id: str,
+        *,
+        validation_run_id: str,
+        owner_id: str,
+    ) -> bool:
+        path = self.boba_validation_lease_path(project_id)
+        with self._lock:
+            lease = self.load_boba_validation_lease(project_id)
+            if lease is None:
+                return False
+            if (
+                lease.validation_run_id != validation_run_id
+                or lease.owner_id != owner_id
+            ):
+                raise ValidationError(
+                    "Validator Runner lease belongs to another run or owner."
+                )
+            path.unlink(missing_ok=True)
+            return True
+
+    def export_boba_validator_runner(self, project_id: str) -> dict[str, Any]:
+        runner = self.load_boba_validator_runner(project_id)
+        if runner is None:
+            raise ValidationError(
+                "BOBA Validator Runner is not available for export."
+            )
+        safe = sanitize_validator_export(
+            {
+                "schema_version": "boba_validator_runner_export_v1",
+                "project_id": project_id,
+                "exported_at": memory_now_iso(),
+                "validator_runner": runner.model_dump(mode="json"),
+                "privacy": {
+                    "private_paths_excluded": True,
+                    "secrets_excluded": True,
+                    "complete_logs_excluded": True,
+                    "raw_media_excluded": True,
+                    "source_media_modified": False,
+                    "accepted_outputs_modified": False,
+                    "network_used": False,
+                    "upload_used": False,
+                    "publication_used": False,
+                },
+            }
+        )
+        if not isinstance(safe, dict):
+            raise ValidationError("Validator Runner export is malformed.")
+        return safe
+
+    def reset_boba_validator_runner(self, project_id: str) -> dict[str, Any]:
+        runner = self.load_boba_validator_runner(project_id)
+        if runner is not None and any(
+            run.run_status
+            not in {
+                "completed",
+                "failed",
+                "blocked",
+                "incomplete",
+                "timed_out",
+                "cancelled",
+            }
+            for run in runner.validation_runs
+        ):
+            raise ValidationError(
+                "Active validation runs must be cancelled before reset."
+            )
+        index_path = self.boba_validator_runner_path(project_id)
+        lock_path = self.boba_validation_lease_path(project_id)
+        with self._lock:
+            active_removed = index_path.exists()
+            lease_removed = lock_path.exists()
+            index_path.unlink(missing_ok=True)
+            lock_path.unlink(missing_ok=True)
+        return {
+            "schema_version": "boba_validator_runner_reset_v1",
+            "project_id": project_id,
+            "active_metadata_removed": active_removed,
+            "active_lease_removed": lease_removed,
+            "immutable_registry_history_preserved": True,
+            "immutable_plan_history_preserved": True,
+            "immutable_run_history_preserved": True,
+            "check_records_preserved": True,
+            "evidence_records_preserved": True,
+            "event_streams_preserved": True,
+            "source_media_removed": False,
+            "accepted_outputs_removed": False,
+            "workflow_history_removed": False,
+            "safety_decisions_removed": False,
             "approvals_removed": False,
         }
