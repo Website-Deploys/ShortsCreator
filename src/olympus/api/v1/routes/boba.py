@@ -629,6 +629,123 @@ class WorkflowHumanDecisionRequest(WorkflowRevisionRequest):
     expires_in_seconds: int | None = Field(default=None, ge=1, le=86_400)
 
 
+class ValidatorRegistryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str | None = Field(default=None, max_length=512)
+
+
+class ValidatorInputBindingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clip_id: str = Field(default="", max_length=180)
+    output_id: str = Field(default="", max_length=180)
+    artifact_type: str = Field(min_length=1, max_length=160)
+    producer_module_id: str = Field(default="", max_length=160)
+    producer_record_id: str = Field(default="", max_length=180)
+    schema_id: str = Field(default="", max_length=180)
+    schema_version: str = Field(default="1", max_length=80)
+    artifact_digest: str = Field(default="", max_length=64)
+    sanitized_storage_reference: str = Field(min_length=1, max_length=500)
+    immutable: bool = True
+    source_media: bool = False
+    source_media_read_only: bool = True
+    accepted_output: bool = False
+    required: bool = True
+    available: bool = True
+    stale: bool = False
+    malformed: bool = False
+    rights_status: str = Field(default="unknown", max_length=80)
+
+
+class ValidatorCheckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    validator_id: str = Field(min_length=1, max_length=180)
+    check_key: str | None = Field(default=None, max_length=180)
+    required: bool = True
+    depends_on: list[str] = Field(default_factory=list, max_length=64)
+    input_binding_indexes: list[int] = Field(default_factory=list, max_length=64)
+    expected_values: dict[str, Any] = Field(default_factory=dict, max_length=64)
+    tolerance: dict[str, float] = Field(default_factory=dict, max_length=32)
+    acceptance_criteria: list[str] = Field(default_factory=list, max_length=32)
+    rejection_criteria: list[str] = Field(default_factory=list, max_length=32)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=900)
+    maximum_attempts: int = Field(default=1, ge=1, le=2)
+    stop_suite_on_failure: bool = False
+
+
+class ValidatorPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str | None = Field(default=None, max_length=512)
+    target_type: Literal[
+        "project_artifact",
+        "workflow_stage",
+        "generated_output",
+        "recovered_output",
+        "checkpoint",
+        "code_worktree",
+        "code_patch_result",
+        "tool_health",
+        "validation_report",
+        "unknown",
+    ]
+    target_id: str = Field(min_length=1, max_length=180)
+    checks: list[ValidatorCheckRequest] = Field(min_length=1, max_length=64)
+    input_bindings: list[ValidatorInputBindingRequest] = Field(
+        min_length=1,
+        max_length=64,
+    )
+    validation_objective: str = Field(min_length=1, max_length=900)
+    acceptance_criteria: list[str] = Field(min_length=1, max_length=64)
+    rejection_criteria: list[str] = Field(min_length=1, max_length=64)
+    plan_source_module: str = Field(default="api", min_length=1, max_length=160)
+    plan_source_record_id: str = Field(default="", max_length=180)
+    target_digest: str = Field(default="", max_length=64)
+    project_snapshot_digest: str = Field(default="", max_length=64)
+    workflow_run_id: str = Field(default="", max_length=180)
+    stage_instance_id: str = Field(default="", max_length=180)
+    workflow_revision: int = Field(default=0, ge=0)
+    approval_record_id: str = Field(default="", max_length=180)
+    safety_decision_id: str = Field(default="", max_length=180)
+    policy_mode: Literal[
+        "artifact_only",
+        "media_inspection",
+        "isolated_code",
+    ] | None = None
+    resource_budget_overrides: dict[str, int] = Field(
+        default_factory=dict,
+        max_length=16,
+    )
+    expires_in_seconds: int = Field(default=86_400, ge=60, le=604_800)
+    allow_unavailable_required: bool = False
+
+
+class ValidatorPlanValidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    validation_plan_id: str = Field(min_length=1, max_length=180)
+    allow_unavailable_required: bool = False
+
+
+class ValidatorCreateRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    validation_plan_id: str = Field(min_length=1, max_length=180)
+
+
+class ValidatorExecuteRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_stale_lease: bool = False
+
+
+class ValidatorRetryCheckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_check_id: str = Field(min_length=1, max_length=180)
+
 class SafetyPolicyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2642,6 +2759,249 @@ async def reset_output_quality_reviewer(
     }
 
 
+@router.get("/projects/{project_id}/validator-runner")
+async def get_validator_runner(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    runner = boba.load_boba_validator_runner(project_id)
+    return runner.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/validator-runner/registry")
+async def get_validator_registry(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validator_runner.inspect_registry(
+        project_id,
+        source_id=project_id,
+    )
+
+
+@router.get("/projects/{project_id}/validator-runner/validators")
+async def get_validators(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    registry = await get_validator_registry(project_id, boba, settings)
+    return {
+        "schema_version": "boba_validators_v1",
+        "project_id": project_id,
+        "validators": registry.get("validators", []),
+    }
+
+
+@router.get("/projects/{project_id}/validator-runner/availability")
+async def get_validator_availability(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validator_runner.inspect_availability(
+        project_id,
+        source_id=project_id,
+    )
+
+
+@router.post("/projects/{project_id}/validator-runner/plans")
+async def create_validator_plan(
+    project_id: str,
+    body: ValidatorPlanRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    plan = boba.validator_runner.create_validation_plan(
+        project_id,
+        source_id=body.source_id or project_id,
+        target_type=body.target_type,
+        target_id=body.target_id,
+        checks=[item.model_dump(exclude_none=True) for item in body.checks],
+        input_bindings=[
+            item.model_dump(exclude_none=True) for item in body.input_bindings
+        ],
+        validation_objective=body.validation_objective,
+        acceptance_criteria=body.acceptance_criteria,
+        rejection_criteria=body.rejection_criteria,
+        plan_source_module=body.plan_source_module,
+        plan_source_record_id=body.plan_source_record_id,
+        target_digest=body.target_digest,
+        project_snapshot_digest=body.project_snapshot_digest,
+        workflow_run_id=body.workflow_run_id,
+        stage_instance_id=body.stage_instance_id,
+        workflow_revision=body.workflow_revision,
+        approval_record_id=body.approval_record_id,
+        safety_decision_id=body.safety_decision_id,
+        policy_mode=body.policy_mode,
+        resource_budget_overrides=body.resource_budget_overrides or None,
+        expires_in_seconds=body.expires_in_seconds,
+        allow_unavailable_required=body.allow_unavailable_required,
+    )
+    return plan.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/validator-runner/plans/validate")
+async def validate_validator_plan(
+    project_id: str,
+    body: ValidatorPlanValidateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validator_runner.validate_validation_plan(
+        project_id,
+        validation_plan_id=body.validation_plan_id,
+        allow_unavailable_required=body.allow_unavailable_required,
+    )
+
+
+@router.post("/projects/{project_id}/validator-runner/runs")
+async def create_validator_run(
+    project_id: str,
+    body: ValidatorCreateRunRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    run = boba.validator_runner.create_validation_run(
+        project_id,
+        body.validation_plan_id,
+    )
+    return run.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/validator-runner/runs/{run_id}/execute"
+)
+async def execute_validator_run(
+    project_id: str,
+    run_id: str,
+    body: ValidatorExecuteRunRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validator_runner.execute_validation_run(
+        project_id,
+        run_id,
+        confirm_stale_lease=body.confirm_stale_lease,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/validator-runner/runs/{run_id}/cancel"
+)
+async def cancel_validator_run(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    run = boba.validator_runner.cancel_validation_run(project_id, run_id)
+    return run.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/validator-runner/runs/{run_id}/retry-check"
+)
+async def retry_validator_check(
+    project_id: str,
+    run_id: str,
+    body: ValidatorRetryCheckRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    run = boba.validator_runner.retry_validation_check(
+        project_id,
+        run_id,
+        body.plan_check_id,
+    )
+    return run.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/validator-runner/runs/{run_id}")
+async def get_validator_run(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validator_runner.inspect_validation_run(project_id, run_id)
+
+
+@router.get(
+    "/projects/{project_id}/validator-runner/runs/{run_id}/results"
+)
+async def get_validator_results(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validator_runner.inspect_results(project_id, run_id)
+
+
+@router.get("/projects/{project_id}/validator-runner/runs/{run_id}/events")
+async def get_validator_events(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    events = boba.validator_runner.inspect_events(project_id, run_id)
+    return {
+        "schema_version": "boba_validation_event_stream_v1",
+        "project_id": project_id,
+        "validation_run_id": run_id,
+        "events": [item.model_dump(mode="json") for item in events],
+    }
+
+
+@router.get("/projects/{project_id}/validator-runner/export")
+async def export_validator_runner(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_validator_runner(project_id)
+
+
+@router.delete("/projects/{project_id}/validator-runner")
+async def reset_validator_runner(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_validator_runner(project_id)
+
 @router.post("/projects/{project_id}/workflow-controller/definitions")
 async def create_workflow_definition(
     project_id: str,
@@ -2691,7 +3051,7 @@ async def create_workflow_run(
     }
     controller = boba.create_boba_workflow_run(
         project_id,
-        source_id=body.source_id or project.id,
+        source_id=body.source_id or project_id,
         project_snapshot=project_snapshot,
         source_storage_reference=source_storage_reference,
         source_artifact_digest=source_artifact_digest,

@@ -1039,7 +1039,21 @@ def build_safety_module_operation_registry() -> dict[str, dict[str, str]]:
             "resume": "future_gated",
             "resume_workflow": "future_gated",
         },
-        "validator_runner": {"execute": "future_gated"},
+        "validator_runner": {
+            "build_registry": "automatic_read_only",
+            "inspect_registry": "automatic_read_only",
+            "inspect_availability": "automatic_read_only",
+            "create_plan": "automatic_read_only",
+            "validate_plan": "automatic_read_only",
+            "create_run": "automatic_read_only",
+            "execute_run": "approval_required_execution",
+            "cancel_run": "approval_required_read_only",
+            "retry_check": "approval_required_execution",
+            "inspect_results": "automatic_read_only",
+            "load": "automatic_read_only",
+            "export": "automatic_read_only",
+            "reset": "approval_required_read_only",
+        },
         "final_decision_bus": {"continue": "future_gated"},
     }
 
