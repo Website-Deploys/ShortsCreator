@@ -1069,6 +1069,20 @@ def build_safety_module_operation_registry() -> dict[str, dict[str, str]]:
             "export": "automatic_read_only",
             "reset": "automatic_read_only",
         },
+        "artifact_inspector": {
+            "inspect_registry": "automatic_read_only",
+            "create_inspection_request": "automatic_read_only",
+            "validate_references": "automatic_read_only",
+            "inspect_artifacts": "automatic_read_only",
+            "inspect_run": "automatic_read_only",
+            "build_inventory": "automatic_read_only",
+            "inspect_lineage": "automatic_read_only",
+            "compare_artifacts": "automatic_read_only",
+            "inspect_events": "automatic_read_only",
+            "load": "automatic_read_only",
+            "export": "automatic_read_only",
+            "reset": "automatic_read_only",
+        },
         "final_decision_bus": {"continue": "future_gated"},
     }
 
