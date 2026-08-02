@@ -20,6 +20,11 @@ from olympus.boba.approval_rejection_learning import (
     BobaApprovalRejectionLearningSetV1,
 )
 from olympus.boba.approvals import BobaApprovalEventV1, BobaApprovalTargetType
+from olympus.boba.artifact_inspector import (
+    BobaArtifactEventV1,
+    BobaArtifactInspectorSetV1,
+    sanitize_artifact_export,
+)
 from olympus.boba.autopilot_controller import (
     BobaAutopilotControllerSetV1,
     BobaAutopilotEventV1,
@@ -5452,6 +5457,437 @@ class BobaMemoryStore:
             handle.flush()
             os.fsync(handle.fileno())
 
+    @staticmethod
+    def _validate_artifact_inspector_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
+            raise ValidationError(f"Invalid BOBA Artifact Inspector {label}.")
+        return value
+
+    def boba_artifact_inspector_path(self, project_id: str) -> Path:
+        return self._path(project_id, "artifact_inspector/index.json")
+
+    def boba_artifact_registry_path(
+        self,
+        project_id: str,
+        registry_snapshot_id: str,
+    ) -> Path:
+        safe_id = self._validate_artifact_inspector_record_id(
+            registry_snapshot_id,
+            label="registry snapshot id",
+        )
+        return self._path(project_id, f"artifact_inspector/registries/{safe_id}.json")
+
+    def boba_artifact_request_path(
+        self,
+        project_id: str,
+        inspection_request_id: str,
+    ) -> Path:
+        safe_id = self._validate_artifact_inspector_record_id(
+            inspection_request_id,
+            label="inspection request id",
+        )
+        return self._path(project_id, f"artifact_inspector/requests/{safe_id}.json")
+
+    def boba_artifact_run_path(
+        self,
+        project_id: str,
+        inspection_run_id: str,
+    ) -> Path:
+        safe_id = self._validate_artifact_inspector_record_id(
+            inspection_run_id,
+            label="inspection run id",
+        )
+        return self._path(project_id, f"artifact_inspector/runs/{safe_id}/index.json")
+
+    def boba_artifact_snapshot_path(
+        self,
+        project_id: str,
+        inspection_run_id: str,
+        artifact_snapshot_id: str,
+    ) -> Path:
+        safe_id = self._validate_artifact_inspector_record_id(
+            artifact_snapshot_id,
+            label="artifact snapshot id",
+        )
+        return self.boba_artifact_run_path(project_id, inspection_run_id).parent / (
+            f"artifacts/{safe_id}.json"
+        )
+
+    def boba_artifact_inventory_path(
+        self,
+        project_id: str,
+        inventory_id: str,
+    ) -> Path:
+        safe_id = self._validate_artifact_inspector_record_id(
+            inventory_id,
+            label="inventory id",
+        )
+        return self._path(project_id, f"artifact_inspector/inventories/{safe_id}.json")
+
+    def boba_artifact_comparison_path(
+        self,
+        project_id: str,
+        comparison_id: str,
+    ) -> Path:
+        safe_id = self._validate_artifact_inspector_record_id(
+            comparison_id,
+            label="comparison id",
+        )
+        return self._path(project_id, f"artifact_inspector/comparisons/{safe_id}.json")
+
+    def boba_artifact_events_path(
+        self,
+        project_id: str,
+        inspection_run_id: str = "",
+    ) -> Path:
+        if not inspection_run_id:
+            return self._path(project_id, "artifact_inspector/events.jsonl")
+        return self.boba_artifact_run_path(project_id, inspection_run_id).with_name(
+            "events.jsonl"
+        )
+
+    def save_boba_artifact_inspector(
+        self,
+        inspector: BobaArtifactInspectorSetV1,
+    ) -> BobaArtifactInspectorSetV1:
+        validated = BobaArtifactInspectorSetV1.model_validate(
+            inspector.model_dump(mode="json")
+        )
+        with self._lock:
+            for snapshot in validated.registry_snapshots:
+                path = self.boba_artifact_registry_path(
+                    validated.project_id,
+                    snapshot.registry_snapshot_id,
+                )
+                payload = sanitize_artifact_export(
+                    {
+                        "schema_version": "boba_artifact_registry_record_v1",
+                        "project_id": validated.project_id,
+                        "registry_snapshot": snapshot.model_dump(mode="json"),
+                        "artifact_type_descriptors": [
+                            item.model_dump(mode="json")
+                            for item in validated.artifact_type_descriptors
+                            if item.artifact_type_id in snapshot.artifact_type_ids
+                        ],
+                    }
+                )
+                existing = self._read(path, None)
+                if isinstance(existing, dict) and existing != payload:
+                    raise ValidationError(
+                        "Completed Artifact Inspector registry snapshots are immutable."
+                    )
+                self._atomic_write_compact(path, payload)
+
+            for request in validated.inspection_requests:
+                path = self.boba_artifact_request_path(
+                    validated.project_id,
+                    request.inspection_request_id,
+                )
+                payload = sanitize_artifact_export(
+                    {
+                        "schema_version": "boba_artifact_inspection_request_record_v1",
+                        "project_id": validated.project_id,
+                        "inspection_request": request.model_dump(mode="json"),
+                        "artifact_references": [
+                            item.model_dump(mode="json")
+                            for item in validated.artifact_references
+                            if item.artifact_reference_id in request.artifact_reference_ids
+                        ],
+                    }
+                )
+                existing = self._read(path, None)
+                if isinstance(existing, dict) and existing != payload:
+                    raise ValidationError(
+                        "Completed Artifact Inspector requests are immutable."
+                    )
+                self._atomic_write_compact(path, payload)
+
+            for inventory in validated.inventories:
+                path = self.boba_artifact_inventory_path(
+                    validated.project_id,
+                    inventory.inventory_id,
+                )
+                payload = sanitize_artifact_export(
+                    {
+                        "schema_version": "boba_artifact_inventory_record_v1",
+                        "project_id": validated.project_id,
+                        "inventory": inventory.model_dump(mode="json"),
+                    }
+                )
+                existing = self._read(path, None)
+                if isinstance(existing, dict) and existing != payload:
+                    raise ValidationError(
+                        "Artifact Inspector inventories are immutable after persistence."
+                    )
+                self._atomic_write_compact(path, payload)
+
+            for comparison in validated.comparisons:
+                path = self.boba_artifact_comparison_path(
+                    validated.project_id,
+                    comparison.comparison_id,
+                )
+                payload = sanitize_artifact_export(
+                    {
+                        "schema_version": "boba_artifact_comparison_record_v1",
+                        "project_id": validated.project_id,
+                        "comparison": comparison.model_dump(mode="json"),
+                    }
+                )
+                existing = self._read(path, None)
+                if isinstance(existing, dict) and existing != payload:
+                    raise ValidationError(
+                        "Artifact Inspector comparisons are immutable after persistence."
+                    )
+                self._atomic_write_compact(path, payload)
+
+            for run in validated.inspection_runs:
+                run_snapshots = [
+                    item
+                    for item in validated.artifact_snapshots
+                    if item.inspection_run_id == run.inspection_run_id
+                ]
+                run_reference_ids = {
+                    item.artifact_reference_id for item in run_snapshots
+                }
+                for artifact_snapshot in run_snapshots:
+                    snapshot_path = self.boba_artifact_snapshot_path(
+                        validated.project_id,
+                        run.inspection_run_id,
+                        artifact_snapshot.artifact_snapshot_id,
+                    )
+                    snapshot_payload = sanitize_artifact_export(
+                        {
+                            "schema_version": "boba_artifact_snapshot_record_v1",
+                            "project_id": validated.project_id,
+                            "inspection_run_id": run.inspection_run_id,
+                            "artifact_snapshot": artifact_snapshot.model_dump(mode="json"),
+                        }
+                    )
+                    stored_snapshot_payload = self._read(snapshot_path, None)
+                    if (
+                        isinstance(stored_snapshot_payload, dict)
+                        and stored_snapshot_payload != snapshot_payload
+                    ):
+                        raise ValidationError(
+                            "Artifact Inspector snapshots are immutable after persistence."
+                        )
+                    self._atomic_write_compact(snapshot_path, snapshot_payload)
+
+                run_path = self.boba_artifact_run_path(
+                    validated.project_id,
+                    run.inspection_run_id,
+                )
+                run_payload = sanitize_artifact_export(
+                    {
+                        "schema_version": "boba_artifact_inspection_run_record_v1",
+                        "project_id": validated.project_id,
+                        "inspection_run": run.model_dump(mode="json"),
+                        "snapshots": [item.model_dump(mode="json") for item in run_snapshots],
+                        "observations": [
+                            item.model_dump(mode="json")
+                            for item in validated.observations
+                            if item.inspection_run_id == run.inspection_run_id
+                        ],
+                        "integrity_assessments": [
+                            item.model_dump(mode="json")
+                            for item in validated.integrity_assessments
+                            if item.inspection_run_id == run.inspection_run_id
+                        ],
+                        "freshness_assessments": [
+                            item.model_dump(mode="json")
+                            for item in validated.freshness_assessments
+                            if item.inspection_run_id == run.inspection_run_id
+                        ],
+                        "protection_assessments": [
+                            item.model_dump(mode="json")
+                            for item in validated.protection_assessments
+                            if item.inspection_run_id == run.inspection_run_id
+                        ],
+                        "findings": [
+                            item.model_dump(mode="json")
+                            for item in validated.findings
+                            if item.inspection_run_id == run.inspection_run_id
+                        ],
+                        "incidents": [
+                            item.model_dump(mode="json")
+                            for item in validated.incidents
+                            if item.inspection_run_id == run.inspection_run_id
+                        ],
+                        "lineage_edges": [
+                            item.model_dump(mode="json")
+                            for item in validated.lineage_edges
+                            if item.parent_artifact_reference_id in run_reference_ids
+                            or item.child_artifact_reference_id in run_reference_ids
+                        ],
+                        "inventory": next(
+                            (
+                                item.model_dump(mode="json")
+                                for item in reversed(validated.inventories)
+                                if item.inspection_run_id == run.inspection_run_id
+                            ),
+                            None,
+                        ),
+
+                        "coverage": next(
+                            (
+                                item.model_dump(mode="json")
+                                for item in reversed(validated.coverage_records)
+                                if item.coverage_id == run.coverage_id
+                            ),
+                            None,
+                        ),
+                        "events": [
+                            item.model_dump(mode="json")
+                            for item in validated.events
+                            if item.inspection_run_id == run.inspection_run_id
+                        ],
+                        "handoffs": [
+                            item.model_dump(mode="json")
+                            for item in validated.handoffs
+                            if item.inspection_run_id == run.inspection_run_id
+                        ],
+                    }
+                )
+                existing_run = self._read(run_path, None)
+                existing_status = ""
+                if isinstance(existing_run, dict):
+                    stored_run = existing_run.get("inspection_run")
+                    if isinstance(stored_run, dict):
+                        existing_status = str(stored_run.get("status") or "")
+                if existing_status in {"completed", "completed_with_limitations", "failed"}:
+                    existing_run_data = dict(existing_run.get("inspection_run") or {})
+                    current_run_data = dict(run_payload.get("inspection_run") or {})
+                    existing_run_data.pop("reused_existing_result", None)
+                    current_run_data.pop("reused_existing_result", None)
+                    if existing_run_data != current_run_data:
+                        raise ValidationError(
+                            "Completed Artifact Inspector runs are immutable."
+                        )
+                else:
+                    self._atomic_write_compact(run_path, run_payload)
+                self.append_boba_artifact_inspector_events(
+                    validated.project_id,
+                    [
+                        item
+                        for item in validated.events
+                        if item.inspection_run_id == run.inspection_run_id
+                    ],
+                    inspection_run_id=run.inspection_run_id,
+                )
+
+            self.append_boba_artifact_inspector_events(
+                validated.project_id,
+                list(validated.events),
+            )
+            self._atomic_write_compact(
+                self.boba_artifact_inspector_path(validated.project_id),
+                sanitize_artifact_export(
+                    {
+                        "schema_version": "boba_artifact_inspector_record_v1",
+                        "artifact_inspector": validated.model_dump(mode="json"),
+                    }
+                ),
+            )
+        return validated
+
+    def load_boba_artifact_inspector(
+        self,
+        project_id: str,
+    ) -> BobaArtifactInspectorSetV1 | None:
+        try:
+            raw = self._read(self.boba_artifact_inspector_path(project_id), None)
+        except ValidationError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        payload = raw.get("artifact_inspector", raw)
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return BobaArtifactInspectorSetV1.model_validate(payload)
+        except PydanticValidationError:
+            return None
+
+    def reset_boba_artifact_inspector(self, project_id: str) -> dict[str, Any]:
+        inspector = self.load_boba_artifact_inspector(project_id)
+        if inspector is not None and any(
+            item.status in {"pending", "running"}
+            for item in inspector.inspection_runs
+        ):
+            raise ValidationError(
+                "Active Artifact Inspector runs must complete before reset."
+            )
+        index_path = self.boba_artifact_inspector_path(project_id)
+        with self._lock:
+            active_removed = index_path.exists()
+            index_path.unlink(missing_ok=True)
+        return {
+            "schema_version": "boba_artifact_inspector_reset_v1",
+            "project_id": project_id,
+            "active_metadata_removed": active_removed,
+            "immutable_registry_history_preserved": True,
+            "immutable_request_history_preserved": True,
+            "immutable_run_history_preserved": True,
+            "artifact_snapshots_preserved": True,
+            "inventories_preserved": True,
+            "comparisons_preserved": True,
+            "event_streams_preserved": True,
+            "workflow_history_preserved": True,
+            "validator_history_preserved": True,
+            "report_reader_history_preserved": True,
+            "safety_decisions_preserved": True,
+            "source_media_removed": False,
+            "accepted_outputs_removed": False,
+            "artifacts_preserved": True,
+            "source_media_preserved": True,
+            "accepted_outputs_preserved": True,
+        }
+
+    def append_boba_artifact_inspector_events(
+        self,
+        project_id: str,
+        events: list[BobaArtifactEventV1],
+        *,
+        inspection_run_id: str = "",
+    ) -> None:
+        path = self.boba_artifact_events_path(project_id, inspection_run_id)
+        existing_ids: set[str] = set()
+        sequence = 0
+        if path.exists():
+            try:
+                for line in path.read_text(encoding="utf-8-sig").splitlines():
+                    payload = json.loads(line)
+                    if isinstance(payload, dict):
+                        existing_ids.add(str(payload.get("event_id") or ""))
+                        sequence = max(sequence, int(payload.get("sequence") or 0))
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise ValidationError(
+                    "BOBA Artifact Inspector event stream is unreadable."
+                ) from exc
+        new_events = sorted(
+            [item for item in events if item.event_id not in existing_ids],
+            key=lambda item: item.sequence,
+        )
+        if not new_events:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            for event in new_events:
+                if event.sequence <= sequence:
+                    raise ValidationError(
+                        "Artifact Inspector event sequence must be monotonic."
+                    )
+                sequence = event.sequence
+                handle.write(
+                    json.dumps(
+                        event.model_dump(mode="json"),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
     def load_boba_validation_lease(
         self,
         project_id: str,

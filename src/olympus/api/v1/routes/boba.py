@@ -830,6 +830,124 @@ class ReportReaderBundleRequest(BaseModel):
     purpose: str = Field(min_length=1, max_length=600)
 
 
+class ArtifactInspectorLineageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parent_artifact_reference_id: str = Field(min_length=1, max_length=180)
+    relationship: Literal[
+        "produced_from",
+        "transformed_from",
+        "recovered_from",
+        "validated_by",
+        "supersedes",
+        "unknown",
+    ] = "unknown"
+
+
+class ArtifactInspectorReferenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workflow_run_id: str = Field(default="", max_length=180)
+    stage_instance_id: str = Field(default="", max_length=180)
+    clip_id: str = Field(default="", max_length=180)
+    output_id: str = Field(default="", max_length=180)
+    owner_module_id: str = Field(
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+    producer_record_id: str = Field(default="", max_length=180)
+    artifact_type_id: str = Field(
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+    schema_id: str = Field(default="", max_length=180)
+    schema_version: str = Field(default="1", max_length=80)
+    expected_digest: str = Field(default="", max_length=72)
+    expected_digest_type: Literal["sha256"] = "sha256"
+    expected_size_bytes: int | None = Field(default=None, ge=0, le=33_554_432)
+    sanitized_storage_reference: str = Field(min_length=1, max_length=500)
+    storage_kind: Literal[
+        "file",
+        "directory",
+        "structured_record",
+        "event_stream",
+        "manifest",
+        "virtual_reference",
+        "unknown",
+    ]
+    immutable: bool = True
+    source_media: bool = False
+    source_media_read_only: bool = True
+    accepted_output: bool = False
+    generated_output: bool = False
+    required: bool = True
+    historical: bool = False
+    rights_status: str = Field(default="unknown", max_length=120)
+    created_at: str = Field(default="", max_length=80)
+    completed_at: str = Field(default="", max_length=80)
+    declared_lineage: list[ArtifactInspectorLineageRequest] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+    warnings: list[str] = Field(default_factory=list, max_length=32)
+
+
+class ArtifactInspectorCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(default="api", min_length=1, max_length=512)
+    requested_by_module: str = Field(
+        default="api",
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+    inspection_mode: Literal[
+        "exact_artifact",
+        "artifact_group",
+        "project_inventory",
+        "workflow_stage",
+        "selected_clip",
+        "rendered_output",
+        "recovery_output",
+        "accepted_output",
+        "report_artifact",
+        "validation_evidence",
+        "checkpoint_preflight",
+        "code_worktree",
+        "internal_completion_preflight",
+        "historical_inventory",
+        "comparison",
+        "unknown",
+    ] = "exact_artifact"
+    artifact_references: list[ArtifactInspectorReferenceRequest] = Field(
+        min_length=1,
+        max_length=128,
+    )
+    workflow_run_id: str = Field(default="", max_length=180)
+    project_snapshot_digest: str = Field(default="", max_length=72)
+    inspect_content: bool = False
+    recompute_digests: bool = True
+    include_inventory: bool = True
+    include_lineage: bool = True
+
+
+class ArtifactInspectorRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    inspection_run_id: str = Field(min_length=1, max_length=180)
+
+
+class ArtifactInspectorCompareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    inspection_run_id: str = Field(min_length=1, max_length=180)
+    left_reference_id: str = Field(min_length=1, max_length=180)
+    right_reference_id: str = Field(min_length=1, max_length=180)
+
+
 class SafetyPolicyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -3273,6 +3391,196 @@ async def reset_report_reader(
     _require_enabled(settings)
     await _require_project(project_id, boba)
     return boba.reset_boba_report_reader(project_id)
+
+
+@router.get("/projects/{project_id}/artifact-inspector")
+async def get_artifact_inspector(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    inspector = boba.load_boba_artifact_inspector(project_id)
+    return inspector.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/artifact-inspector/registry")
+async def get_artifact_inspector_registry(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.artifact_inspector.inspect_artifact_registry(project_id, source_id="api")
+
+
+@router.get("/projects/{project_id}/artifact-inspector/types")
+async def get_artifact_inspector_types(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    registry = await get_artifact_inspector_registry(project_id, boba, settings)
+    return {
+        "schema_version": "boba_artifact_inspector_types_v1",
+        "project_id": project_id,
+        "artifact_types": registry.get("artifact_types", []),
+    }
+
+
+@router.post("/projects/{project_id}/artifact-inspector/requests")
+async def create_artifact_inspector_request(
+    project_id: str,
+    body: ArtifactInspectorCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    request = boba.artifact_inspector.create_inspection_request(
+        project_id,
+        source_id=body.source_id,
+        requested_by_module=body.requested_by_module,
+        inspection_mode=body.inspection_mode,
+        artifact_references=[
+            item.model_dump(mode="json") for item in body.artifact_references
+        ],
+        workflow_run_id=body.workflow_run_id,
+        project_snapshot_digest=body.project_snapshot_digest,
+        inspect_content=body.inspect_content,
+        recompute_digests=body.recompute_digests,
+        include_inventory=body.include_inventory,
+        include_lineage=body.include_lineage,
+    )
+    return request.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/artifact-inspector/requests/{request_id}/validate")
+async def validate_artifact_inspector_request(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.artifact_inspector.validate_artifact_references(project_id, request_id)
+
+
+@router.post("/projects/{project_id}/artifact-inspector/requests/{request_id}/inspect")
+async def inspect_artifact_inspector_request(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    run = boba.artifact_inspector.inspect_artifacts(project_id, request_id)
+    return run.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/artifact-inspector/runs/{run_id}")
+async def get_artifact_inspector_run(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.artifact_inspector.inspect_run(project_id, run_id)
+
+
+@router.post("/projects/{project_id}/artifact-inspector/inventory")
+async def build_artifact_inspector_inventory(
+    project_id: str,
+    body: ArtifactInspectorRunRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    inventory = boba.artifact_inspector.build_project_inventory(
+        project_id,
+        inspection_run_id=body.inspection_run_id,
+    )
+    return inventory.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/artifact-inspector/lineage")
+async def inspect_artifact_inspector_lineage(
+    project_id: str,
+    body: ArtifactInspectorRunRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.artifact_inspector.inspect_lineage(
+        project_id,
+        inspection_run_id=body.inspection_run_id,
+    )
+
+
+@router.post("/projects/{project_id}/artifact-inspector/compare")
+async def compare_artifact_inspector_artifacts(
+    project_id: str,
+    body: ArtifactInspectorCompareRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    comparison = boba.artifact_inspector.compare_artifacts(
+        project_id,
+        inspection_run_id=body.inspection_run_id,
+        left_reference_id=body.left_reference_id,
+        right_reference_id=body.right_reference_id,
+    )
+    return comparison.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/artifact-inspector/runs/{run_id}/events")
+async def get_artifact_inspector_events(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    events = boba.artifact_inspector.inspect_events(project_id, run_id)
+    return {
+        "schema_version": "boba_artifact_inspector_event_stream_v1",
+        "project_id": project_id,
+        "inspection_run_id": run_id,
+        "events": [item.model_dump(mode="json") for item in events],
+    }
+
+
+@router.get("/projects/{project_id}/artifact-inspector/export")
+async def export_artifact_inspector(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_artifact_inspector(project_id)
+
+
+@router.delete("/projects/{project_id}/artifact-inspector")
+async def reset_artifact_inspector(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_artifact_inspector(project_id)
 
 
 @router.post("/projects/{project_id}/workflow-controller/definitions")

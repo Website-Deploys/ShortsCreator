@@ -13,6 +13,10 @@ from olympus.boba.approval_rejection_learning import (
     BobaApprovalRejectionModuleGuidanceV1,
 )
 from olympus.boba.approvals import BobaApprovalService
+from olympus.boba.artifact_inspector import (
+    BobaArtifactInspectionModeV1,
+    BobaArtifactInspectorV1,
+)
 from olympus.boba.autopilot_controller import (
     BobaAutopilotActionV1,
     BobaAutopilotControllerSetV1,
@@ -317,6 +321,18 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "report_reader.load",
     "report_reader.export",
     "report_reader.reset",
+    "artifact_inspector.inspect_registry",
+    "artifact_inspector.create_inspection_request",
+    "artifact_inspector.validate_references",
+    "artifact_inspector.inspect_artifacts",
+    "artifact_inspector.inspect_run",
+    "artifact_inspector.build_inventory",
+    "artifact_inspector.inspect_lineage",
+    "artifact_inspector.compare_artifacts",
+    "artifact_inspector.inspect_events",
+    "artifact_inspector.load",
+    "artifact_inspector.export",
+    "artifact_inspector.reset",
 )
 
 
@@ -381,6 +397,7 @@ class BobaIntegration:
             ffprobe_binary=runtime_settings.rendering.ffprobe_binary,
         )
         self.report_reader = BobaReportReaderV1(store)
+        self.artifact_inspector = BobaArtifactInspectorV1(store, storage)
         self.safety_gate = BobaSafetyGateV1(
             store,
             context_provider=self._safety_context,
@@ -1006,6 +1023,18 @@ class BobaIntegration:
     def reset_boba_report_reader(self, project_id: str) -> dict[str, Any]:
         return self.report_reader.reset_report_reader_metadata(project_id)
 
+    def load_boba_artifact_inspector(self, project_id: str) -> Any:
+        inspector = self.store.load_boba_artifact_inspector(project_id)
+        if inspector is None:
+            raise NotFoundError("BOBA Artifact Inspector is unavailable.")
+        return inspector
+
+    def export_boba_artifact_inspector(self, project_id: str) -> dict[str, Any]:
+        return self.artifact_inspector.export_artifact_inspection(project_id)
+
+    def reset_boba_artifact_inspector(self, project_id: str) -> dict[str, Any]:
+        return self.artifact_inspector.reset_artifact_inspector_metadata(project_id)
+
     async def _invoke_registered_boba_integration_operation(
         self,
         request: BobaIntegrationRequestV1,
@@ -1032,6 +1061,7 @@ class BobaIntegration:
             "workflow_controller.load": self.load_boba_workflow_controller,
             "validator_runner.load": self.load_boba_validator_runner,
             "report_reader.load": self.load_boba_report_reader,
+            "artifact_inspector.load": self.load_boba_artifact_inspector,
         }
         export_handlers = {
             "observer.export": self.export_observer_report,
@@ -1050,6 +1080,7 @@ class BobaIntegration:
             "workflow_controller.export": self.export_boba_workflow_controller,
             "validator_runner.export": self.export_boba_validator_runner,
             "report_reader.export": self.export_boba_report_reader,
+            "artifact_inspector.export": self.export_boba_artifact_inspector,
         }
         if operation_id in load_handlers:
             result = load_handlers[operation_id](project_id)
@@ -1256,6 +1287,78 @@ class BobaIntegration:
         elif operation_id == "report_reader.reset":
             result = self.reset_boba_report_reader(project_id)
             side_effects.append("report_reader_active_metadata_reset")
+        elif operation_id == "artifact_inspector.inspect_registry":
+            result = self.artifact_inspector.inspect_artifact_registry(
+                project_id,
+                source_id=str(values.get("source_id") or "integration_layer"),
+            )
+        elif operation_id == "artifact_inspector.create_inspection_request":
+            result = self.artifact_inspector.create_inspection_request(
+                project_id,
+                source_id=str(values.get("source_id") or "integration_layer"),
+                requested_by_module=str(
+                    values.get("requested_by_module") or "integration_layer"
+                ),
+                inspection_mode=cast(
+                    BobaArtifactInspectionModeV1,
+                    str(values.get("inspection_mode") or "exact_artifact"),
+                ),
+                artifact_references=[
+                    dict(item)
+                    for item in values.get("artifact_references", [])
+                    if isinstance(item, dict)
+                ],
+                workflow_run_id=str(values.get("workflow_run_id") or ""),
+                project_snapshot_digest=str(
+                    values.get("project_snapshot_digest") or ""
+                ),
+                inspect_content=bool(values.get("inspect_content", False)),
+                recompute_digests=bool(values.get("recompute_digests", True)),
+                include_inventory=bool(values.get("include_inventory", True)),
+                include_lineage=bool(values.get("include_lineage", True)),
+            )
+            side_effects.append("artifact_inspector_request_metadata_updated")
+        elif operation_id == "artifact_inspector.validate_references":
+            result = self.artifact_inspector.validate_artifact_references(
+                project_id,
+                str(values.get("inspection_request_id") or ""),
+            )
+        elif operation_id == "artifact_inspector.inspect_artifacts":
+            result = self.artifact_inspector.inspect_artifacts(
+                project_id,
+                str(values.get("inspection_request_id") or ""),
+            )
+            side_effects.append("artifact_inspector_run_metadata_updated")
+        elif operation_id == "artifact_inspector.inspect_run":
+            result = self.artifact_inspector.inspect_run(
+                project_id,
+                str(values.get("inspection_run_id") or ""),
+            )
+        elif operation_id == "artifact_inspector.build_inventory":
+            result = self.artifact_inspector.build_project_inventory(
+                project_id,
+                inspection_run_id=str(values.get("inspection_run_id") or ""),
+            )
+        elif operation_id == "artifact_inspector.inspect_lineage":
+            result = self.artifact_inspector.inspect_lineage(
+                project_id,
+                inspection_run_id=str(values.get("inspection_run_id") or ""),
+            )
+        elif operation_id == "artifact_inspector.compare_artifacts":
+            result = self.artifact_inspector.compare_artifacts(
+                project_id,
+                inspection_run_id=str(values.get("inspection_run_id") or ""),
+                left_reference_id=str(values.get("left_reference_id") or ""),
+                right_reference_id=str(values.get("right_reference_id") or ""),
+            )
+        elif operation_id == "artifact_inspector.inspect_events":
+            result = self.artifact_inspector.inspect_events(
+                project_id,
+                str(values.get("inspection_run_id") or ""),
+            )
+        elif operation_id == "artifact_inspector.reset":
+            result = self.reset_boba_artifact_inspector(project_id)
+            side_effects.append("artifact_inspector_active_metadata_reset")
         elif operation_id == "observer.generate":
             result = await self.generate_observer_report(
                 project_id,

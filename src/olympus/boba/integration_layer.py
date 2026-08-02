@@ -1117,6 +1117,11 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
         "approval": True,
         "safety": True,
     },
+    "artifact_inspector": {
+        "name": "Artifact Inspector",
+        "path": "olympus.boba.artifact_inspector",
+        "deps": ["integration_layer", "safety_gate"],
+    },
     "report_reader": {
         "name": "Report Reader",
         "path": "olympus.boba.report_reader",
@@ -1422,6 +1427,56 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
             ),
             _operation(
                 "report_reader",
+                "inspect_events",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "artifact_inspector",
+                "inspect_registry",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "artifact_inspector",
+                "create_inspection_request",
+                "read_only",
+            ),
+            _operation(
+                "artifact_inspector",
+                "validate_references",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "artifact_inspector",
+                "inspect_artifacts",
+                "read_only",
+            ),
+            _operation(
+                "artifact_inspector",
+                "inspect_run",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "artifact_inspector",
+                "build_inventory",
+                "read_only",
+            ),
+            _operation(
+                "artifact_inspector",
+                "inspect_lineage",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "artifact_inspector",
+                "compare_artifacts",
+                "read_only",
+            ),
+            _operation(
+                "artifact_inspector",
                 "inspect_events",
                 "read_only",
                 side_effect_class="none",

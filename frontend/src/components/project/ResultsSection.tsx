@@ -7,6 +7,7 @@ import { BobaIntegrationLayerPanel } from "@/components/project/BobaIntegrationL
 import { BobaSafetyGatePanel } from "@/components/project/BobaSafetyGatePanel";
 import { BobaWorkflowControllerPanel } from "@/components/project/BobaWorkflowControllerPanel";
 import { BobaValidatorRunnerPanel } from "@/components/project/BobaValidatorRunnerPanel";
+import { BobaArtifactInspectorPanel } from "@/components/project/BobaArtifactInspectorPanel";
 import { BobaReportReaderPanel } from "@/components/project/BobaReportReaderPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { mediaUrls } from "@/lib/apiClient";
@@ -12160,6 +12161,7 @@ export function ResultsSection({
     <BobaValidatorRunnerPanel projectId={projectId} />
   );
   const reportReaderPanel = <BobaReportReaderPanel projectId={projectId} />;
+  const artifactInspectorPanel = <BobaArtifactInspectorPanel projectId={projectId} />;
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -12198,6 +12200,7 @@ export function ResultsSection({
         {workflowControllerPanel}
         {validatorRunnerPanel}
         {reportReaderPanel}
+        {artifactInspectorPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -12248,6 +12251,7 @@ export function ResultsSection({
         {workflowControllerPanel}
         {validatorRunnerPanel}
         {reportReaderPanel}
+        {artifactInspectorPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -12294,6 +12298,7 @@ export function ResultsSection({
         {workflowControllerPanel}
         {validatorRunnerPanel}
         {reportReaderPanel}
+        {artifactInspectorPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -12340,6 +12345,7 @@ export function ResultsSection({
       {workflowControllerPanel}
       {validatorRunnerPanel}
       {reportReaderPanel}
+        {artifactInspectorPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}
