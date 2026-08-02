@@ -63,6 +63,11 @@ from olympus.boba.experimentation import (
     BobaExperimentManualResultV1,
 )
 from olympus.boba.explanation import BobaExplanationSetV1
+from olympus.boba.final_decision_bus import (
+    BobaFinalDecisionBusSetV1,
+    BobaFinalDecisionEventV1,
+    sanitize_final_decision_export,
+)
 from olympus.boba.hook_retention import BobaHookRetentionSetV1
 from olympus.boba.integration_layer import (
     BobaIntegrationEventV1,
@@ -6071,4 +6076,386 @@ class BobaMemoryStore:
             "workflow_history_removed": False,
             "safety_decisions_removed": False,
             "approvals_removed": False,
+        }
+    @staticmethod
+    def _validate_final_decision_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
+            raise ValidationError(f"Invalid BOBA Final Decision Bus {label}.")
+        return value
+
+    def boba_final_decision_bus_path(self, project_id: str) -> Path:
+        return self._path(project_id, "final_decision_bus/index.json")
+
+    def boba_final_decision_registry_path(self, project_id: str, registry_snapshot_id: str) -> Path:
+        safe_id = self._validate_final_decision_record_id(
+            registry_snapshot_id, label="registry snapshot id"
+        )
+        return self._path(project_id, f"final_decision_bus/registries/{safe_id}.json")
+
+    def boba_final_decision_request_path(
+        self, project_id: str, final_decision_request_id: str
+    ) -> Path:
+        safe_id = self._validate_final_decision_record_id(
+            final_decision_request_id, label="request id"
+        )
+        return self._path(project_id, f"final_decision_bus/requests/{safe_id}.json")
+
+    def boba_final_decision_source_binding_path(
+        self, project_id: str, source_binding_id: str
+    ) -> Path:
+        safe_id = self._validate_final_decision_record_id(
+            source_binding_id, label="source binding id"
+        )
+        return self._path(project_id, f"final_decision_bus/source_bindings/{safe_id}.json")
+
+    def boba_final_decision_evidence_path(self, project_id: str, evidence_record_id: str) -> Path:
+        safe_id = self._validate_final_decision_record_id(
+            evidence_record_id, label="evidence record id"
+        )
+        return self._path(project_id, f"final_decision_bus/evidence/{safe_id}.json")
+
+    def boba_final_decision_evaluation_path(
+        self, project_id: str, policy_evaluation_id: str
+    ) -> Path:
+        safe_id = self._validate_final_decision_record_id(
+            policy_evaluation_id, label="policy evaluation id"
+        )
+        return self._path(project_id, f"final_decision_bus/evaluations/{safe_id}.json")
+
+    def boba_final_decision_path(self, project_id: str, final_decision_id: str) -> Path:
+        safe_id = self._validate_final_decision_record_id(final_decision_id, label="decision id")
+        return self._path(project_id, f"final_decision_bus/decisions/{safe_id}.json")
+
+    def boba_final_dispatch_envelope_path(self, project_id: str, dispatch_envelope_id: str) -> Path:
+        safe_id = self._validate_final_decision_record_id(
+            dispatch_envelope_id, label="dispatch envelope id"
+        )
+        return self._path(project_id, f"final_decision_bus/dispatch/{safe_id}.json")
+
+    def boba_final_decision_events_path(self, project_id: str) -> Path:
+        return self._path(project_id, "final_decision_bus/events.jsonl")
+
+    def boba_final_decision_active_lock_path(self, project_id: str) -> Path:
+        return self._path(project_id, "final_decision_bus/active.lock.json")
+
+    def _save_final_decision_immutable(
+        self,
+        path: Path,
+        payload: dict[str, Any],
+        *,
+        label: str,
+    ) -> None:
+        existing = self._read(path, None)
+        if isinstance(existing, dict) and existing != payload:
+            raise ValidationError(f"Completed Final Decision Bus {label} records are immutable.")
+        self._atomic_write_compact(path, payload)
+
+    def save_boba_final_decision_bus(
+        self,
+        bus: BobaFinalDecisionBusSetV1,
+    ) -> BobaFinalDecisionBusSetV1:
+        validated = BobaFinalDecisionBusSetV1.model_validate(bus.model_dump(mode="json"))
+        with self._lock:
+            for snapshot in validated.registry_snapshots:
+                self._save_final_decision_immutable(
+                    self.boba_final_decision_registry_path(
+                        validated.project_id, snapshot.registry_snapshot_id
+                    ),
+                    sanitize_final_decision_export(
+                        {
+                            "schema_version": "boba_final_decision_registry_record_v1",
+                            "project_id": validated.project_id,
+                            "registry_snapshot": snapshot.model_dump(mode="json"),
+                            "decision_sources": [
+                                item.model_dump(mode="json")
+                                for item in validated.decision_source_descriptors
+                            ],
+                            "action_policies": [
+                                item.model_dump(mode="json") for item in validated.action_policies
+                            ],
+                        }
+                    ),
+                    label="registry snapshot",
+                )
+            for request in validated.decision_requests:
+                self._save_final_decision_immutable(
+                    self.boba_final_decision_request_path(
+                        validated.project_id, request.final_decision_request_id
+                    ),
+                    sanitize_final_decision_export(
+                        {
+                            "schema_version": "boba_final_decision_request_record_v1",
+                            "project_id": validated.project_id,
+                            "request": request.model_dump(mode="json"),
+                        }
+                    ),
+                    label="request",
+                )
+            for source_binding in validated.source_bindings:
+                self._save_final_decision_immutable(
+                    self.boba_final_decision_source_binding_path(
+                        validated.project_id, source_binding.source_binding_id
+                    ),
+                    sanitize_final_decision_export(
+                        {
+                            "schema_version": "boba_final_decision_source_binding_record_v1",
+                            "project_id": validated.project_id,
+                            "source_binding": source_binding.model_dump(mode="json"),
+                        }
+                    ),
+                    label="source binding",
+                )
+            for requirement in validated.evidence_requirements:
+                self._save_final_decision_immutable(
+                    self.boba_final_decision_evidence_path(
+                        validated.project_id, requirement.evidence_requirement_id
+                    ),
+                    sanitize_final_decision_export(
+                        {
+                            "schema_version": "boba_final_decision_evidence_requirement_record_v1",
+                            "project_id": validated.project_id,
+                            "evidence_requirement": requirement.model_dump(mode="json"),
+                        }
+                    ),
+                    label="evidence requirement",
+                )
+            for evidence_binding in validated.evidence_bindings:
+                self._save_final_decision_immutable(
+                    self.boba_final_decision_evidence_path(
+                        validated.project_id, evidence_binding.evidence_binding_id
+                    ),
+                    sanitize_final_decision_export(
+                        {
+                            "schema_version": "boba_final_decision_evidence_binding_record_v1",
+                            "project_id": validated.project_id,
+                            "evidence_binding": evidence_binding.model_dump(mode="json"),
+                        }
+                    ),
+                    label="evidence binding",
+                )
+            for conflict in validated.conflicts:
+                self._save_final_decision_immutable(
+                    self.boba_final_decision_evidence_path(
+                        validated.project_id, conflict.conflict_id
+                    ),
+                    sanitize_final_decision_export(
+                        {
+                            "schema_version": "boba_final_decision_conflict_record_v1",
+                            "project_id": validated.project_id,
+                            "conflict": conflict.model_dump(mode="json"),
+                        }
+                    ),
+                    label="conflict",
+                )
+            for evaluation in validated.policy_evaluations:
+                self._save_final_decision_immutable(
+                    self.boba_final_decision_evaluation_path(
+                        validated.project_id, evaluation.policy_evaluation_id
+                    ),
+                    sanitize_final_decision_export(
+                        {
+                            "schema_version": "boba_final_decision_evaluation_record_v1",
+                            "project_id": validated.project_id,
+                            "policy_evaluation": evaluation.model_dump(mode="json"),
+                        }
+                    ),
+                    label="policy evaluation",
+                )
+            for decision in validated.final_decisions:
+                self._save_final_decision_immutable(
+                    self.boba_final_decision_path(validated.project_id, decision.final_decision_id),
+                    sanitize_final_decision_export(
+                        {
+                            "schema_version": "boba_final_decision_record_v1",
+                            "project_id": validated.project_id,
+                            "final_decision": decision.model_dump(mode="json"),
+                        }
+                    ),
+                    label="decision",
+                )
+            for envelope in validated.dispatch_envelopes:
+                self._atomic_write_compact(
+                    self.boba_final_dispatch_envelope_path(
+                        validated.project_id, envelope.dispatch_envelope_id
+                    ),
+                    sanitize_final_decision_export(
+                        {
+                            "schema_version": "boba_final_dispatch_envelope_record_v1",
+                            "project_id": validated.project_id,
+                            "dispatch_envelope": envelope.model_dump(mode="json"),
+                        }
+                    ),
+                )
+            active_leases = [
+                item.model_dump(mode="json") for item in validated.leases if item.state == "active"
+            ]
+            active_envelopes = [
+                item.dispatch_envelope_id
+                for item in validated.dispatch_envelopes
+                if not item.consumed and not item.invalidated
+            ]
+            lock_path = self.boba_final_decision_active_lock_path(validated.project_id)
+            if active_leases or active_envelopes:
+                self._atomic_write_compact(
+                    lock_path,
+                    sanitize_final_decision_export(
+                        {
+                            "schema_version": "boba_final_decision_active_lock_v1",
+                            "project_id": validated.project_id,
+                            "active_lease_records": active_leases,
+                            "active_dispatch_envelope_ids": active_envelopes,
+                        }
+                    ),
+                )
+            else:
+                lock_path.unlink(missing_ok=True)
+            self.append_boba_final_decision_events(validated.project_id, list(validated.events))
+            self._atomic_write_compact(
+                self.boba_final_decision_bus_path(validated.project_id),
+                sanitize_final_decision_export(
+                    {
+                        "schema_version": "boba_final_decision_bus_record_v1",
+                        "final_decision_bus": validated.model_dump(mode="json"),
+                    }
+                ),
+            )
+        return validated
+
+    def load_boba_final_decision_bus(
+        self,
+        project_id: str,
+    ) -> BobaFinalDecisionBusSetV1 | None:
+        try:
+            raw = self._read(self.boba_final_decision_bus_path(project_id), None)
+        except ValidationError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        payload = raw.get("final_decision_bus", raw)
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return BobaFinalDecisionBusSetV1.model_validate(payload)
+        except PydanticValidationError:
+            return None
+
+    def boba_final_decision_last_event_sequence(self, project_id: str) -> int:
+        path = self.boba_final_decision_events_path(project_id)
+        if not path.exists():
+            return 0
+        try:
+            return max(
+                (
+                    int(payload.get("sequence") or 0)
+                    for line in path.read_text(encoding="utf-8-sig").splitlines()
+                    if isinstance((payload := json.loads(line)), dict)
+                ),
+                default=0,
+            )
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise ValidationError("BOBA Final Decision Bus event stream is unreadable.") from exc
+
+    def append_boba_final_decision_events(
+        self,
+        project_id: str,
+        events: list[BobaFinalDecisionEventV1],
+    ) -> None:
+        path = self.boba_final_decision_events_path(project_id)
+        existing_ids: set[str] = set()
+        sequence = 0
+        if path.exists():
+            try:
+                for line in path.read_text(encoding="utf-8-sig").splitlines():
+                    payload = json.loads(line)
+                    if isinstance(payload, dict):
+                        existing_ids.add(str(payload.get("event_id") or ""))
+                        sequence = max(sequence, int(payload.get("sequence") or 0))
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise ValidationError(
+                    "BOBA Final Decision Bus event stream is unreadable."
+                ) from exc
+        new_events = sorted(
+            [item for item in events if item.event_id not in existing_ids],
+            key=lambda item: item.sequence,
+        )
+        if not new_events:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            for event in new_events:
+                if event.sequence <= sequence:
+                    raise ValidationError("Final Decision Bus event sequence must be monotonic.")
+                sequence = event.sequence
+                handle.write(
+                    json.dumps(
+                        sanitize_final_decision_export(event.model_dump(mode="json")),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def export_boba_final_decision_bus(self, project_id: str) -> dict[str, Any]:
+        bus = self.load_boba_final_decision_bus(project_id)
+        if bus is None:
+            raise ValidationError("BOBA Final Decision Bus is not available for export.")
+        payload = sanitize_final_decision_export(
+            {
+                "schema_version": "boba_final_decision_bus_export_v1",
+                "project_id": project_id,
+                "exported_at": memory_now_iso(),
+                "final_decision_bus": bus.model_dump(mode="json"),
+                "privacy": {
+                    "private_paths_excluded": True,
+                    "secrets_excluded": True,
+                    "raw_reports_excluded": True,
+                    "raw_media_excluded": True,
+                    "target_execution_performed": False,
+                    "network_used": False,
+                    "upload_used": False,
+                    "publication_used": False,
+                },
+            }
+        )
+        if not isinstance(payload, dict):
+            raise ValidationError("Final Decision Bus export is malformed.")
+        return payload
+
+    def reset_boba_final_decision_bus(self, project_id: str) -> dict[str, Any]:
+        bus = self.load_boba_final_decision_bus(project_id)
+        if bus is not None and any(item.state == "active" for item in bus.leases):
+            raise ValidationError(
+                "Active Final Decision Bus leases must expire or be invalidated before reset."
+            )
+        if bus is not None and any(
+            not item.consumed and not item.invalidated for item in bus.dispatch_envelopes
+        ):
+            raise ValidationError(
+                "Active Final Decision Bus envelopes must expire or be invalidated before reset."
+            )
+        index_path = self.boba_final_decision_bus_path(project_id)
+        lock_path = self.boba_final_decision_active_lock_path(project_id)
+        with self._lock:
+            active_removed = index_path.exists()
+            lock_removed = lock_path.exists()
+            index_path.unlink(missing_ok=True)
+            lock_path.unlink(missing_ok=True)
+        return {
+            "schema_version": "boba_final_decision_bus_reset_v1",
+            "project_id": project_id,
+            "active_metadata_removed": active_removed,
+            "active_lock_removed": lock_removed,
+            "immutable_registry_history_preserved": True,
+            "immutable_request_history_preserved": True,
+            "source_binding_history_preserved": True,
+            "evidence_history_preserved": True,
+            "decision_history_preserved": True,
+            "dispatch_history_preserved": True,
+            "event_streams_preserved": True,
+            "source_owner_records_preserved": True,
+            "source_media_removed": False,
+            "accepted_outputs_removed": False,
+            "target_execution_performed": False,
         }

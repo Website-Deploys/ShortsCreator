@@ -445,7 +445,7 @@ def _registry_scenario(number: int, harness: IntegrationSyntheticHarness) -> boo
         )
         return unavailable.implementation_status == "unavailable"
     if number == 8:
-        return modules["final_decision_bus"].implementation_status == "future"
+        return modules["live_companion"].implementation_status == "future"
     if number == 9:
         return operations["observer.load"].operation_class == "read_only"
     if number == 10:

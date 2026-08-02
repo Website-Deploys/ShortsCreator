@@ -4946,3 +4946,419 @@ def reset_memory(
         "backup_created": backup is not None,
         "backup_name": backup.name if backup else None,
     }
+
+class FinalDecisionBusCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(default="api", min_length=1, max_length=512)
+    requested_by_module: str = Field(default="api", min_length=1, max_length=160)
+    action_policy_id: str = Field(min_length=1, max_length=160)
+    target_module_id: str = Field(min_length=1, max_length=160)
+    target_operation_id: str = Field(min_length=1, max_length=180)
+    source_selectors: list[dict[str, Any]] = Field(default_factory=list, max_length=64)
+    workflow_run_id: str = Field(default="", max_length=180)
+    stage_instance_id: str = Field(default="", max_length=180)
+    clip_id: str = Field(default="", max_length=180)
+    output_id: str = Field(default="", max_length=180)
+    artifact_reference_id: str = Field(default="", max_length=180)
+    project_snapshot_digest: str = Field(default="", max_length=72)
+    workflow_snapshot_digest: str = Field(default="", max_length=72)
+    target_parameters_digest: str = Field(default="", max_length=72)
+    expires_at: str | None = Field(default=None, max_length=80)
+
+
+class FinalDecisionBusRequestReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    final_decision_request_id: str = Field(min_length=1, max_length=180)
+
+
+class FinalDecisionBusDecisionReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    final_decision_id: str = Field(min_length=1, max_length=180)
+
+
+class FinalDecisionBusEnvelopeConsumeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    integration_transaction_id: str = Field(min_length=1, max_length=180)
+
+
+class FinalDecisionBusInvalidationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=1200)
+    invalidated_by_module: str = Field(default="api", min_length=1, max_length=160)
+
+
+@router.get("/projects/{project_id}/final-decision-bus")
+async def get_final_decision_bus(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    existing = boba.store.load_boba_final_decision_bus(project_id)
+    if existing is None:
+        boba.final_decision_bus.build_final_decision_registries(project_id, source_id="api")
+        existing = boba.store.load_boba_final_decision_bus(project_id)
+    if existing is None:
+        raise NotFoundError("BOBA Final Decision Bus is unavailable.")
+    return existing.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/final-decision-bus/registries")
+async def get_final_decision_bus_registries(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.final_decision_bus.inspect_final_decision_registries(
+        project_id,
+        source_id="api",
+    )
+
+
+@router.get("/projects/{project_id}/final-decision-bus/sources")
+async def get_final_decision_bus_sources(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    registry = await get_final_decision_bus_registries(project_id, boba, settings)
+    return {
+        "schema_version": "boba_final_decision_bus_sources_v1",
+        "project_id": project_id,
+        "decision_sources": registry.get("decision_sources", []),
+    }
+
+
+@router.get("/projects/{project_id}/final-decision-bus/actions")
+async def get_final_decision_bus_actions(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    registry = await get_final_decision_bus_registries(project_id, boba, settings)
+    return {
+        "schema_version": "boba_final_decision_bus_actions_v1",
+        "project_id": project_id,
+        "action_policies": registry.get("action_policies", []),
+    }
+
+
+@router.post("/projects/{project_id}/final-decision-bus/requests")
+async def create_final_decision_bus_request(
+    project_id: str,
+    body: FinalDecisionBusCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    request = boba.final_decision_bus.create_final_decision_request(
+        project_id,
+        source_id=body.source_id,
+        requested_by_module=body.requested_by_module,
+        action_policy_id=body.action_policy_id,
+        target_module_id=body.target_module_id,
+        target_operation_id=body.target_operation_id,
+        source_selectors=body.source_selectors,
+        workflow_run_id=body.workflow_run_id,
+        stage_instance_id=body.stage_instance_id,
+        clip_id=body.clip_id,
+        output_id=body.output_id,
+        artifact_reference_id=body.artifact_reference_id,
+        project_snapshot_digest=body.project_snapshot_digest,
+        workflow_snapshot_digest=body.workflow_snapshot_digest,
+        target_parameters_digest=body.target_parameters_digest,
+        expires_at=body.expires_at,
+    )
+    return request.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/final-decision-bus/requests/{final_decision_request_id}/validate"
+)
+async def validate_final_decision_bus_request(
+    project_id: str,
+    final_decision_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.final_decision_bus.validate_final_decision_request(
+        project_id,
+        final_decision_request_id,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/final-decision-bus/requests/{final_decision_request_id}/collect-source-decisions"
+)
+async def collect_final_decision_bus_sources(
+    project_id: str,
+    final_decision_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    bindings = boba.final_decision_bus.collect_source_decision_bindings(
+        project_id,
+        final_decision_request_id,
+    )
+    return {
+        "schema_version": "boba_final_decision_bus_source_bindings_v1",
+        "project_id": project_id,
+        "source_bindings": [item.model_dump(mode="json") for item in bindings],
+    }
+
+
+@router.post(
+    "/projects/{project_id}/final-decision-bus/requests/{final_decision_request_id}/validate-source-bindings"
+)
+async def validate_final_decision_bus_source_bindings(
+    project_id: str,
+    final_decision_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.final_decision_bus.validate_source_decision_bindings(
+        project_id,
+        final_decision_request_id,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/final-decision-bus/requests/{final_decision_request_id}/evidence-requirements"
+)
+async def build_final_decision_bus_evidence_requirements(
+    project_id: str,
+    final_decision_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    requirements = boba.final_decision_bus.build_evidence_requirements(
+        project_id,
+        final_decision_request_id,
+    )
+    return {
+        "schema_version": "boba_final_decision_bus_evidence_requirements_v1",
+        "project_id": project_id,
+        "evidence_requirements": [item.model_dump(mode="json") for item in requirements],
+    }
+
+
+@router.post(
+    "/projects/{project_id}/final-decision-bus/requests/{final_decision_request_id}/bind-evidence"
+)
+async def bind_final_decision_bus_evidence(
+    project_id: str,
+    final_decision_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    bindings = boba.final_decision_bus.bind_final_decision_evidence(
+        project_id,
+        final_decision_request_id,
+    )
+    return {
+        "schema_version": "boba_final_decision_bus_evidence_bindings_v1",
+        "project_id": project_id,
+        "evidence_bindings": [item.model_dump(mode="json") for item in bindings],
+    }
+
+
+@router.post(
+    "/projects/{project_id}/final-decision-bus/requests/{final_decision_request_id}/detect-conflicts"
+)
+async def detect_final_decision_bus_conflicts(
+    project_id: str,
+    final_decision_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    conflicts = boba.final_decision_bus.detect_final_decision_conflicts(
+        project_id,
+        final_decision_request_id,
+    )
+    return {
+        "schema_version": "boba_final_decision_bus_conflicts_v1",
+        "project_id": project_id,
+        "conflicts": [item.model_dump(mode="json") for item in conflicts],
+    }
+
+
+@router.post(
+    "/projects/{project_id}/final-decision-bus/requests/{final_decision_request_id}/evaluate"
+)
+async def evaluate_final_decision_bus_policy(
+    project_id: str,
+    final_decision_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    evaluation = boba.final_decision_bus.evaluate_final_action_policy(
+        project_id,
+        final_decision_request_id,
+    )
+    return evaluation.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/final-decision-bus/requests/{final_decision_request_id}/finalize"
+)
+async def finalize_final_decision_bus_decision(
+    project_id: str,
+    final_decision_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    decision = boba.final_decision_bus.finalize_exact_internal_decision(
+        project_id,
+        final_decision_request_id,
+    )
+    return decision.model_dump(mode="json")
+
+
+@router.post(
+    "/projects/{project_id}/final-decision-bus/decisions/{final_decision_id}/dispatch-envelope"
+)
+async def build_final_decision_bus_dispatch_envelope(
+    project_id: str,
+    final_decision_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    envelope = boba.final_decision_bus.build_exact_dispatch_envelope(
+        project_id,
+        final_decision_id,
+    )
+    return envelope.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/final-decision-bus/decisions/{final_decision_id}")
+async def inspect_final_decision_bus_decision(
+    project_id: str,
+    final_decision_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.final_decision_bus.inspect_final_decision(project_id, final_decision_id)
+
+
+@router.get("/projects/{project_id}/final-decision-bus/dispatch-envelopes/{dispatch_envelope_id}")
+async def inspect_final_decision_bus_dispatch_envelope(
+    project_id: str,
+    dispatch_envelope_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.final_decision_bus.inspect_dispatch_envelope(
+        project_id,
+        dispatch_envelope_id,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/final-decision-bus/dispatch-envelopes/{dispatch_envelope_id}/consume"
+)
+async def consume_final_decision_bus_dispatch_envelope(
+    project_id: str,
+    dispatch_envelope_id: str,
+    body: FinalDecisionBusEnvelopeConsumeRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    envelope = boba.final_decision_bus.mark_dispatch_envelope_consumed(
+        project_id,
+        dispatch_envelope_id,
+        integration_transaction_id=body.integration_transaction_id,
+    )
+    return envelope.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/final-decision-bus/decisions/{final_decision_id}/invalidate")
+async def invalidate_final_decision_bus_decision(
+    project_id: str,
+    final_decision_id: str,
+    body: FinalDecisionBusInvalidationRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    invalidation = boba.final_decision_bus.invalidate_final_decision(
+        project_id,
+        final_decision_id,
+        reason=body.reason,
+        invalidated_by_module=body.invalidated_by_module,
+    )
+    return invalidation.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/final-decision-bus/events")
+async def get_final_decision_bus_events(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    final_decision_request_id: str = "",
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return {
+        "schema_version": "boba_final_decision_bus_event_stream_v1",
+        "project_id": project_id,
+        "events": boba.final_decision_bus.inspect_final_decision_events(
+            project_id,
+            final_decision_request_id=final_decision_request_id,
+        ),
+    }
+
+
+@router.get("/projects/{project_id}/final-decision-bus/export")
+async def export_final_decision_bus(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_final_decision_bus(project_id)
+
+
+@router.delete("/projects/{project_id}/final-decision-bus")
+async def reset_final_decision_bus(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_final_decision_bus(project_id)

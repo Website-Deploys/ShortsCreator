@@ -8,6 +8,7 @@ import { BobaSafetyGatePanel } from "@/components/project/BobaSafetyGatePanel";
 import { BobaWorkflowControllerPanel } from "@/components/project/BobaWorkflowControllerPanel";
 import { BobaValidatorRunnerPanel } from "@/components/project/BobaValidatorRunnerPanel";
 import { BobaArtifactInspectorPanel } from "@/components/project/BobaArtifactInspectorPanel";
+import { BobaFinalDecisionBusPanel } from "@/components/project/BobaFinalDecisionBusPanel";
 import { BobaReportReaderPanel } from "@/components/project/BobaReportReaderPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { mediaUrls } from "@/lib/apiClient";
@@ -12162,6 +12163,7 @@ export function ResultsSection({
   );
   const reportReaderPanel = <BobaReportReaderPanel projectId={projectId} />;
   const artifactInspectorPanel = <BobaArtifactInspectorPanel projectId={projectId} />;
+  const finalDecisionBusPanel = <BobaFinalDecisionBusPanel projectId={projectId} />;
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -12201,6 +12203,7 @@ export function ResultsSection({
         {validatorRunnerPanel}
         {reportReaderPanel}
         {artifactInspectorPanel}
+        {finalDecisionBusPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -12252,6 +12255,7 @@ export function ResultsSection({
         {validatorRunnerPanel}
         {reportReaderPanel}
         {artifactInspectorPanel}
+        {finalDecisionBusPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -12299,6 +12303,7 @@ export function ResultsSection({
         {validatorRunnerPanel}
         {reportReaderPanel}
         {artifactInspectorPanel}
+        {finalDecisionBusPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -12346,6 +12351,7 @@ export function ResultsSection({
       {validatorRunnerPanel}
       {reportReaderPanel}
         {artifactInspectorPanel}
+        {finalDecisionBusPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}
