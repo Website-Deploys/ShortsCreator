@@ -90,6 +90,7 @@ from olympus.boba.experimentation import (
     BobaExperimentOutcomeLabel,
 )
 from olympus.boba.explanation import BobaExplanationEngine, BobaExplanationSetV1
+from olympus.boba.final_decision_bus import BobaFinalDecisionBusV1
 from olympus.boba.global_memory import build_and_save_global_memory
 from olympus.boba.hook_retention import (
     BobaHookRetentionBrainV1,
@@ -333,6 +334,26 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "artifact_inspector.load",
     "artifact_inspector.export",
     "artifact_inspector.reset",
+    "final_decision_bus.build_registries",
+    "final_decision_bus.inspect_registries",
+    "final_decision_bus.create_request",
+    "final_decision_bus.validate_request",
+    "final_decision_bus.collect_source_bindings",
+    "final_decision_bus.validate_source_bindings",
+    "final_decision_bus.build_evidence_requirements",
+    "final_decision_bus.bind_evidence",
+    "final_decision_bus.detect_conflicts",
+    "final_decision_bus.evaluate_policy",
+    "final_decision_bus.finalize_decision",
+    "final_decision_bus.build_dispatch_envelope",
+    "final_decision_bus.inspect_decision",
+    "final_decision_bus.inspect_dispatch_envelope",
+    "final_decision_bus.consume_dispatch_envelope",
+    "final_decision_bus.invalidate_decision",
+    "final_decision_bus.inspect_events",
+    "final_decision_bus.load",
+    "final_decision_bus.export",
+    "final_decision_bus.reset",
 )
 
 
@@ -398,6 +419,7 @@ class BobaIntegration:
         )
         self.report_reader = BobaReportReaderV1(store)
         self.artifact_inspector = BobaArtifactInspectorV1(store, storage)
+        self.final_decision_bus = BobaFinalDecisionBusV1(store)
         self.safety_gate = BobaSafetyGateV1(
             store,
             context_provider=self._safety_context,
@@ -1035,6 +1057,18 @@ class BobaIntegration:
     def reset_boba_artifact_inspector(self, project_id: str) -> dict[str, Any]:
         return self.artifact_inspector.reset_artifact_inspector_metadata(project_id)
 
+    def load_boba_final_decision_bus(self, project_id: str) -> Any:
+        bus = self.store.load_boba_final_decision_bus(project_id)
+        if bus is None:
+            raise NotFoundError("BOBA Final Decision Bus is unavailable.")
+        return bus
+
+    def export_boba_final_decision_bus(self, project_id: str) -> dict[str, Any]:
+        return self.final_decision_bus.export_final_decision_bus(project_id)
+
+    def reset_boba_final_decision_bus(self, project_id: str) -> dict[str, Any]:
+        return self.final_decision_bus.reset_final_decision_bus_metadata(project_id)
+
     async def _invoke_registered_boba_integration_operation(
         self,
         request: BobaIntegrationRequestV1,
@@ -1062,6 +1096,7 @@ class BobaIntegration:
             "validator_runner.load": self.load_boba_validator_runner,
             "report_reader.load": self.load_boba_report_reader,
             "artifact_inspector.load": self.load_boba_artifact_inspector,
+            "final_decision_bus.load": self.load_boba_final_decision_bus,
         }
         export_handlers = {
             "observer.export": self.export_observer_report,
@@ -1081,6 +1116,7 @@ class BobaIntegration:
             "validator_runner.export": self.export_boba_validator_runner,
             "report_reader.export": self.export_boba_report_reader,
             "artifact_inspector.export": self.export_boba_artifact_inspector,
+            "final_decision_bus.export": self.export_boba_final_decision_bus,
         }
         if operation_id in load_handlers:
             result = load_handlers[operation_id](project_id)
@@ -1359,6 +1395,127 @@ class BobaIntegration:
         elif operation_id == "artifact_inspector.reset":
             result = self.reset_boba_artifact_inspector(project_id)
             side_effects.append("artifact_inspector_active_metadata_reset")
+        elif operation_id == "final_decision_bus.build_registries":
+            result = self.final_decision_bus.build_final_decision_registries(
+                project_id,
+                source_id=str(values.get("source_id") or "integration_layer"),
+            )
+            side_effects.append("final_decision_registry_metadata_updated")
+        elif operation_id == "final_decision_bus.inspect_registries":
+            result = self.final_decision_bus.inspect_final_decision_registries(
+                project_id,
+                source_id=str(values.get("source_id") or "integration_layer"),
+            )
+        elif operation_id == "final_decision_bus.create_request":
+            source_selectors = values.get("source_selectors")
+            result = self.final_decision_bus.create_final_decision_request(
+                project_id,
+                source_id=str(values.get("source_id") or "integration_layer"),
+                requested_by_module=str(values.get("requested_by_module") or "integration_layer"),
+                action_policy_id=str(values.get("action_policy_id") or ""),
+                target_module_id=str(values.get("target_module_id") or ""),
+                target_operation_id=str(values.get("target_operation_id") or ""),
+                source_selectors=[dict(item) for item in source_selectors if isinstance(item, dict)]
+                if isinstance(source_selectors, list)
+                else [],
+                workflow_run_id=str(values.get("workflow_run_id") or ""),
+                stage_instance_id=str(values.get("stage_instance_id") or ""),
+                clip_id=str(values.get("clip_id") or ""),
+                output_id=str(values.get("output_id") or ""),
+                artifact_reference_id=str(values.get("artifact_reference_id") or ""),
+                project_snapshot_digest=str(values.get("project_snapshot_digest") or ""),
+                workflow_snapshot_digest=str(values.get("workflow_snapshot_digest") or ""),
+                target_parameters_digest=str(values.get("target_parameters_digest") or ""),
+                expires_at=str(values.get("expires_at") or "") or None,
+            )
+            side_effects.append("final_decision_request_metadata_updated")
+        elif operation_id == "final_decision_bus.validate_request":
+            result = self.final_decision_bus.validate_final_decision_request(
+                project_id,
+                str(values.get("final_decision_request_id") or ""),
+            )
+        elif operation_id == "final_decision_bus.collect_source_bindings":
+            result = self.final_decision_bus.collect_source_decision_bindings(
+                project_id,
+                str(values.get("final_decision_request_id") or ""),
+            )
+            side_effects.append("final_decision_source_binding_metadata_updated")
+        elif operation_id == "final_decision_bus.validate_source_bindings":
+            result = self.final_decision_bus.validate_source_decision_bindings(
+                project_id,
+                str(values.get("final_decision_request_id") or ""),
+            )
+        elif operation_id == "final_decision_bus.build_evidence_requirements":
+            result = self.final_decision_bus.build_evidence_requirements(
+                project_id,
+                str(values.get("final_decision_request_id") or ""),
+            )
+            side_effects.append("final_decision_evidence_requirement_metadata_updated")
+        elif operation_id == "final_decision_bus.bind_evidence":
+            result = self.final_decision_bus.bind_final_decision_evidence(
+                project_id,
+                str(values.get("final_decision_request_id") or ""),
+            )
+            side_effects.append("final_decision_evidence_metadata_updated")
+        elif operation_id == "final_decision_bus.detect_conflicts":
+            result = self.final_decision_bus.detect_final_decision_conflicts(
+                project_id,
+                str(values.get("final_decision_request_id") or ""),
+            )
+            side_effects.append("final_decision_conflict_metadata_updated")
+        elif operation_id == "final_decision_bus.evaluate_policy":
+            result = self.final_decision_bus.evaluate_final_action_policy(
+                project_id,
+                str(values.get("final_decision_request_id") or ""),
+            )
+            side_effects.append("final_decision_evaluation_metadata_updated")
+        elif operation_id == "final_decision_bus.finalize_decision":
+            result = self.final_decision_bus.finalize_exact_internal_decision(
+                project_id,
+                str(values.get("final_decision_request_id") or ""),
+            )
+            side_effects.append("final_decision_immutable_metadata_recorded")
+        elif operation_id == "final_decision_bus.build_dispatch_envelope":
+            result = self.final_decision_bus.build_exact_dispatch_envelope(
+                project_id,
+                str(values.get("final_decision_id") or ""),
+            )
+            side_effects.append("final_dispatch_envelope_metadata_recorded")
+        elif operation_id == "final_decision_bus.inspect_decision":
+            result = self.final_decision_bus.inspect_final_decision(
+                project_id,
+                str(values.get("final_decision_id") or ""),
+            )
+        elif operation_id == "final_decision_bus.inspect_dispatch_envelope":
+            result = self.final_decision_bus.inspect_dispatch_envelope(
+                project_id,
+                str(values.get("dispatch_envelope_id") or ""),
+            )
+        elif operation_id == "final_decision_bus.consume_dispatch_envelope":
+            result = self.final_decision_bus.mark_dispatch_envelope_consumed(
+                project_id,
+                str(values.get("dispatch_envelope_id") or ""),
+                integration_transaction_id=str(values.get("integration_transaction_id") or ""),
+            )
+            side_effects.append("final_dispatch_consumption_metadata_recorded")
+        elif operation_id == "final_decision_bus.invalidate_decision":
+            result = self.final_decision_bus.invalidate_final_decision(
+                project_id,
+                str(values.get("final_decision_id") or ""),
+                reason=str(values.get("reason") or ""),
+                invalidated_by_module=str(
+                    values.get("invalidated_by_module") or "integration_layer"
+                ),
+            )
+            side_effects.append("final_decision_invalidation_metadata_recorded")
+        elif operation_id == "final_decision_bus.inspect_events":
+            result = self.final_decision_bus.inspect_final_decision_events(
+                project_id,
+                final_decision_request_id=str(values.get("final_decision_request_id") or ""),
+            )
+        elif operation_id == "final_decision_bus.reset":
+            result = self.reset_boba_final_decision_bus(project_id)
+            side_effects.append("final_decision_active_metadata_reset")
         elif operation_id == "observer.generate":
             result = await self.generate_observer_report(
                 project_id,

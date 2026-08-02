@@ -1127,7 +1127,11 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
         "path": "olympus.boba.report_reader",
         "deps": ["integration_layer", "safety_gate"],
     },
-    "final_decision_bus": {"name": "Final Decision Bus", "future": True},
+    "final_decision_bus": {
+        "name": "Final Decision Bus",
+        "path": "olympus.boba.final_decision_bus",
+        "deps": ["integration_layer", "safety_gate", "workflow_controller"],
+    },
     "live_companion": {"name": "Live Companion", "future": True},
 }
 
@@ -1480,6 +1484,41 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
                 "inspect_events",
                 "read_only",
                 side_effect_class="none",
+            ),
+            _operation("final_decision_bus", "build_registries", "read_only"),
+            _operation(
+                "final_decision_bus", "inspect_registries", "read_only", side_effect_class="none"
+            ),
+            _operation("final_decision_bus", "create_request", "read_only"),
+            _operation(
+                "final_decision_bus", "validate_request", "read_only", side_effect_class="none"
+            ),
+            _operation("final_decision_bus", "collect_source_bindings", "read_only"),
+            _operation(
+                "final_decision_bus",
+                "validate_source_bindings",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation("final_decision_bus", "build_evidence_requirements", "read_only"),
+            _operation("final_decision_bus", "bind_evidence", "read_only"),
+            _operation("final_decision_bus", "detect_conflicts", "read_only"),
+            _operation("final_decision_bus", "evaluate_policy", "read_only"),
+            _operation("final_decision_bus", "finalize_decision", "read_only"),
+            _operation("final_decision_bus", "build_dispatch_envelope", "read_only"),
+            _operation(
+                "final_decision_bus", "inspect_decision", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "final_decision_bus",
+                "inspect_dispatch_envelope",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation("final_decision_bus", "consume_dispatch_envelope", "read_only"),
+            _operation("final_decision_bus", "invalidate_decision", "read_only"),
+            _operation(
+                "final_decision_bus", "inspect_events", "read_only", side_effect_class="none"
             ),
             _operation("workflow_controller", "build_definition", "planning"),
             _operation("workflow_controller", "create_run", "planning"),

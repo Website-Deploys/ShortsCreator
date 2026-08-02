@@ -8883,3 +8883,115 @@ export interface BobaReportReaderSetV1 {
   warnings: string[];
   limitations: string[];
 }
+export interface BobaFinalDecisionSourceDescriptorV1 {
+  decision_source_id: string;
+  producer_module_id: string;
+  authority_domain: string;
+  decision_record_type: string;
+  availability: "available" | "degraded" | "unavailable" | "future" | "unknown";
+  advisory_only: boolean;
+  blocking_statuses: string[];
+  ready_statuses: string[];
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaFinalActionPolicyV1 {
+  action_policy_id: string;
+  display_name: string;
+  action_class: string;
+  target_module_id: string;
+  target_operation_id: string;
+  availability: "available" | "degraded" | "unavailable" | "future" | "unknown";
+  required_decision_source_ids: string[];
+  optional_decision_source_ids: string[];
+  policy_digest: string;
+  requires_target_independent_revalidation: true;
+  dispatch_ttl_seconds: number;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaFinalDecisionSourceBindingV1 {
+  source_binding_id: string;
+  final_decision_request_id: string;
+  decision_source_id: string;
+  authority_domain: string;
+  producer_record_id: string;
+  observed_decision: string;
+  valid: boolean;
+  expired: boolean;
+  invalidated: boolean;
+  project_identity_match: boolean;
+  target_identity_match: boolean | null;
+  warnings: string[];
+}
+
+export interface BobaFinalDecisionEvidenceBindingV1 {
+  evidence_binding_id: string;
+  evidence_requirement_id: string;
+  final_decision_request_id: string;
+  source_binding_id: string;
+  status: "satisfied" | "missing" | "stale" | "invalid" | "blocked" | "unknown";
+  satisfied: boolean;
+  bounded_reason: string;
+}
+
+export interface BobaFinalDecisionPolicyEvaluationV1 {
+  policy_evaluation_id: string;
+  final_decision_request_id: string;
+  action_policy_id: string;
+  disposition: string;
+  request_valid: boolean;
+  source_bindings_valid: boolean;
+  evidence_complete: boolean;
+  evidence_current: boolean;
+  conflicts_resolved: boolean;
+  lease_available: boolean;
+  decision_reasons: string[];
+  warnings: string[];
+}
+
+export interface BobaFinalDecisionV1 {
+  final_decision_id: string;
+  final_decision_request_id: string;
+  policy_evaluation_id: string;
+  action_policy_id: string;
+  target_module_id: string;
+  target_operation_id: string;
+  disposition: string;
+  ready_for_dispatch: boolean;
+  target_execution_authorized: false;
+  required_target_revalidation: true;
+  expires_at: string;
+  warnings: string[];
+}
+
+export interface BobaFinalDispatchEnvelopeV1 {
+  dispatch_envelope_id: string;
+  final_decision_id: string;
+  final_decision_request_id: string;
+  target_module_id: string;
+  target_operation_id: string;
+  expires_at: string;
+  single_use: true;
+  consumed: boolean;
+  invalidated: boolean;
+  target_execution_authorized: false;
+}
+
+export interface BobaFinalDecisionBusSetV1 {
+  project_id: string;
+  source_id: string;
+  registry_snapshots: Array<Record<string, unknown>>;
+  decision_source_descriptors: BobaFinalDecisionSourceDescriptorV1[];
+  action_policies: BobaFinalActionPolicyV1[];
+  decision_requests: Array<Record<string, unknown>>;
+  source_bindings: BobaFinalDecisionSourceBindingV1[];
+  evidence_bindings: BobaFinalDecisionEvidenceBindingV1[];
+  conflicts: Array<Record<string, unknown>>;
+  policy_evaluations: BobaFinalDecisionPolicyEvaluationV1[];
+  final_decisions: BobaFinalDecisionV1[];
+  dispatch_envelopes: BobaFinalDispatchEnvelopeV1[];
+  limitations: string[];
+}
