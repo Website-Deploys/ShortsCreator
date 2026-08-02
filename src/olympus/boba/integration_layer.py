@@ -1117,6 +1117,11 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
         "approval": True,
         "safety": True,
     },
+    "report_reader": {
+        "name": "Report Reader",
+        "path": "olympus.boba.report_reader",
+        "deps": ["integration_layer", "safety_gate"],
+    },
     "final_decision_bus": {"name": "Final Decision Bus", "future": True},
     "live_companion": {"name": "Live Companion", "future": True},
 }
@@ -1368,6 +1373,56 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
             _operation(
                 "validator_runner",
                 "inspect_results",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "report_reader",
+                "inspect_registry",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "report_reader",
+                "create_read_request",
+                "read_only",
+            ),
+            _operation(
+                "report_reader",
+                "validate_references",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "report_reader",
+                "read_reports",
+                "read_only",
+            ),
+            _operation(
+                "report_reader",
+                "inspect_read_run",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "report_reader",
+                "compare_reports",
+                "read_only",
+            ),
+            _operation(
+                "report_reader",
+                "build_bundle",
+                "read_only",
+            ),
+            _operation(
+                "report_reader",
+                "inspect_bundle",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "report_reader",
+                "inspect_events",
                 "read_only",
                 side_effect_class="none",
             ),

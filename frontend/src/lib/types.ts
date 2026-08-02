@@ -8855,3 +8855,31 @@ export interface AdminSnapshot {
   recent_failures: FailureRecord[];
   recent_audit: AuditEntry[];
 }
+
+export interface BobaReportReaderSetV1 {
+  schema_version: "boba_report_reader_v1";
+  project_id: string;
+  source_id: string;
+  created_at: string;
+  registry_snapshots: Record<string, unknown>[];
+  source_descriptors: Record<string, unknown>[];
+  report_references: Record<string, unknown>[];
+  read_requests: Record<string, unknown>[];
+  read_runs: Record<string, unknown>[];
+  report_documents: Record<string, unknown>[];
+  findings: Record<string, unknown>[];
+  evidence_references: Record<string, unknown>[];
+  status_interpretations: Record<string, unknown>[];
+  chronology_entries: Record<string, unknown>[];
+  contradictions: Record<string, unknown>[];
+  coverage_records: Record<string, unknown>[];
+  report_bundles: Record<string, unknown>[];
+  open_questions: Record<string, unknown>[];
+  incidents: Record<string, unknown>[];
+  events: Record<string, unknown>[];
+  handoffs: Record<string, unknown>[];
+  reader_summary: Record<string, unknown>;
+  signal_usage: Record<string, unknown>;
+  warnings: string[];
+  limitations: string[];
+}
