@@ -142,6 +142,10 @@ from olympus.boba.repair_planner import (
     BobaRepairPlannerSetV1,
     BobaRepairPlannerV1,
 )
+from olympus.boba.report_reader import (
+    BobaReportReaderV1,
+    BobaReportReadingModeV1,
+)
 from olympus.boba.research_brain import (
     BobaResearchBrainSetV1,
     BobaResearchBrainV1,
@@ -301,7 +305,18 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "validator_runner.load",
     "validator_runner.export",
     "validator_runner.reset",
-
+    "report_reader.inspect_registry",
+    "report_reader.create_read_request",
+    "report_reader.validate_references",
+    "report_reader.read_reports",
+    "report_reader.inspect_read_run",
+    "report_reader.compare_reports",
+    "report_reader.build_bundle",
+    "report_reader.inspect_bundle",
+    "report_reader.inspect_events",
+    "report_reader.load",
+    "report_reader.export",
+    "report_reader.reset",
 )
 
 
@@ -365,6 +380,7 @@ class BobaIntegration:
             ffmpeg_binary=runtime_settings.rendering.ffmpeg_binary,
             ffprobe_binary=runtime_settings.rendering.ffprobe_binary,
         )
+        self.report_reader = BobaReportReaderV1(store)
         self.safety_gate = BobaSafetyGateV1(
             store,
             context_provider=self._safety_context,
@@ -977,6 +993,19 @@ class BobaIntegration:
 
     def reset_boba_validator_runner(self, project_id: str) -> dict[str, Any]:
         return self.validator_runner.reset_validator_runner(project_id)
+
+    def load_boba_report_reader(self, project_id: str) -> Any:
+        reader = self.store.load_boba_report_reader(project_id)
+        if reader is None:
+            raise NotFoundError("BOBA Report Reader is unavailable.")
+        return reader
+
+    def export_boba_report_reader(self, project_id: str) -> dict[str, Any]:
+        return self.report_reader.export_report_reader(project_id)
+
+    def reset_boba_report_reader(self, project_id: str) -> dict[str, Any]:
+        return self.report_reader.reset_report_reader_metadata(project_id)
+
     async def _invoke_registered_boba_integration_operation(
         self,
         request: BobaIntegrationRequestV1,
@@ -1002,6 +1031,7 @@ class BobaIntegration:
             "safety_gate.load": self.load_boba_safety_gate,
             "workflow_controller.load": self.load_boba_workflow_controller,
             "validator_runner.load": self.load_boba_validator_runner,
+            "report_reader.load": self.load_boba_report_reader,
         }
         export_handlers = {
             "observer.export": self.export_observer_report,
@@ -1019,6 +1049,7 @@ class BobaIntegration:
             "safety_gate.export": self.export_boba_safety_gate,
             "workflow_controller.export": self.export_boba_workflow_controller,
             "validator_runner.export": self.export_boba_validator_runner,
+            "report_reader.export": self.export_boba_report_reader,
         }
         if operation_id in load_handlers:
             result = load_handlers[operation_id](project_id)
@@ -1153,6 +1184,78 @@ class BobaIntegration:
         elif operation_id == "validator_runner.reset":
             result = self.reset_boba_validator_runner(project_id)
             side_effects.append("validator_active_metadata_reset")
+        elif operation_id == "report_reader.inspect_registry":
+            result = self.report_reader.inspect_report_source_registry(
+                project_id,
+                source_id=str(values.get("source_id") or "integration_layer"),
+            )
+        elif operation_id == "report_reader.create_read_request":
+            result = self.report_reader.create_report_read_request(
+                project_id,
+                source_id=str(values.get("source_id") or "integration_layer"),
+                requested_by_module=str(values.get("requested_by_module") or "integration_layer"),
+                reading_mode=cast(
+                    BobaReportReadingModeV1,
+                    str(values.get("reading_mode") or "unknown"),
+                ),
+                report_references=[
+                    dict(item)
+                    for item in values.get("report_references", [])
+                    if isinstance(item, dict)
+                ],
+                workflow_run_id=str(values.get("workflow_run_id") or ""),
+                current_project_snapshot_digest=str(
+                    values.get("current_project_snapshot_digest") or ""
+                ),
+                maximum_total_bytes=int(values.get("maximum_total_bytes") or 4_194_304),
+                maximum_total_records=int(values.get("maximum_total_records") or 10_000),
+                include_chronology=bool(values.get("include_chronology", True)),
+                include_contradictions=bool(values.get("include_contradictions", True)),
+                include_easy_summary=bool(values.get("include_easy_summary", True)),
+                include_open_questions=bool(values.get("include_open_questions", True)),
+            )
+            side_effects.append("report_reader_request_metadata_updated")
+        elif operation_id == "report_reader.validate_references":
+            result = self.report_reader.validate_report_references(
+                project_id,
+                str(values.get("read_request_id") or ""),
+            )
+        elif operation_id == "report_reader.read_reports":
+            result = self.report_reader.read_registered_reports(
+                project_id,
+                str(values.get("read_request_id") or ""),
+            )
+            side_effects.append("report_reader_read_metadata_updated")
+        elif operation_id == "report_reader.inspect_read_run":
+            result = self.report_reader.inspect_report_read_run(
+                project_id,
+                str(values.get("read_run_id") or ""),
+            )
+        elif operation_id == "report_reader.compare_reports":
+            result = self.report_reader.compare_registered_reports(
+                project_id,
+                read_run_id=str(values.get("read_run_id") or ""),
+            )
+        elif operation_id == "report_reader.build_bundle":
+            result = self.report_reader.build_report_bundle(
+                project_id,
+                read_run_id=str(values.get("read_run_id") or ""),
+                purpose=str(values.get("purpose") or "Report explanation"),
+            )
+            side_effects.append("report_reader_bundle_metadata_updated")
+        elif operation_id == "report_reader.inspect_bundle":
+            result = self.report_reader.inspect_report_bundle(
+                project_id,
+                str(values.get("report_bundle_id") or ""),
+            )
+        elif operation_id == "report_reader.inspect_events":
+            result = self.report_reader.inspect_report_events(
+                project_id,
+                str(values.get("read_run_id") or ""),
+            )
+        elif operation_id == "report_reader.reset":
+            result = self.reset_boba_report_reader(project_id)
+            side_effects.append("report_reader_active_metadata_reset")
         elif operation_id == "observer.generate":
             result = await self.generate_observer_report(
                 project_id,

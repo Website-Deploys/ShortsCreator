@@ -746,6 +746,90 @@ class ValidatorRetryCheckRequest(BaseModel):
 
     plan_check_id: str = Field(min_length=1, max_length=180)
 
+
+class ReportReaderReferenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_descriptor_id: str = Field(
+        min_length=1,
+        max_length=180,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+    sanitized_storage_reference: str = Field(min_length=1, max_length=500)
+    producer_module_id: str = Field(default="", max_length=160)
+    producer_record_id: str = Field(default="", max_length=180)
+    report_type: str = Field(default="", max_length=120)
+    schema_id: str = Field(default="", max_length=180)
+    schema_version: str = Field(default="1", max_length=80)
+    expected_digest: str = Field(default="", max_length=64)
+    format: str = Field(default="", max_length=32)
+    workflow_run_id: str = Field(default="", max_length=180)
+    stage_instance_id: str = Field(default="", max_length=180)
+    immutable: bool = True
+    historical: bool = False
+    required: bool = True
+    rights_relevant: bool = False
+    safety_relevant: bool = False
+    quality_relevant: bool = False
+    workflow_relevant: bool = False
+    warnings: list[str] = Field(default_factory=list, max_length=32)
+
+
+class ReportReaderCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(default="api", min_length=1, max_length=512)
+    requested_by_module: str = Field(
+        default="api",
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+    reading_mode: Literal[
+        "current_project_review",
+        "historical_review",
+        "recovery_review",
+        "validation_review",
+        "quality_review",
+        "safety_review",
+        "workflow_review",
+        "integration_review",
+        "code_repair_review",
+        "comparison_review",
+        "unknown",
+    ] = "unknown"
+    report_references: list[ReportReaderReferenceRequest] = Field(
+        min_length=1,
+        max_length=64,
+    )
+    workflow_run_id: str = Field(default="", max_length=180)
+    current_project_snapshot_digest: str = Field(default="", max_length=64)
+    maximum_total_bytes: int = Field(
+        default=4_194_304,
+        ge=1_024,
+        le=4_194_304,
+    )
+    maximum_total_records: int = Field(default=10_000, ge=1, le=10_000)
+    include_chronology: bool = True
+    include_contradictions: bool = True
+    include_easy_summary: bool = True
+    include_open_questions: bool = True
+    expires_in_seconds: int = Field(default=86_400, ge=60, le=604_800)
+
+
+class ReportReaderCompareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    read_run_id: str = Field(min_length=1, max_length=180)
+
+
+class ReportReaderBundleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    read_run_id: str = Field(min_length=1, max_length=180)
+    purpose: str = Field(min_length=1, max_length=600)
+
+
 class SafetyPolicyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -3001,6 +3085,195 @@ async def reset_validator_runner(
     _require_enabled(settings)
     await _require_project(project_id, boba)
     return boba.reset_boba_validator_runner(project_id)
+
+
+@router.get("/projects/{project_id}/report-reader")
+async def get_report_reader(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    reader = boba.load_boba_report_reader(project_id)
+    return reader.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/report-reader/registry")
+async def get_report_reader_registry(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.report_reader.inspect_report_source_registry(
+        project_id,
+        source_id="api",
+    )
+
+
+@router.get("/projects/{project_id}/report-reader/sources")
+async def get_report_reader_sources(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    registry = await get_report_reader_registry(project_id, boba, settings)
+    return {
+        "schema_version": "boba_report_reader_sources_v1",
+        "project_id": project_id,
+        "sources": registry.get("sources", []),
+    }
+
+
+@router.post("/projects/{project_id}/report-reader/requests")
+async def create_report_reader_request(
+    project_id: str,
+    body: ReportReaderCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    request = boba.report_reader.create_report_read_request(
+        project_id,
+        source_id=body.source_id,
+        requested_by_module=body.requested_by_module,
+        reading_mode=body.reading_mode,
+        report_references=[item.model_dump(mode="json") for item in body.report_references],
+        workflow_run_id=body.workflow_run_id,
+        current_project_snapshot_digest=body.current_project_snapshot_digest,
+        maximum_total_bytes=body.maximum_total_bytes,
+        maximum_total_records=body.maximum_total_records,
+        include_chronology=body.include_chronology,
+        include_contradictions=body.include_contradictions,
+        include_easy_summary=body.include_easy_summary,
+        include_open_questions=body.include_open_questions,
+        expires_in_seconds=body.expires_in_seconds,
+    )
+    return request.model_dump(mode="json")
+
+
+@router.post("/projects/{project_id}/report-reader/requests/{request_id}/validate")
+async def validate_report_reader_request(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.report_reader.validate_report_references(project_id, request_id)
+
+
+@router.post("/projects/{project_id}/report-reader/requests/{request_id}/read")
+async def read_report_reader_request(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.report_reader.read_registered_reports(project_id, request_id)
+
+
+@router.get("/projects/{project_id}/report-reader/runs/{run_id}")
+async def get_report_reader_run(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.report_reader.inspect_report_read_run(project_id, run_id)
+
+
+@router.post("/projects/{project_id}/report-reader/compare")
+async def compare_report_reader_reports(
+    project_id: str,
+    body: ReportReaderCompareRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.report_reader.compare_registered_reports(
+        project_id,
+        read_run_id=body.read_run_id,
+    )
+
+
+@router.post("/projects/{project_id}/report-reader/bundles")
+async def build_report_reader_bundle(
+    project_id: str,
+    body: ReportReaderBundleRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    bundle = boba.report_reader.build_report_bundle(
+        project_id,
+        read_run_id=body.read_run_id,
+        purpose=body.purpose,
+    )
+    return bundle.model_dump(mode="json")
+
+
+@router.get("/projects/{project_id}/report-reader/bundles/{bundle_id}")
+async def get_report_reader_bundle(
+    project_id: str,
+    bundle_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.report_reader.inspect_report_bundle(project_id, bundle_id)
+
+
+@router.get("/projects/{project_id}/report-reader/runs/{run_id}/events")
+async def get_report_reader_events(
+    project_id: str,
+    run_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    events = boba.report_reader.inspect_report_events(project_id, run_id)
+    return {
+        "schema_version": "boba_report_reader_event_stream_v1",
+        "project_id": project_id,
+        "read_run_id": run_id,
+        "events": [item.model_dump(mode="json") for item in events],
+    }
+
+
+@router.get("/projects/{project_id}/report-reader/export")
+async def export_report_reader(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_report_reader(project_id)
+
+
+@router.delete("/projects/{project_id}/report-reader")
+async def reset_report_reader(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_report_reader(project_id)
+
 
 @router.post("/projects/{project_id}/workflow-controller/definitions")
 async def create_workflow_definition(

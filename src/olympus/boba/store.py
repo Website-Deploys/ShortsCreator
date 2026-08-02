@@ -90,6 +90,11 @@ from olympus.boba.performance_feedback import (
     BobaPerformanceFeedbackSetV1,
 )
 from olympus.boba.repair_planner import BobaRepairPlannerSetV1
+from olympus.boba.report_reader import (
+    BobaReportEventV1,
+    BobaReportReaderSetV1,
+    sanitize_report_export,
+)
 from olympus.boba.research_brain import BobaResearchBrainSetV1
 from olympus.boba.rights_permission_gate import (
     BobaRightsPermissionGateSetV1,
@@ -5115,6 +5120,326 @@ class BobaMemoryStore:
                     raise ValidationError(
                         "Validator Runner event sequence must be monotonic."
                     )
+                sequence = event.sequence
+                handle.write(
+                    json.dumps(
+                        event.model_dump(mode="json"),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    @staticmethod
+    def _validate_report_reader_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
+            raise ValidationError(f"Invalid BOBA Report Reader {label}.")
+        return value
+
+    def boba_report_reader_path(self, project_id: str) -> Path:
+        return self._path(project_id, "report_reader/index.json")
+
+    def boba_report_reader_registry_path(
+        self,
+        project_id: str,
+        registry_snapshot_id: str,
+    ) -> Path:
+        safe_id = self._validate_report_reader_record_id(
+            registry_snapshot_id,
+            label="registry snapshot id",
+        )
+        return self._path(project_id, f"report_reader/registries/{safe_id}.json")
+
+    def boba_report_reader_request_path(
+        self,
+        project_id: str,
+        read_request_id: str,
+    ) -> Path:
+        safe_id = self._validate_report_reader_record_id(
+            read_request_id,
+            label="read request id",
+        )
+        return self._path(project_id, f"report_reader/requests/{safe_id}.json")
+
+    def boba_report_reader_run_path(
+        self,
+        project_id: str,
+        read_run_id: str,
+    ) -> Path:
+        safe_id = self._validate_report_reader_record_id(
+            read_run_id,
+            label="read run id",
+        )
+        return self._path(project_id, f"report_reader/runs/{safe_id}/index.json")
+
+    def boba_report_reader_document_path(
+        self,
+        project_id: str,
+        read_run_id: str,
+        report_document_id: str,
+    ) -> Path:
+        safe_id = self._validate_report_reader_record_id(
+            report_document_id,
+            label="document id",
+        )
+        return self.boba_report_reader_run_path(project_id, read_run_id).parent / (
+            f"documents/{safe_id}.json"
+        )
+
+    def boba_report_reader_bundle_path(
+        self,
+        project_id: str,
+        report_bundle_id: str,
+    ) -> Path:
+        safe_id = self._validate_report_reader_record_id(
+            report_bundle_id,
+            label="bundle id",
+        )
+        return self._path(project_id, f"report_reader/bundles/{safe_id}.json")
+
+    def boba_report_reader_events_path(
+        self,
+        project_id: str,
+        read_run_id: str = "",
+    ) -> Path:
+        if not read_run_id:
+            return self._path(project_id, "report_reader/events.jsonl")
+        return self.boba_report_reader_run_path(project_id, read_run_id).with_name("events.jsonl")
+
+    def save_boba_report_reader(
+        self,
+        reader: BobaReportReaderSetV1,
+    ) -> BobaReportReaderSetV1:
+        validated = BobaReportReaderSetV1.model_validate(reader.model_dump(mode="json"))
+        with self._lock:
+            for snapshot in validated.registry_snapshots:
+                path = self.boba_report_reader_registry_path(
+                    validated.project_id,
+                    snapshot.registry_snapshot_id,
+                )
+                payload = sanitize_report_export(
+                    {
+                        "schema_version": "boba_report_reader_registry_record_v1",
+                        "project_id": validated.project_id,
+                        "registry_snapshot": snapshot.model_dump(mode="json"),
+                        "source_descriptors": [
+                            item.model_dump(mode="json")
+                            for item in validated.source_descriptors
+                            if item.source_descriptor_id in snapshot.source_descriptor_ids
+                        ],
+                    }
+                )
+                existing = self._read(path, None)
+                if isinstance(existing, dict) and existing != payload:
+                    raise ValidationError(
+                        "Completed Report Reader registry snapshots are immutable."
+                    )
+                self._atomic_write_compact(path, payload)
+
+            for request in validated.read_requests:
+                path = self.boba_report_reader_request_path(
+                    validated.project_id,
+                    request.read_request_id,
+                )
+                payload = sanitize_report_export(
+                    {
+                        "schema_version": "boba_report_reader_request_record_v1",
+                        "project_id": validated.project_id,
+                        "request": request.model_dump(mode="json"),
+                        "report_references": [
+                            item.model_dump(mode="json")
+                            for item in validated.report_references
+                            if item.report_reference_id in request.report_reference_ids
+                        ],
+                    }
+                )
+                existing = self._read(path, None)
+                if isinstance(existing, dict) and existing != payload:
+                    raise ValidationError("Completed Report Reader requests are immutable.")
+                self._atomic_write_compact(path, payload)
+
+            for run in validated.read_runs:
+                document_ids = set(run.report_document_ids)
+                run_documents = [
+                    item
+                    for item in validated.report_documents
+                    if item.report_document_id in document_ids
+                ]
+                for document in run_documents:
+                    document_path = self.boba_report_reader_document_path(
+                        validated.project_id,
+                        run.read_run_id,
+                        document.report_document_id,
+                    )
+                    document_payload = sanitize_report_export(
+                        {
+                            "schema_version": "boba_report_document_record_v1",
+                            "project_id": validated.project_id,
+                            "read_run_id": run.read_run_id,
+                            "document": document.model_dump(mode="json"),
+                            "sections": [
+                                item.model_dump(mode="json")
+                                for item in validated.report_sections
+                                if item.report_document_id == document.report_document_id
+                            ],
+                            "findings": [
+                                item.model_dump(mode="json")
+                                for item in validated.findings
+                                if item.report_document_id == document.report_document_id
+                            ],
+                            "evidence_references": [
+                                item.model_dump(mode="json")
+                                for item in validated.evidence_references
+                                if item.report_document_id == document.report_document_id
+                            ],
+                        }
+                    )
+                    existing = self._read(document_path, None)
+                    if isinstance(existing, dict) and existing != document_payload:
+                        raise ValidationError(
+                            "Report Reader documents are immutable after persistence."
+                        )
+                    self._atomic_write_compact(document_path, document_payload)
+
+                run_path = self.boba_report_reader_run_path(
+                    validated.project_id,
+                    run.read_run_id,
+                )
+                run_payload = sanitize_report_export(
+                    {
+                        "schema_version": "boba_report_reader_run_record_v1",
+                        "project_id": validated.project_id,
+                        "run": run.model_dump(mode="json"),
+                        "document_ids": [item.report_document_id for item in run_documents],
+                        "coverage": next(
+                            (
+                                item.model_dump(mode="json")
+                                for item in reversed(validated.coverage_records)
+                                if item.coverage_id == run.coverage_id
+                            ),
+                            None,
+                        ),
+                        "contradiction_ids": list(run.contradiction_ids),
+                        "bundle_ids": list(run.bundle_ids),
+                    }
+                )
+                existing = self._read(run_path, None)
+                existing_run = existing.get("run") if isinstance(existing, dict) else None
+                existing_status = (
+                    str(existing_run.get("status") or "") if isinstance(existing_run, dict) else ""
+                )
+                if existing_status in {
+                    "completed",
+                    "completed_with_limitations",
+                    "incomplete",
+                    "blocked",
+                    "unsupported",
+                    "malformed",
+                    "cancelled",
+                    "failed",
+                }:
+                    existing_core = dict(existing)
+                    current_core = dict(run_payload)
+                    existing_run_payload = dict(existing_core.get("run") or {})
+                    current_run_payload = dict(current_core.get("run") or {})
+                    for key in ("event_ids", "bundle_ids", "reused_existing_result"):
+                        existing_run_payload.pop(key, None)
+                        current_run_payload.pop(key, None)
+                    existing_core["run"] = existing_run_payload
+                    current_core["run"] = current_run_payload
+                    existing_core.pop("bundle_ids", None)
+                    current_core.pop("bundle_ids", None)
+                    if existing_core != current_core:
+                        raise ValidationError("Completed Report Reader runs are immutable.")
+                self._atomic_write_compact(run_path, run_payload)
+                self.append_boba_report_reader_events(
+                    validated.project_id,
+                    [item for item in validated.events if item.read_run_id == run.read_run_id],
+                    read_run_id=run.read_run_id,
+                )
+
+            for bundle in validated.report_bundles:
+                bundle_path = self.boba_report_reader_bundle_path(
+                    validated.project_id,
+                    bundle.report_bundle_id,
+                )
+                bundle_payload = sanitize_report_export(
+                    {
+                        "schema_version": "boba_report_bundle_record_v1",
+                        "project_id": validated.project_id,
+                        "bundle": bundle.model_dump(mode="json"),
+                    }
+                )
+                existing = self._read(bundle_path, None)
+                if isinstance(existing, dict) and existing != bundle_payload:
+                    raise ValidationError("Report Reader bundles are immutable after persistence.")
+                self._atomic_write_compact(bundle_path, bundle_payload)
+
+            self.append_boba_report_reader_events(
+                validated.project_id,
+                list(validated.events),
+            )
+            self._atomic_write_compact(
+                self.boba_report_reader_path(validated.project_id),
+                sanitize_report_export(
+                    {
+                        "schema_version": "boba_report_reader_record_v1",
+                        "report_reader": validated.model_dump(mode="json"),
+                    }
+                ),
+            )
+        return validated
+
+    def load_boba_report_reader(
+        self,
+        project_id: str,
+    ) -> BobaReportReaderSetV1 | None:
+        try:
+            raw = self._read(self.boba_report_reader_path(project_id), None)
+        except ValidationError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        payload = raw.get("report_reader", raw)
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return BobaReportReaderSetV1.model_validate(payload)
+        except PydanticValidationError:
+            return None
+
+    def append_boba_report_reader_events(
+        self,
+        project_id: str,
+        events: list[BobaReportEventV1],
+        *,
+        read_run_id: str = "",
+    ) -> None:
+        path = self.boba_report_reader_events_path(project_id, read_run_id)
+        existing_ids: set[str] = set()
+        sequence = 0
+        if path.exists():
+            try:
+                for line in path.read_text(encoding="utf-8-sig").splitlines():
+                    payload = json.loads(line)
+                    if isinstance(payload, dict):
+                        existing_ids.add(str(payload.get("event_id") or ""))
+                        sequence = max(sequence, int(payload.get("sequence") or 0))
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise ValidationError("BOBA Report Reader event stream is unreadable.") from exc
+        new_events = sorted(
+            [item for item in events if item.event_id not in existing_ids],
+            key=lambda item: item.sequence,
+        )
+        if not new_events:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            for event in new_events:
+                if event.sequence <= sequence:
+                    raise ValidationError("Report Reader event sequence must be monotonic.")
                 sequence = event.sequence
                 handle.write(
                     json.dumps(
