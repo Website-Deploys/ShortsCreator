@@ -6117,3 +6117,344 @@ async def export_candidate_review(
     _require_enabled(settings)
     await _require_project(project_id, boba)
     return boba.export_boba_candidate_review(project_id)
+
+
+class ClipBriefReviewSessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_context_id: str = Field(min_length=1, max_length=160)
+    selected_brief_id: str | None = Field(default=None, max_length=160)
+    expires_in_seconds: int = Field(default=3_600, ge=60, le=28_800)
+
+
+class ClipBriefReviewSessionUpdateRequest(BaseModel):
+    """Only bounded, UI-owned clip brief review session metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    selected_brief_id: str | None = Field(default=None, max_length=160)
+    selected_candidate_id: str | None = Field(default=None, max_length=128)
+    comparison_brief_ids: list[str] | None = Field(default=None, max_length=4)
+    active_filter: str | None = Field(default=None, max_length=80)
+    active_sort: str | None = Field(default=None, max_length=80)
+    active_section_id: str | None = Field(default=None, max_length=120)
+    show_historical: bool | None = None
+    show_technical_details: bool | None = None
+    show_source_evidence: bool | None = None
+    show_empty_optional_fields: bool | None = None
+    evidence_drawer_open: bool | None = None
+    timeline_drawer_open: bool | None = None
+    local_annotations: list[dict[str, str]] | None = Field(default=None, max_length=32)
+
+
+class ClipBriefSnapshotCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clip_brief_review_session_id: str = Field(min_length=1, max_length=180)
+
+
+class ClipBriefComparisonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    brief_ids: list[str] = Field(min_length=2, max_length=4)
+    comparison_type: str = Field(default="side_by_side", max_length=80)
+
+
+class ClipBriefActionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clip_brief_review_session_id: str = Field(min_length=1, max_length=180)
+    brief_snapshot_id: str = Field(min_length=1, max_length=180)
+    action_descriptor_id: str = Field(min_length=1, max_length=180)
+    decision_value: str | None = Field(default=None, max_length=160)
+    reason: str = Field(default="", max_length=500)
+    confirmation_context_digest: str = Field(min_length=64, max_length=64)
+    idempotency_key: str = Field(min_length=8, max_length=180)
+    confirmed: bool = False
+
+
+@router.get("/projects/{project_id}/clip-brief-review")
+async def get_clip_brief_review(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.clip_brief_review.build_clip_brief_review(project_id)
+
+
+@router.get("/projects/{project_id}/clip-brief-review/registry")
+async def get_clip_brief_review_registry(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_clip_brief_review_registry(project_id)
+
+
+@router.post("/projects/{project_id}/clip-brief-review/sessions")
+async def create_clip_brief_review_session(
+    project_id: str,
+    body: ClipBriefReviewSessionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_clip_brief_review_session(
+        project_id,
+        reviewer_context_id=body.reviewer_context_id,
+        selected_brief_id=body.selected_brief_id,
+        expires_in_seconds=body.expires_in_seconds,
+    )
+
+
+@router.get("/projects/{project_id}/clip-brief-review/sessions/{session_id}")
+async def get_clip_brief_review_session(
+    project_id: str,
+    session_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_clip_brief_review_session(project_id, session_id)
+
+
+@router.patch("/projects/{project_id}/clip-brief-review/sessions/{session_id}")
+async def update_clip_brief_review_session(
+    project_id: str,
+    session_id: str,
+    body: ClipBriefReviewSessionUpdateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        raise ValidationError("No supported clip brief review session updates were supplied.")
+    return boba.update_boba_clip_brief_review_session(project_id, session_id, updates)
+
+
+@router.delete("/projects/{project_id}/clip-brief-review/sessions/{session_id}")
+async def reset_clip_brief_review_session(
+    project_id: str,
+    session_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_clip_brief_review_metadata(project_id, session_id)
+
+
+@router.get("/projects/{project_id}/clip-brief-review/queue")
+async def get_clip_brief_review_queue(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    review_filter: str = "all_current",
+    sort: str = "review_priority",
+    offset: int = 0,
+    limit: int = 50,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_clip_brief_queue(
+        project_id,
+        review_filter=review_filter,
+        sort=sort,
+        offset=max(0, offset),
+        limit=max(1, min(limit, 50)),
+    )
+
+
+@router.get("/projects/{project_id}/clip-brief-review/briefs/{brief_id}")
+async def get_clip_brief_review_brief(
+    project_id: str,
+    brief_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_clip_brief(project_id, brief_id)
+
+
+@router.get("/projects/{project_id}/clip-brief-review/briefs/{brief_id}/completeness")
+async def get_clip_brief_review_completeness(
+    project_id: str,
+    brief_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_clip_brief_completeness(project_id, brief_id)
+
+
+@router.get("/projects/{project_id}/clip-brief-review/briefs/{brief_id}/evidence")
+async def get_clip_brief_review_evidence(
+    project_id: str,
+    brief_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_clip_brief_evidence(project_id, brief_id)
+
+
+@router.get("/projects/{project_id}/clip-brief-review/briefs/{brief_id}/conflicts")
+async def get_clip_brief_review_conflicts(
+    project_id: str,
+    brief_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.detect_boba_clip_brief_conflicts(project_id, brief_id)
+
+
+@router.post("/projects/{project_id}/clip-brief-review/briefs/{brief_id}/snapshot")
+async def create_clip_brief_review_snapshot(
+    project_id: str,
+    brief_id: str,
+    body: ClipBriefSnapshotCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_clip_brief_snapshot(
+        project_id, body.clip_brief_review_session_id, brief_id
+    )
+
+
+@router.post("/projects/{project_id}/clip-brief-review/snapshots/{snapshot_id}/refresh")
+async def refresh_clip_brief_review_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.refresh_boba_clip_brief_snapshot(project_id, snapshot_id)
+
+
+@router.post("/projects/{project_id}/clip-brief-review/compare")
+async def compare_clip_brief_review_briefs(
+    project_id: str,
+    body: ClipBriefComparisonRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_clip_brief_comparison(
+        project_id, list(body.brief_ids), comparison_type=body.comparison_type
+    )
+
+
+@router.post("/projects/{project_id}/clip-brief-review/actions")
+async def create_clip_brief_review_action(
+    project_id: str,
+    body: ClipBriefActionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_clip_brief_action_request(
+        project_id,
+        clip_brief_review_session_id=body.clip_brief_review_session_id,
+        brief_snapshot_id=body.brief_snapshot_id,
+        action_descriptor_id=body.action_descriptor_id,
+        decision_value=body.decision_value,
+        reason=body.reason,
+        confirmation_context_digest=body.confirmation_context_digest,
+        idempotency_key=body.idempotency_key,
+        confirmed=body.confirmed,
+    )
+
+
+@router.post("/projects/{project_id}/clip-brief-review/actions/{request_id}/validate")
+async def validate_clip_brief_review_action(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validate_boba_clip_brief_action_request(project_id, request_id)
+
+
+@router.post("/projects/{project_id}/clip-brief-review/actions/{request_id}/submit")
+async def submit_clip_brief_review_action(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return await boba.submit_boba_clip_brief_action_to_owner(project_id, request_id)
+
+
+@router.get("/projects/{project_id}/clip-brief-review/actions/{request_id}")
+async def get_clip_brief_review_action(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_clip_brief_action_receipt(project_id, request_id)
+
+
+@router.get("/projects/{project_id}/clip-brief-review/timeline")
+async def get_clip_brief_review_timeline(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_clip_brief_review_timeline(
+        project_id, limit=max(1, min(limit, 100))
+    )
+
+
+@router.get("/projects/{project_id}/clip-brief-review/events")
+async def get_clip_brief_review_events(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    after_sequence: int = 0,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_clip_brief_review_events(
+        project_id, after_sequence=max(0, after_sequence), limit=max(1, min(limit, 100))
+    )
+
+
+@router.get("/projects/{project_id}/clip-brief-review/export")
+async def export_clip_brief_review(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_clip_brief_review(project_id)

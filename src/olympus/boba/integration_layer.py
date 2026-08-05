@@ -1132,6 +1132,18 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
         "path": "olympus.boba.final_decision_bus",
         "deps": ["integration_layer", "safety_gate", "workflow_controller"],
     },
+    "clip_brief_review": {
+        "name": "Clip Brief Panel",
+        "path": "olympus.boba.clip_brief_review",
+        "deps": [
+            "integration_layer",
+            "safety_gate",
+            "review_ui",
+            "candidate_review",
+            "clip_brief",
+            "editorial_decision",
+        ],
+    },
     "candidate_review": {
         "name": "Candidate Review Panel",
         "path": "olympus.boba.candidate_review",
@@ -1606,6 +1618,55 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
             ),
             _operation(
                 "candidate_review", "inspect_events", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "clip_brief_review", "inspect_registry", "read_only", side_effect_class="none"
+            ),
+            _operation("clip_brief_review", "create_session", "metadata_reset"),
+            _operation("clip_brief_review", "update_session", "metadata_reset"),
+            _operation(
+                "clip_brief_review", "build_queue", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "clip_brief_review", "inspect_queue", "read_only", side_effect_class="none"
+            ),
+            _operation("clip_brief_review", "build_snapshot", "read_only"),
+            _operation("clip_brief_review", "refresh_snapshot", "read_only"),
+            _operation(
+                "clip_brief_review", "inspect_brief", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "clip_brief_review", "compare_briefs", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "clip_brief_review", "inspect_completeness", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "clip_brief_review", "inspect_evidence", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "clip_brief_review", "detect_conflicts", "read_only", side_effect_class="none"
+            ),
+            _operation("clip_brief_review", "create_action", "read_only"),
+            _operation(
+                "clip_brief_review", "validate_action", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "clip_brief_review",
+                "submit_action",
+                "read_only",
+                approval=True,
+                approval_type="exact_clip_brief_review_action",
+                safety=True,
+            ),
+            _operation(
+                "clip_brief_review", "inspect_receipt", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "clip_brief_review", "inspect_timeline", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "clip_brief_review", "inspect_events", "read_only", side_effect_class="none"
             ),
             _operation("workflow_controller", "build_definition", "planning"),
             _operation("workflow_controller", "create_run", "planning"),

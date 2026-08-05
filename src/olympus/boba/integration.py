@@ -36,6 +36,7 @@ from olympus.boba.caption_motion import (
     BobaCaptionMotionRecommendationSetV1,
 )
 from olympus.boba.clip_brief import BobaClipBriefGeneratorV1, BobaClipBriefSetV1
+from olympus.boba.clip_brief_review import BobaClipBriefReviewV1
 from olympus.boba.clip_discovery import (
     BobaCandidateClipDiscoveryEngine,
     BobaCandidateClipDiscoveryV1,
@@ -398,6 +399,27 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "candidate_review.load",
     "candidate_review.export",
     "candidate_review.reset",
+    "clip_brief_review.inspect_registry",
+    "clip_brief_review.create_session",
+    "clip_brief_review.update_session",
+    "clip_brief_review.build_queue",
+    "clip_brief_review.inspect_queue",
+    "clip_brief_review.build_snapshot",
+    "clip_brief_review.refresh_snapshot",
+    "clip_brief_review.inspect_brief",
+    "clip_brief_review.compare_briefs",
+    "clip_brief_review.inspect_completeness",
+    "clip_brief_review.inspect_evidence",
+    "clip_brief_review.detect_conflicts",
+    "clip_brief_review.create_action",
+    "clip_brief_review.validate_action",
+    "clip_brief_review.submit_action",
+    "clip_brief_review.inspect_receipt",
+    "clip_brief_review.inspect_timeline",
+    "clip_brief_review.inspect_events",
+    "clip_brief_review.load",
+    "clip_brief_review.export",
+    "clip_brief_review.reset",
 )
 
 
@@ -496,6 +518,7 @@ class BobaIntegration:
         )
         self.review_ui = BobaReviewUiV1(store, self)
         self.candidate_review = BobaCandidateReviewV1(store, self)
+        self.clip_brief_review = BobaClipBriefReviewV1(store, self)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
 
@@ -1481,6 +1504,182 @@ class BobaIntegration:
     ) -> dict[str, Any]:
         return self.candidate_review.reset_candidate_review_metadata(project_id, session_id)
 
+    # ------------------------------------------------------------------
+    # BOBA Clip Brief Panel V1 - fixed projection and routing helpers
+    # ------------------------------------------------------------------
+    def build_boba_clip_brief_review_registry(self, project_id: str) -> dict[str, Any]:
+        return self.clip_brief_review.build_clip_brief_review_registry(project_id)
+
+    def inspect_boba_clip_brief_review_registry(self, project_id: str) -> dict[str, Any]:
+        return self.clip_brief_review.inspect_clip_brief_review_registry(project_id)
+
+    def create_boba_clip_brief_review_session(
+        self,
+        project_id: str,
+        *,
+        reviewer_context_id: str,
+        selected_brief_id: str | None = None,
+        expires_in_seconds: int = 3_600,
+    ) -> dict[str, Any]:
+        session = self.clip_brief_review.create_clip_brief_review_session(
+            project_id,
+            reviewer_context_id=reviewer_context_id,
+            selected_brief_id=selected_brief_id,
+            expires_in_seconds=expires_in_seconds,
+        )
+        return session.model_dump(mode="json")
+
+    def inspect_boba_clip_brief_review_session(
+        self, project_id: str, session_id: str
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.get_clip_brief_review_session(
+            project_id, session_id
+        ).model_dump(mode="json")
+
+    def update_boba_clip_brief_review_session(
+        self, project_id: str, session_id: str, updates: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.update_clip_brief_review_session(
+            project_id, session_id, updates
+        ).model_dump(mode="json")
+
+    def build_boba_clip_brief_queue(
+        self,
+        project_id: str,
+        *,
+        review_filter: str = "all_current",
+        sort: str = "review_priority",
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.build_clip_brief_queue(
+            project_id,
+            review_filter=review_filter,
+            sort=sort,
+            offset=offset,
+            limit=limit,
+        )
+
+    def inspect_boba_clip_brief_queue(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self.clip_brief_review.inspect_clip_brief_queue(project_id, **kwargs)
+
+    def inspect_boba_clip_brief(self, project_id: str, brief_id: str) -> dict[str, Any]:
+        return self.clip_brief_review.inspect_clip_brief(project_id, brief_id)
+
+    def build_boba_clip_brief_snapshot(
+        self, project_id: str, session_id: str, brief_id: str
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.build_clip_brief_snapshot(
+            project_id, session_id, brief_id
+        )
+
+    def refresh_boba_clip_brief_snapshot(
+        self, project_id: str, snapshot_id: str
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.refresh_clip_brief_snapshot(project_id, snapshot_id)
+
+    def build_boba_clip_brief_comparison(
+        self,
+        project_id: str,
+        brief_ids: list[str],
+        *,
+        comparison_type: str = "side_by_side",
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.build_clip_brief_comparison(
+            project_id, brief_ids, comparison_type=comparison_type
+        )
+
+    def inspect_boba_clip_brief_completeness(
+        self, project_id: str, brief_id: str
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.inspect_clip_brief_completeness(project_id, brief_id)
+
+    def inspect_boba_clip_brief_evidence(
+        self, project_id: str, brief_id: str
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.inspect_clip_brief_evidence(project_id, brief_id)
+
+    def detect_boba_clip_brief_conflicts(
+        self, project_id: str, brief_id: str
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.inspect_clip_brief_conflicts(project_id, brief_id)
+
+    def create_boba_clip_brief_action_request(
+        self,
+        project_id: str,
+        *,
+        clip_brief_review_session_id: str,
+        brief_snapshot_id: str,
+        action_descriptor_id: str,
+        decision_value: str | None = None,
+        reason: str = "",
+        confirmation_context_digest: str,
+        idempotency_key: str,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        request = self.clip_brief_review.create_clip_brief_action_request(
+            project_id,
+            clip_brief_review_session_id=clip_brief_review_session_id,
+            brief_snapshot_id=brief_snapshot_id,
+            action_descriptor_id=action_descriptor_id,
+            decision_value=decision_value,
+            reason=reason,
+            confirmation_context_digest=confirmation_context_digest,
+            idempotency_key=idempotency_key,
+            confirmed=confirmed,
+        )
+        return request.model_dump(mode="json")
+
+    def validate_boba_clip_brief_action_request(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.validate_clip_brief_action_request(
+            project_id, request_id
+        )
+
+    async def submit_boba_clip_brief_action_to_owner(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        receipt = await self.clip_brief_review.submit_clip_brief_action_to_owner(
+            project_id, request_id
+        )
+        return receipt.model_dump(mode="json")
+
+    def inspect_boba_clip_brief_action_receipt(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.inspect_clip_brief_action_receipt(
+            project_id, request_id
+        )
+
+    def inspect_boba_clip_brief_review_timeline(
+        self, project_id: str, *, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.inspect_clip_brief_timeline(project_id, limit=limit)
+
+    def inspect_boba_clip_brief_review_events(
+        self, project_id: str, *, after_sequence: int = 0, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.inspect_clip_brief_events(
+            project_id, after_sequence=after_sequence, limit=limit
+        )
+
+    def load_boba_clip_brief_review(self, project_id: str) -> dict[str, Any]:
+        existing = self.clip_brief_review.load_clip_brief_review(project_id)
+        if existing is None:
+            existing = self.clip_brief_review.build_clip_brief_review(project_id)
+        if existing is None:
+            raise NotFoundError("BOBA Clip Brief Panel is unavailable.")
+        return existing
+
+    def export_boba_clip_brief_review(self, project_id: str) -> dict[str, Any]:
+        return self.clip_brief_review.export_clip_brief_review(project_id)
+
+    def reset_boba_clip_brief_review_metadata(
+        self, project_id: str, session_id: str | None = None
+    ) -> dict[str, Any]:
+        return self.clip_brief_review.reset_clip_brief_review_metadata(project_id, session_id)
+
     async def _invoke_registered_boba_integration_operation(
         self,
         request: BobaIntegrationRequestV1,
@@ -1511,6 +1710,7 @@ class BobaIntegration:
             "final_decision_bus.load": self.load_boba_final_decision_bus,
             "review_ui.load": self.load_boba_review_ui,
             "candidate_review.load": self.load_boba_candidate_review,
+            "clip_brief_review.load": self.load_boba_clip_brief_review,
         }
         export_handlers = {
             "observer.export": self.export_observer_report,
@@ -1533,6 +1733,7 @@ class BobaIntegration:
             "final_decision_bus.export": self.export_boba_final_decision_bus,
             "review_ui.export": self.export_boba_review_ui,
             "candidate_review.export": self.export_boba_candidate_review,
+            "clip_brief_review.export": self.export_boba_clip_brief_review,
         }
         if operation_id in load_handlers:
             result = load_handlers[operation_id](project_id)
@@ -2143,6 +2344,120 @@ class BobaIntegration:
                 str(values.get("candidate_review_session_id") or "") or None,
             )
             side_effects.append("candidate_review_active_metadata_reset")
+        elif operation_id == "clip_brief_review.inspect_registry":
+            result = self.inspect_boba_clip_brief_review_registry(project_id)
+        elif operation_id == "clip_brief_review.create_session":
+            result = self.create_boba_clip_brief_review_session(
+                project_id,
+                reviewer_context_id=str(values.get("reviewer_context_id") or ""),
+                selected_brief_id=str(values.get("brief_id") or "") or None,
+            )
+            side_effects.append("clip_brief_review_session_metadata_updated")
+        elif operation_id == "clip_brief_review.update_session":
+            result = self.update_boba_clip_brief_review_session(
+                project_id,
+                str(values.get("clip_brief_review_session_id") or ""),
+                _dict(values.get("updates")),
+            )
+            side_effects.append("clip_brief_review_session_metadata_updated")
+        elif operation_id == "clip_brief_review.build_queue":
+            result = self.build_boba_clip_brief_queue(
+                project_id,
+                review_filter=str(values.get("review_filter") or "all_current"),
+                sort=str(values.get("sort") or "review_priority"),
+                offset=int(values.get("offset") or 0),
+                limit=int(values.get("limit") or 50),
+            )
+        elif operation_id == "clip_brief_review.inspect_queue":
+            result = self.inspect_boba_clip_brief_queue(project_id)
+        elif operation_id == "clip_brief_review.build_snapshot":
+            result = self.build_boba_clip_brief_snapshot(
+                project_id,
+                str(values.get("clip_brief_review_session_id") or ""),
+                str(values.get("brief_id") or ""),
+            )
+            side_effects.append("clip_brief_review_snapshot_metadata_updated")
+        elif operation_id == "clip_brief_review.refresh_snapshot":
+            result = self.refresh_boba_clip_brief_snapshot(
+                project_id,
+                str(values.get("brief_snapshot_id") or ""),
+            )
+            target_revalidated = True
+            side_effects.append("clip_brief_review_snapshot_metadata_updated")
+        elif operation_id == "clip_brief_review.inspect_brief":
+            result = self.inspect_boba_clip_brief(
+                project_id, str(values.get("brief_id") or "")
+            )
+        elif operation_id == "clip_brief_review.compare_briefs":
+            raw_ids = values.get("brief_ids")
+            result = self.build_boba_clip_brief_comparison(
+                project_id,
+                [str(item) for item in raw_ids] if isinstance(raw_ids, list) else [],
+                comparison_type=str(values.get("comparison_type") or "side_by_side"),
+            )
+        elif operation_id == "clip_brief_review.inspect_completeness":
+            result = self.inspect_boba_clip_brief_completeness(
+                project_id, str(values.get("brief_id") or "")
+            )
+        elif operation_id == "clip_brief_review.inspect_evidence":
+            result = self.inspect_boba_clip_brief_evidence(
+                project_id, str(values.get("brief_id") or "")
+            )
+        elif operation_id == "clip_brief_review.detect_conflicts":
+            result = self.detect_boba_clip_brief_conflicts(
+                project_id, str(values.get("brief_id") or "")
+            )
+        elif operation_id == "clip_brief_review.create_action":
+            result = self.create_boba_clip_brief_action_request(
+                project_id,
+                clip_brief_review_session_id=str(
+                    values.get("clip_brief_review_session_id") or ""
+                ),
+                brief_snapshot_id=str(values.get("brief_snapshot_id") or ""),
+                action_descriptor_id=str(values.get("action_descriptor_id") or ""),
+                decision_value=str(values.get("decision_value") or "") or None,
+                reason=str(values.get("reason") or ""),
+                confirmation_context_digest=str(
+                    values.get("confirmation_context_digest") or ""
+                ),
+                idempotency_key=str(values.get("idempotency_key") or ""),
+                confirmed=bool(values.get("confirmed")),
+            )
+            side_effects.append("clip_brief_review_action_request_recorded")
+        elif operation_id == "clip_brief_review.validate_action":
+            result = self.validate_boba_clip_brief_action_request(
+                project_id,
+                str(values.get("clip_brief_action_request_id") or ""),
+            )
+            target_revalidated = True
+        elif operation_id == "clip_brief_review.submit_action":
+            result = await self.submit_boba_clip_brief_action_to_owner(
+                project_id,
+                str(values.get("clip_brief_action_request_id") or ""),
+            )
+            target_revalidated = True
+            side_effects.append("clip_brief_review_action_receipt_recorded")
+        elif operation_id == "clip_brief_review.inspect_receipt":
+            result = self.inspect_boba_clip_brief_action_receipt(
+                project_id,
+                str(values.get("clip_brief_action_request_id") or ""),
+            )
+        elif operation_id == "clip_brief_review.inspect_timeline":
+            result = self.inspect_boba_clip_brief_review_timeline(
+                project_id, limit=int(values.get("limit") or 100)
+            )
+        elif operation_id == "clip_brief_review.inspect_events":
+            result = self.inspect_boba_clip_brief_review_events(
+                project_id,
+                after_sequence=int(values.get("after_sequence") or 0),
+                limit=int(values.get("limit") or 100),
+            )
+        elif operation_id == "clip_brief_review.reset":
+            result = self.reset_boba_clip_brief_review_metadata(
+                project_id,
+                str(values.get("clip_brief_review_session_id") or "") or None,
+            )
+            side_effects.append("clip_brief_review_active_metadata_reset")
         elif operation_id == "observer.generate":
             result = await self.generate_observer_report(
                 project_id,
