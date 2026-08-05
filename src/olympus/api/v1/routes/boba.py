@@ -5787,3 +5787,333 @@ async def export_review_ui(
     _require_enabled(settings)
     await _require_project(project_id, boba)
     return boba.export_boba_review_ui(project_id)
+
+
+class CandidateReviewSessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_context_id: str = Field(min_length=1, max_length=160)
+    selected_candidate_id: str | None = Field(default=None, max_length=128)
+    expires_in_seconds: int = Field(default=3_600, ge=60, le=28_800)
+
+
+class CandidateReviewSessionUpdateRequest(BaseModel):
+    """Only bounded, UI-owned candidate review session metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    selected_candidate_id: str | None = Field(default=None, max_length=128)
+    comparison_candidate_ids: list[str] | None = Field(default=None, max_length=4)
+    locally_shortlisted_candidate_ids: list[str] | None = Field(default=None, max_length=64)
+    active_filter: str | None = Field(default=None, max_length=80)
+    active_sort: str | None = Field(default=None, max_length=80)
+    show_rejected: bool | None = None
+    show_historical: bool | None = None
+    show_technical_details: bool | None = None
+    transcript_context_seconds: int | None = Field(default=None, ge=0, le=60)
+    evidence_drawer_open: bool | None = None
+    timeline_drawer_open: bool | None = None
+
+
+class CandidateSnapshotCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_review_session_id: str = Field(min_length=1, max_length=180)
+
+
+class CandidateComparisonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_ids: list[str] = Field(min_length=2, max_length=4)
+    comparison_type: str = Field(default="side_by_side", max_length=80)
+
+
+class CandidateActionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_review_session_id: str = Field(min_length=1, max_length=180)
+    candidate_snapshot_id: str = Field(min_length=1, max_length=180)
+    action_descriptor_id: str = Field(min_length=1, max_length=180)
+    decision_value: str | None = Field(default=None, max_length=160)
+    reason: str = Field(default="", max_length=500)
+    confirmation_context_digest: str = Field(min_length=64, max_length=64)
+    idempotency_key: str = Field(min_length=8, max_length=180)
+    confirmed: bool = False
+
+
+@router.get("/projects/{project_id}/candidate-review")
+async def get_candidate_review(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.candidate_review.build_candidate_review(project_id)
+
+
+@router.get("/projects/{project_id}/candidate-review/registry")
+async def get_candidate_review_registry(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_candidate_review_registry(project_id)
+
+
+@router.post("/projects/{project_id}/candidate-review/sessions")
+async def create_candidate_review_session(
+    project_id: str,
+    body: CandidateReviewSessionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_candidate_review_session(
+        project_id,
+        reviewer_context_id=body.reviewer_context_id,
+        selected_candidate_id=body.selected_candidate_id,
+        expires_in_seconds=body.expires_in_seconds,
+    )
+
+
+@router.get("/projects/{project_id}/candidate-review/sessions/{session_id}")
+async def get_candidate_review_session(
+    project_id: str,
+    session_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_candidate_review_session(project_id, session_id)
+
+
+@router.patch("/projects/{project_id}/candidate-review/sessions/{session_id}")
+async def update_candidate_review_session(
+    project_id: str,
+    session_id: str,
+    body: CandidateReviewSessionUpdateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        raise ValidationError("No supported candidate review session updates were supplied.")
+    return boba.update_boba_candidate_review_session(project_id, session_id, updates)
+
+
+@router.delete("/projects/{project_id}/candidate-review/sessions/{session_id}")
+async def reset_candidate_review_session(
+    project_id: str,
+    session_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_candidate_review_metadata(project_id, session_id)
+
+
+@router.get("/projects/{project_id}/candidate-review/queue")
+async def get_candidate_review_queue(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    review_filter: str = "all_current",
+    sort: str = "review_priority",
+    offset: int = 0,
+    limit: int = 50,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_candidate_review_queue(
+        project_id,
+        review_filter=review_filter,
+        sort=sort,
+        offset=max(0, offset),
+        limit=max(1, min(limit, 50)),
+    )
+
+
+@router.get("/projects/{project_id}/candidate-review/candidates/{candidate_id}")
+async def get_candidate_review_candidate(
+    project_id: str,
+    candidate_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_candidate(project_id, candidate_id)
+
+
+@router.get("/projects/{project_id}/candidate-review/candidates/{candidate_id}/transcript")
+async def get_candidate_review_transcript(
+    project_id: str,
+    candidate_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    context_seconds: int = 15,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_candidate_transcript(
+        project_id, candidate_id, context_seconds=max(0, min(context_seconds, 60))
+    )
+
+
+@router.get("/projects/{project_id}/candidate-review/candidates/{candidate_id}/overlaps")
+async def get_candidate_review_overlaps(
+    project_id: str,
+    candidate_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.calculate_boba_candidate_overlaps(project_id, candidate_id)
+
+
+@router.post("/projects/{project_id}/candidate-review/candidates/{candidate_id}/snapshot")
+async def create_candidate_review_snapshot(
+    project_id: str,
+    candidate_id: str,
+    body: CandidateSnapshotCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_candidate_snapshot(
+        project_id, body.candidate_review_session_id, candidate_id
+    )
+
+
+@router.post("/projects/{project_id}/candidate-review/snapshots/{snapshot_id}/refresh")
+async def refresh_candidate_review_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.refresh_boba_candidate_snapshot(project_id, snapshot_id)
+
+
+@router.post("/projects/{project_id}/candidate-review/compare")
+async def compare_candidate_review_candidates(
+    project_id: str,
+    body: CandidateComparisonRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_candidate_comparison(
+        project_id, list(body.candidate_ids), comparison_type=body.comparison_type
+    )
+
+
+@router.post("/projects/{project_id}/candidate-review/actions")
+async def create_candidate_review_action(
+    project_id: str,
+    body: CandidateActionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_candidate_action_request(
+        project_id,
+        candidate_review_session_id=body.candidate_review_session_id,
+        candidate_snapshot_id=body.candidate_snapshot_id,
+        action_descriptor_id=body.action_descriptor_id,
+        decision_value=body.decision_value,
+        reason=body.reason,
+        confirmation_context_digest=body.confirmation_context_digest,
+        idempotency_key=body.idempotency_key,
+        confirmed=body.confirmed,
+    )
+
+
+@router.post("/projects/{project_id}/candidate-review/actions/{request_id}/validate")
+async def validate_candidate_review_action(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validate_boba_candidate_action_request(project_id, request_id)
+
+
+@router.post("/projects/{project_id}/candidate-review/actions/{request_id}/submit")
+async def submit_candidate_review_action(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return await boba.submit_boba_candidate_action_to_owner(project_id, request_id)
+
+
+@router.get("/projects/{project_id}/candidate-review/actions/{request_id}")
+async def get_candidate_review_action(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_candidate_action_receipt(project_id, request_id)
+
+
+@router.get("/projects/{project_id}/candidate-review/timeline")
+async def get_candidate_review_timeline(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_candidate_review_timeline(
+        project_id, limit=max(1, min(limit, 100))
+    )
+
+
+@router.get("/projects/{project_id}/candidate-review/events")
+async def get_candidate_review_events(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    after_sequence: int = 0,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_candidate_review_events(
+        project_id, after_sequence=max(0, after_sequence), limit=max(1, min(limit, 100))
+    )
+
+
+@router.get("/projects/{project_id}/candidate-review/export")
+async def export_candidate_review(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_candidate_review(project_id)
