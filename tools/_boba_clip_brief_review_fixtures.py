@@ -17,7 +17,15 @@ from olympus.boba.clip_brief import (
     BobaSourceWindowV1,
 )
 from olympus.boba.store import BobaMemoryStore
-from tools._boba_candidate_review_fixtures import seed_project as seed_candidate_project
+
+try:  # imported as ``tools._boba_clip_brief_review_fixtures``
+    from tools._boba_candidate_review_fixtures import (
+        seed_project as seed_candidate_project,
+    )
+except ModuleNotFoundError:  # imported from a script run inside ``tools``
+    from _boba_candidate_review_fixtures import (  # type: ignore[no-redef,import-not-found]
+        seed_project as seed_candidate_project,
+    )
 
 _INSTRUCTION_TYPES = {
     "hook_instruction": "hook",

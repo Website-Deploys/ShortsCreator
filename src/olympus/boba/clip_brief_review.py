@@ -2266,6 +2266,7 @@ class BobaClipBriefReviewV1:
                         ),
                         easy_explanation=f"{title} has not supplied a record.",
                         current=False,
+                        authoritative=not advisory,
                         advisory_only=advisory,
                         limitations=[
                             "An unavailable source record is never treated as a pass."
@@ -3409,12 +3410,17 @@ class BobaClipBriefReviewV1:
         _safe_id(project_id, "project id")
         seen: set[tuple[str, str]] = set()
         events: list[BobaClipBriefReviewEventV1] = []
+        truncated_at_source = False
         for source_id in ("clip_brief", "clip_discovery", "editorial_decision",
                           "workflow_controller"):
             payload = self._source_payload(source_id, project_id)
             rows = payload.get("events")
             if not isinstance(rows, list):
                 continue
+            if len(rows) > _MAX_EVENTS:
+                # Older canonical events exist but are not read. Say so rather
+                # than implying the stream is complete.
+                truncated_at_source = True
             for row in rows[-_MAX_EVENTS:]:
                 if not isinstance(row, Mapping):
                     continue
@@ -3491,7 +3497,7 @@ class BobaClipBriefReviewV1:
             "schema_version": "boba_clip_brief_review_events_v1",
             "project_id": project_id,
             "events": [item.model_dump(mode="json") for item in bounded],
-            "has_more": len(events) > len(bounded),
+            "has_more": len(events) > len(bounded) or truncated_at_source,
             "latest_sequence": max(
                 (item.source_sequence or 0 for item in bounded), default=after_sequence
             ),
