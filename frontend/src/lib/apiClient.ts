@@ -9,6 +9,13 @@
 
 import { API_V1 } from "@/lib/config";
 import type {
+  ReviewActionReceipt,
+  ReviewEvent,
+  ReviewQueueItem,
+  ReviewSnapshot,
+  ReviewSourceCard,
+} from "@/lib/reviewUi";
+import type {
   ActivityFeedResponse,
   Analysis,
   ApiError,
@@ -1694,6 +1701,113 @@ export const api = {
   getMonitoringAlerts: () => request<AlertsResponse>(`/monitoring/alerts`),
   getMonitoringAdmin: () => request<AdminSnapshot>(`/monitoring/admin`),
 
+  /* BOBA Review UI V1 - presentation and canonical action routing only. */
+  getBobaReviewUi: (projectId: string) =>
+    request<Record<string, unknown>>(`/boba/projects/${projectId}/review-ui`),
+  getBobaReviewUiRegistry: (projectId: string) =>
+    request<Record<string, unknown>>(`/boba/projects/${projectId}/review-ui/registry`),
+  getBobaReviewUiViews: (projectId: string) =>
+    request<Record<string, unknown>>(`/boba/projects/${projectId}/review-ui/views`),
+  getBobaReviewUiActions: (projectId: string) =>
+    request<Record<string, unknown>>(`/boba/projects/${projectId}/review-ui/actions`),
+  getBobaReviewQueue: (
+    projectId: string,
+    params: {
+      category?: string;
+      include_historical?: boolean;
+      sort?: string;
+      offset?: number;
+      limit?: number;
+    } = {},
+  ) =>
+    request<BobaReviewQueueResponse>(
+      `/boba/projects/${projectId}/review-ui/queue${_qs({
+        category: params.category,
+        include_historical: params.include_historical,
+        sort: params.sort,
+        offset: params.offset === undefined ? undefined : String(params.offset),
+        limit: params.limit === undefined ? undefined : String(params.limit),
+      })}`,
+    ),
+  createBobaReviewSession: (projectId: string, input: BobaReviewSessionInput) =>
+    request<BobaReviewSession>(`/boba/projects/${projectId}/review-ui/sessions`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  getBobaReviewSession: (projectId: string, sessionId: string) =>
+    request<BobaReviewSession>(
+      `/boba/projects/${projectId}/review-ui/sessions/${sessionId}`,
+    ),
+  updateBobaReviewSession: (
+    projectId: string,
+    sessionId: string,
+    updates: Record<string, unknown>,
+  ) =>
+    request<BobaReviewSession>(
+      `/boba/projects/${projectId}/review-ui/sessions/${sessionId}`,
+      { method: "PATCH", body: JSON.stringify(updates) },
+    ),
+  deleteBobaReviewSession: (projectId: string, sessionId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/review-ui/sessions/${sessionId}`,
+      { method: "DELETE" },
+    ),
+  getBobaReviewTarget: (projectId: string, targetId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/review-ui/targets/${targetId}`,
+    ),
+  createBobaReviewSnapshot: (projectId: string, targetId: string, sessionId: string) =>
+    request<BobaReviewSnapshotResponse>(
+      `/boba/projects/${projectId}/review-ui/targets/${targetId}/snapshot`,
+      { method: "POST", body: JSON.stringify({ review_session_id: sessionId }) },
+    ),
+  refreshBobaReviewSnapshot: (projectId: string, snapshotId: string) =>
+    request<BobaReviewSnapshotResponse>(
+      `/boba/projects/${projectId}/review-ui/snapshots/${snapshotId}/refresh`,
+      { method: "POST" },
+    ),
+  createBobaReviewAction: (projectId: string, input: BobaReviewActionInput) =>
+    request<Record<string, unknown>>(`/boba/projects/${projectId}/review-ui/actions`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  validateBobaReviewAction: (projectId: string, actionRequestId: string) =>
+    request<BobaReviewActionValidation>(
+      `/boba/projects/${projectId}/review-ui/actions/${actionRequestId}/validate`,
+      { method: "POST" },
+    ),
+  submitBobaReviewAction: (projectId: string, actionRequestId: string) =>
+    request<ReviewActionReceipt>(
+      `/boba/projects/${projectId}/review-ui/actions/${actionRequestId}/submit`,
+      { method: "POST" },
+    ),
+  getBobaReviewAction: (projectId: string, actionRequestId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/review-ui/actions/${actionRequestId}`,
+    ),
+  getBobaReviewTimeline: (projectId: string, limit = 100) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/review-ui/timeline${_qs({ limit: String(limit) })}`,
+    ),
+  getBobaReviewEvents: (projectId: string, afterSequence = 0, limit = 100) =>
+    request<BobaReviewEventsResponse>(
+      `/boba/projects/${projectId}/review-ui/events${_qs({
+        after_sequence: String(afterSequence),
+        limit: String(limit),
+      })}`,
+    ),
+  acknowledgeBobaReviewNotification: (
+    projectId: string,
+    notificationId: string,
+    sessionId: string,
+  ) =>
+    request<BobaReviewSession>(
+      `/boba/projects/${projectId}/review-ui/notifications/${notificationId}/acknowledge`,
+      { method: "POST", body: JSON.stringify({ review_session_id: sessionId }) },
+    ),
+  exportBobaReviewUi: (projectId: string) =>
+    request<Record<string, unknown>>(`/boba/projects/${projectId}/review-ui/export`),
+
   /** Upload a captured thumbnail frame (multipart; not JSON). */
   uploadThumbnail: async (id: string, blob: Blob): Promise<Project> => {
     const form = new FormData();
@@ -1708,6 +1822,79 @@ export const api = {
     return (await response.json()) as Project;
   },
 };
+
+
+/* BOBA Review UI V1 request and response shapes. */
+export interface BobaReviewSessionInput {
+  reviewer_context_id: string;
+  review_mode?: string;
+  target_type?: string;
+  target_id?: string;
+  expires_in_seconds?: number;
+}
+
+export interface BobaReviewSession {
+  review_session_id: string;
+  project_id: string;
+  reviewer_context_id: string;
+  selected_review_mode: string;
+  selected_target_type: string;
+  selected_target_id: string;
+  active_filter_id: string;
+  active_sort: string;
+  active_tab: string;
+  evidence_drawer_open: boolean;
+  event_drawer_open: boolean;
+  compact_mode: boolean;
+  acknowledged_notification_ids: string[];
+  expires_at: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaReviewQueueResponse {
+  schema_version: string;
+  project_id: string;
+  total: number;
+  offset: number;
+  limit: number;
+  priority_tiers: { priority: number; reason: string; display_category: string }[];
+  items: ReviewQueueItem[];
+}
+
+export interface BobaReviewSnapshotResponse {
+  snapshot: ReviewSnapshot;
+  target: Record<string, unknown>;
+  source_cards: ReviewSourceCard[];
+  sections: Record<string, unknown>[];
+  /** Server-issued confirmation token per available action, keyed by descriptor id. */
+  action_confirmations: Record<string, string>;
+}
+
+export interface BobaReviewEventsResponse {
+  schema_version: string;
+  project_id: string;
+  events: ReviewEvent[];
+  has_more: boolean;
+  latest_sequence: number;
+}
+
+export interface BobaReviewActionInput {
+  review_session_id: string;
+  review_snapshot_id: string;
+  action_descriptor_id: string;
+  decision_value?: string | null;
+  reason?: string;
+  confirmation_context_digest: string;
+  idempotency_key: string;
+  confirmed: boolean;
+}
+
+export interface BobaReviewActionValidation {
+  valid: boolean;
+  code: string;
+  message: string;
+}
 
 /** Direct media URLs served by the backend (no external services). */
 export const mediaUrls = {

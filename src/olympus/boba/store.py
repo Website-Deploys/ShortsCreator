@@ -6459,3 +6459,235 @@ class BobaMemoryStore:
             "accepted_outputs_removed": False,
             "target_execution_performed": False,
         }
+
+    @staticmethod
+    def _validate_review_ui_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
+            raise ValidationError(f"Invalid BOBA Review UI {label}.")
+        return value
+
+    def boba_review_ui_path(self, project_id: str) -> Path:
+        return self._path(project_id, "review_ui/index.json")
+
+    def boba_review_ui_registry_path(self, project_id: str, registry_id: str) -> Path:
+        self._validate_review_ui_record_id(registry_id, label="registry id")
+        return self._path(project_id, f"review_ui/registries/{registry_id}.json")
+
+    def boba_review_ui_session_path(self, project_id: str, session_id: str) -> Path:
+        self._validate_review_ui_record_id(session_id, label="session id")
+        return self._path(project_id, f"review_ui/sessions/{session_id}.json")
+
+    def boba_review_ui_snapshot_path(self, project_id: str, snapshot_id: str) -> Path:
+        self._validate_review_ui_record_id(snapshot_id, label="snapshot id")
+        return self._path(project_id, f"review_ui/snapshots/{snapshot_id}.json")
+
+    def boba_review_ui_action_path(self, project_id: str, action_id: str) -> Path:
+        self._validate_review_ui_record_id(action_id, label="action id")
+        return self._path(project_id, f"review_ui/actions/{action_id}.json")
+
+    def boba_review_ui_receipt_path(self, project_id: str, receipt_id: str) -> Path:
+        self._validate_review_ui_record_id(receipt_id, label="receipt id")
+        return self._path(project_id, f"review_ui/receipts/{receipt_id}.json")
+
+    def boba_review_ui_event_cursor_path(self, project_id: str, session_id: str) -> Path:
+        self._validate_review_ui_record_id(session_id, label="session id")
+        return self._path(project_id, f"review_ui/event_cursors/{session_id}.json")
+
+    def _write_boba_review_ui_record(self, path: Path, payload: dict[str, Any]) -> None:
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path="boba.review_ui",
+        )
+        self._atomic_write_compact(path, safe)
+
+    def save_boba_review_ui(self, project_id: str, payload: dict[str, Any]) -> None:
+        self._write_boba_review_ui_record(self.boba_review_ui_path(project_id), payload)
+
+    def load_boba_review_ui(self, project_id: str) -> dict[str, Any] | None:
+        raw = self._read(self.boba_review_ui_path(project_id), None)
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_review_ui_registry(
+        self,
+        project_id: str,
+        registry_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        path = self.boba_review_ui_registry_path(project_id, registry_id)
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path="boba.review_ui.registry",
+        )
+        with self._lock:
+            if path.exists():
+                existing = self._read(path, None)
+                if existing != safe:
+                    raise ValidationError("BOBA Review UI registry snapshots are immutable.")
+                return
+            self._atomic_write_compact(path, safe)
+
+    def load_boba_review_ui_registry(
+        self,
+        project_id: str,
+        registry_id: str,
+    ) -> dict[str, Any] | None:
+        raw = self._read(self.boba_review_ui_registry_path(project_id, registry_id), None)
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_review_ui_session(
+        self,
+        project_id: str,
+        session_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self._write_boba_review_ui_record(
+            self.boba_review_ui_session_path(project_id, session_id),
+            payload,
+        )
+
+    def load_boba_review_ui_session(
+        self,
+        project_id: str,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        raw = self._read(self.boba_review_ui_session_path(project_id, session_id), None)
+        return raw if isinstance(raw, dict) else None
+
+    def delete_boba_review_ui_session(self, project_id: str, session_id: str) -> bool:
+        path = self.boba_review_ui_session_path(project_id, session_id)
+        with self._lock:
+            existed = path.exists()
+            path.unlink(missing_ok=True)
+            self.boba_review_ui_event_cursor_path(project_id, session_id).unlink(missing_ok=True)
+        return existed
+
+    def save_boba_review_ui_snapshot(
+        self,
+        project_id: str,
+        snapshot_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self._write_boba_review_ui_record(
+            self.boba_review_ui_snapshot_path(project_id, snapshot_id),
+            payload,
+        )
+
+    def load_boba_review_ui_snapshot(
+        self,
+        project_id: str,
+        snapshot_id: str,
+    ) -> dict[str, Any] | None:
+        raw = self._read(self.boba_review_ui_snapshot_path(project_id, snapshot_id), None)
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_review_ui_action(
+        self,
+        project_id: str,
+        action_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        path = self.boba_review_ui_action_path(project_id, action_id)
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path="boba.review_ui.action",
+        )
+        with self._lock:
+            if path.exists():
+                existing = self._read(path, None)
+                if existing != safe:
+                    raise ValidationError("BOBA Review UI action requests are immutable.")
+                return
+            self._atomic_write_compact(path, safe)
+
+    def load_boba_review_ui_action(
+        self,
+        project_id: str,
+        action_id: str,
+    ) -> dict[str, Any] | None:
+        raw = self._read(self.boba_review_ui_action_path(project_id, action_id), None)
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_review_ui_receipt(
+        self,
+        project_id: str,
+        receipt_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        path = self.boba_review_ui_receipt_path(project_id, receipt_id)
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path="boba.review_ui.receipt",
+        )
+        with self._lock:
+            if path.exists():
+                existing = self._read(path, None)
+                if existing != safe:
+                    raise ValidationError("BOBA Review UI receipts are immutable.")
+                return
+            self._atomic_write_compact(path, safe)
+
+    def load_boba_review_ui_receipt_for_action(
+        self,
+        project_id: str,
+        action_id: str,
+    ) -> dict[str, Any] | None:
+        self._validate_review_ui_record_id(action_id, label="action id")
+        directory = self._path(project_id, "review_ui/receipts")
+        if not directory.exists():
+            return None
+        for path in sorted(directory.glob("*.json"))[:256]:
+            raw = self._read(path, None)
+            if isinstance(raw, dict) and raw.get("review_action_request_id") == action_id:
+                return raw
+        return None
+
+    def save_boba_review_ui_event_cursor(
+        self,
+        project_id: str,
+        session_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self._write_boba_review_ui_record(
+            self.boba_review_ui_event_cursor_path(project_id, session_id),
+            payload,
+        )
+
+    def reset_boba_review_ui_metadata(self, project_id: str) -> dict[str, Any]:
+        directory = self.boba_review_ui_path(project_id).parent.resolve()
+        project_directory = self._project_dir(project_id).resolve()
+        if directory.parent != project_directory or directory.name != "review_ui":
+            raise ValidationError("Invalid BOBA Review UI reset path.")
+        with self._lock:
+            index_removed = self.boba_review_ui_path(project_id).exists()
+            self.boba_review_ui_path(project_id).unlink(missing_ok=True)
+            sessions_directory = directory / "sessions"
+            cursors_directory = directory / "event_cursors"
+            removed_sessions = (
+                len(list(sessions_directory.glob("*.json")))
+                if sessions_directory.exists()
+                else 0
+            )
+            for child in [sessions_directory, cursors_directory]:
+                if child.exists():
+                    shutil.rmtree(child)
+        return {
+            "schema_version": "boba_review_ui_reset_v1",
+            "project_id": project_id,
+            "active_index_removed": index_removed,
+            "review_sessions_removed": removed_sessions,
+            "registry_history_preserved": True,
+            "action_request_history_preserved": True,
+            "action_receipt_history_preserved": True,
+            "source_records_preserved": True,
+            "workflow_history_preserved": True,
+            "validation_history_preserved": True,
+            "quality_history_preserved": True,
+            "artifact_history_preserved": True,
+            "final_decision_history_preserved": True,
+            "source_media_removed": False,
+            "accepted_outputs_removed": False,
+        }

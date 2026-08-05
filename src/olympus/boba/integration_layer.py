@@ -1132,6 +1132,16 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
         "path": "olympus.boba.final_decision_bus",
         "deps": ["integration_layer", "safety_gate", "workflow_controller"],
     },
+    "review_ui": {
+        "name": "Review UI",
+        "path": "olympus.boba.review_ui",
+        "deps": [
+            "integration_layer",
+            "safety_gate",
+            "workflow_controller",
+            "final_decision_bus",
+        ],
+    },
     "live_companion": {"name": "Live Companion", "future": True},
 }
 
@@ -1520,6 +1530,28 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
             _operation(
                 "final_decision_bus", "inspect_events", "read_only", side_effect_class="none"
             ),
+            _operation("review_ui", "inspect_registry", "read_only", side_effect_class="none"),
+            _operation("review_ui", "create_session", "metadata_reset"),
+            _operation("review_ui", "update_session", "metadata_reset"),
+            _operation("review_ui", "build_queue", "read_only", side_effect_class="none"),
+            _operation("review_ui", "inspect_queue", "read_only", side_effect_class="none"),
+            _operation("review_ui", "build_snapshot", "read_only"),
+            _operation("review_ui", "refresh_snapshot", "read_only"),
+            _operation("review_ui", "inspect_target", "read_only", side_effect_class="none"),
+            _operation("review_ui", "create_action", "read_only"),
+            _operation("review_ui", "validate_action", "read_only", side_effect_class="none"),
+            _operation(
+                "review_ui",
+                "submit_action",
+                "read_only",
+                approval=True,
+                approval_type="exact_human_review_action",
+                safety=True,
+            ),
+            _operation("review_ui", "inspect_receipt", "read_only", side_effect_class="none"),
+            _operation("review_ui", "inspect_timeline", "read_only", side_effect_class="none"),
+            _operation("review_ui", "inspect_events", "read_only", side_effect_class="none"),
+            _operation("review_ui", "acknowledge_notification", "metadata_reset"),
             _operation("workflow_controller", "build_definition", "planning"),
             _operation("workflow_controller", "create_run", "planning"),
             _operation(
