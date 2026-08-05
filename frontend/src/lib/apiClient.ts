@@ -9,6 +9,15 @@
 
 import { API_V1 } from "@/lib/config";
 import type {
+  CandidateActionDescriptor,
+  CandidateActionReceipt,
+  CandidateOverlapRecord,
+  CandidateQueueItem,
+  CandidateReference,
+  CandidateScoreCard,
+  CandidateSnapshot,
+} from "@/lib/candidateReview";
+import type {
   ReviewActionReceipt,
   ReviewEvent,
   ReviewQueueItem,
@@ -1701,6 +1710,129 @@ export const api = {
   getMonitoringAlerts: () => request<AlertsResponse>(`/monitoring/alerts`),
   getMonitoringAdmin: () => request<AdminSnapshot>(`/monitoring/admin`),
 
+  /* BOBA Candidate Review Panel V1 - read-only projection and safe routing. */
+  getBobaCandidateReview: (projectId: string) =>
+    request<Record<string, unknown>>(`/boba/projects/${projectId}/candidate-review`),
+  getBobaCandidateReviewRegistry: (projectId: string) =>
+    request<BobaCandidateRegistryResponse>(
+      `/boba/projects/${projectId}/candidate-review/registry`,
+    ),
+  createBobaCandidateReviewSession: (
+    projectId: string,
+    input: { reviewer_context_id: string; selected_candidate_id?: string | null },
+  ) =>
+    request<BobaCandidateReviewSession>(
+      `/boba/projects/${projectId}/candidate-review/sessions`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  getBobaCandidateReviewSession: (projectId: string, sessionId: string) =>
+    request<BobaCandidateReviewSession>(
+      `/boba/projects/${projectId}/candidate-review/sessions/${sessionId}`,
+    ),
+  updateBobaCandidateReviewSession: (
+    projectId: string,
+    sessionId: string,
+    updates: Record<string, unknown>,
+  ) =>
+    request<BobaCandidateReviewSession>(
+      `/boba/projects/${projectId}/candidate-review/sessions/${sessionId}`,
+      { method: "PATCH", body: JSON.stringify(updates) },
+    ),
+  deleteBobaCandidateReviewSession: (projectId: string, sessionId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/candidate-review/sessions/${sessionId}`,
+      { method: "DELETE" },
+    ),
+  getBobaCandidateQueue: (
+    projectId: string,
+    params: { review_filter?: string; sort?: string; offset?: number; limit?: number } = {},
+  ) =>
+    request<BobaCandidateQueueResponse>(
+      `/boba/projects/${projectId}/candidate-review/queue${_qs({
+        review_filter: params.review_filter,
+        sort: params.sort,
+        offset: params.offset === undefined ? undefined : String(params.offset),
+        limit: params.limit === undefined ? undefined : String(params.limit),
+      })}`,
+    ),
+  getBobaCandidate: (projectId: string, candidateId: string) =>
+    request<BobaCandidateDetailResponse>(
+      `/boba/projects/${projectId}/candidate-review/candidates/${candidateId}`,
+    ),
+  getBobaCandidateTranscript: (projectId: string, candidateId: string, contextSeconds = 15) =>
+    request<BobaCandidateTranscriptResponse>(
+      `/boba/projects/${projectId}/candidate-review/candidates/${candidateId}/transcript${_qs({
+        context_seconds: String(contextSeconds),
+      })}`,
+    ),
+  getBobaCandidateOverlaps: (projectId: string, candidateId: string) =>
+    request<BobaCandidateOverlapsResponse>(
+      `/boba/projects/${projectId}/candidate-review/candidates/${candidateId}/overlaps`,
+    ),
+  createBobaCandidateSnapshot: (
+    projectId: string,
+    candidateId: string,
+    sessionId: string,
+  ) =>
+    request<BobaCandidateSnapshotResponse>(
+      `/boba/projects/${projectId}/candidate-review/candidates/${candidateId}/snapshot`,
+      { method: "POST", body: JSON.stringify({ candidate_review_session_id: sessionId }) },
+    ),
+  refreshBobaCandidateSnapshot: (projectId: string, snapshotId: string) =>
+    request<BobaCandidateSnapshotResponse>(
+      `/boba/projects/${projectId}/candidate-review/snapshots/${snapshotId}/refresh`,
+      { method: "POST" },
+    ),
+  compareBobaCandidates: (
+    projectId: string,
+    candidateIds: string[],
+    comparisonType = "side_by_side",
+  ) =>
+    request<BobaCandidateComparisonResponse>(
+      `/boba/projects/${projectId}/candidate-review/compare`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          candidate_ids: candidateIds,
+          comparison_type: comparisonType,
+        }),
+      },
+    ),
+  createBobaCandidateAction: (projectId: string, input: BobaCandidateActionInput) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/candidate-review/actions`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  validateBobaCandidateAction: (projectId: string, requestId: string) =>
+    request<{ valid: boolean; code: string; message: string }>(
+      `/boba/projects/${projectId}/candidate-review/actions/${requestId}/validate`,
+      { method: "POST" },
+    ),
+  submitBobaCandidateAction: (projectId: string, requestId: string) =>
+    request<CandidateActionReceipt>(
+      `/boba/projects/${projectId}/candidate-review/actions/${requestId}/submit`,
+      { method: "POST" },
+    ),
+  getBobaCandidateActionReceipt: (projectId: string, requestId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/candidate-review/actions/${requestId}`,
+    ),
+  getBobaCandidateReviewTimeline: (projectId: string, limit = 100) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/candidate-review/timeline${_qs({ limit: String(limit) })}`,
+    ),
+  getBobaCandidateReviewEvents: (projectId: string, afterSequence = 0, limit = 100) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/candidate-review/events${_qs({
+        after_sequence: String(afterSequence),
+        limit: String(limit),
+      })}`,
+    ),
+  exportBobaCandidateReview: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/candidate-review/export`,
+    ),
+
   /* BOBA Review UI V1 - presentation and canonical action routing only. */
   getBobaReviewUi: (projectId: string) =>
     request<Record<string, unknown>>(`/boba/projects/${projectId}/review-ui`),
@@ -1894,6 +2026,100 @@ export interface BobaReviewActionValidation {
   valid: boolean;
   code: string;
   message: string;
+}
+
+
+/* BOBA Candidate Review Panel V1 request and response shapes. */
+export interface BobaCandidateReviewSession {
+  candidate_review_session_id: string;
+  project_id: string;
+  reviewer_context_id: string;
+  selected_candidate_id: string | null;
+  comparison_candidate_ids: string[];
+  locally_shortlisted_candidate_ids: string[];
+  active_filter: string;
+  active_sort: string;
+  show_rejected: boolean;
+  show_historical: boolean;
+  show_technical_details: boolean;
+  transcript_context_seconds: number;
+  evidence_drawer_open: boolean;
+  timeline_drawer_open: boolean;
+  expires_at: string;
+  limitations: string[];
+}
+
+export interface BobaCandidateRegistryResponse {
+  registry_snapshot: Record<string, unknown>;
+  sources: Record<string, unknown>[];
+  actions: CandidateActionDescriptor[];
+}
+
+export interface BobaCandidateQueueResponse {
+  schema_version: string;
+  project_id: string;
+  total: number;
+  offset: number;
+  limit: number;
+  active_filter: string;
+  active_sort: string;
+  priority_tiers: { priority: number; reason: string }[];
+  items: CandidateQueueItem[];
+}
+
+export interface BobaCandidateSnapshotResponse {
+  snapshot: CandidateSnapshot;
+  candidate_reference: CandidateReference;
+  queue_item: CandidateQueueItem;
+  source_cards: Record<string, unknown>[];
+  score_cards: CandidateScoreCard[];
+  overlap_records: CandidateOverlapRecord[];
+  action_confirmations: Record<string, string>;
+}
+
+export interface BobaCandidateDetailResponse {
+  candidate_reference: CandidateReference;
+  queue_item: CandidateQueueItem;
+  source_cards: Record<string, unknown>[];
+  score_cards: CandidateScoreCard[];
+  overlap_records: CandidateOverlapRecord[];
+  transcript: BobaCandidateTranscriptResponse;
+}
+
+export interface BobaCandidateTranscriptResponse {
+  candidate_id: string;
+  candidate_start_seconds: number;
+  candidate_end_seconds: number;
+  context_seconds: number;
+  context_start_seconds: number;
+  context_end_seconds: number;
+  candidate_transcript_snippets: string[];
+  transcript_segment_ids: string[];
+  source_module_id: string;
+  limitations: string[];
+}
+
+export interface BobaCandidateOverlapsResponse {
+  candidate_id: string;
+  substantial_overlap_iou_threshold: number;
+  overlap_records: CandidateOverlapRecord[];
+  limitations: string[];
+}
+
+export interface BobaCandidateComparisonResponse {
+  comparison: Record<string, unknown>;
+  overlap_records: CandidateOverlapRecord[];
+}
+
+export interface BobaCandidateActionInput {
+  candidate_review_session_id: string;
+  candidate_snapshot_id: string;
+  action_descriptor_id: string;
+  decision_value?: string | null;
+  reason?: string;
+  confirmation_context_digest: string;
+  idempotency_key: string;
+  confirmed: boolean;
 }
 
 /** Direct media URLs served by the backend (no external services). */

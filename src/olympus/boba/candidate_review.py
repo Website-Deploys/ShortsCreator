@@ -233,6 +233,9 @@ class BobaCandidateQueueItemV1(BobaContract):
     candidate_id: str = Field(min_length=1, max_length=128)
     title: str = Field(min_length=1, max_length=240)
     bounded_summary: str = Field(default="", max_length=900)
+    start_seconds: float = Field(ge=0.0)
+    end_seconds: float = Field(ge=0.0)
+    duration_seconds: float = Field(gt=0.0)
     original_discovery_status: str = Field(default="unknown", max_length=160)
     original_rank: int | None = Field(default=None, ge=1)
     original_rank_total: int | None = Field(default=None, ge=0)
@@ -2057,6 +2060,9 @@ class BobaCandidateReviewV1:
             candidate_id=candidate_id,
             title=_safe_text(discovery_row.get("suggested_title"), 240) or candidate_id,
             bounded_summary=_safe_text(discovery_row.get("discovery_reason"), 900),
+            start_seconds=reference.start_seconds,
+            end_seconds=reference.end_seconds,
+            duration_seconds=reference.duration_seconds,
             original_discovery_status=(
                 _safe_text(discovery_row.get("candidate_type"), 160) or "unknown"
             ),
@@ -3262,7 +3268,7 @@ class BobaCandidateReviewV1:
                 "private_paths_excluded": True,
                 "raw_media_excluded": True,
                 "raw_transcripts_excluded": True,
-                "secrets_excluded": True,
+                "sensitive_values_excluded": True,
                 "source_records_duplicated": False,
                 "source_media_modified": False,
                 "accepted_output_modified": False,

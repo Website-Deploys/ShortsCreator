@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiClientError } from "@/lib/apiClient";
 import type {
+  BobaCandidateActionInput,
   BobaReviewActionInput,
   BobaReviewSessionInput,
 } from "@/lib/apiClient";
@@ -177,6 +178,16 @@ export const queryKeys = {
   bobaIntegrationLayer: (id: string) =>
     ["boba", "projects", id, "integration-layer"] as const,
   bobaReviewUi: (id: string) => ["boba", "projects", id, "review-ui"] as const,
+  bobaCandidateReview: (id: string) =>
+    ["boba", "projects", id, "candidate-review"] as const,
+  bobaCandidateQueue: (id: string, filter: string, sort: string) =>
+    ["boba", "projects", id, "candidate-review", "queue", filter, sort] as const,
+  bobaCandidateRegistry: (id: string) =>
+    ["boba", "projects", id, "candidate-review", "registry"] as const,
+  bobaCandidateDetail: (id: string, candidateId: string) =>
+    ["boba", "projects", id, "candidate-review", "candidate", candidateId] as const,
+  bobaCandidateTranscript: (id: string, candidateId: string, context: number) =>
+    ["boba", "projects", id, "candidate-review", "transcript", candidateId, context] as const,
   bobaReviewQueue: (id: string, category: string, includeHistorical: boolean) =>
     ["boba", "projects", id, "review-ui", "queue", category, includeHistorical] as const,
   bobaReviewSnapshot: (id: string, targetId: string) =>
@@ -3253,4 +3264,150 @@ export function useAcknowledgeBobaReviewNotification(projectId: string) {
 
 export function useExportBobaReviewUi(projectId: string) {
   return useMutation({ mutationFn: () => api.exportBobaReviewUi(projectId) });
+}
+
+
+/* ---------------------------------------------------------------------------
+ * BOBA Candidate Review Panel V1
+ *
+ * Read-only projections plus the explicitly confirmed action pipeline. No hook
+ * here optimistically changes candidate status: mutations invalidate the
+ * canonical queries so displayed state always comes from the owning module.
+ * ------------------------------------------------------------------------- */
+
+export function useBobaCandidateReview(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaCandidateReview(projectId),
+    queryFn: () => api.getBobaCandidateReview(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaCandidateRegistry(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaCandidateRegistry(projectId),
+    queryFn: () => api.getBobaCandidateReviewRegistry(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useBobaCandidateQueue(
+  projectId: string,
+  options: { filter?: string; sort?: string; enabled?: boolean } = {},
+) {
+  const filter = options.filter ?? "all_current";
+  const sort = options.sort ?? "review_priority";
+  return useQuery({
+    queryKey: queryKeys.bobaCandidateQueue(projectId, filter, sort),
+    queryFn: () =>
+      api.getBobaCandidateQueue(projectId, {
+        review_filter: filter,
+        sort,
+        limit: 50,
+      }),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
+    staleTime: 10_000,
+  });
+}
+
+export function useBobaCandidateTranscript(
+  projectId: string,
+  candidateId: string | null,
+  contextSeconds = 15,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaCandidateTranscript(
+      projectId,
+      candidateId ?? "none",
+      contextSeconds,
+    ),
+    queryFn: () => api.getBobaCandidateTranscript(projectId, candidateId!, contextSeconds),
+    enabled: Boolean(projectId) && Boolean(candidateId),
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateBobaCandidateReviewSession(projectId: string) {
+  return useMutation({
+    mutationFn: (input: { reviewer_context_id: string }) =>
+      api.createBobaCandidateReviewSession(projectId, input),
+  });
+}
+
+export function useUpdateBobaCandidateReviewSession(projectId: string) {
+  return useMutation({
+    mutationFn: ({
+      sessionId,
+      updates,
+    }: {
+      sessionId: string;
+      updates: Record<string, unknown>;
+    }) => api.updateBobaCandidateReviewSession(projectId, sessionId, updates),
+  });
+}
+
+export function useCreateBobaCandidateSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: ({
+      candidateId,
+      sessionId,
+    }: {
+      candidateId: string;
+      sessionId: string;
+    }) => api.createBobaCandidateSnapshot(projectId, candidateId, sessionId),
+  });
+}
+
+export function useRefreshBobaCandidateSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: (snapshotId: string) =>
+      api.refreshBobaCandidateSnapshot(projectId, snapshotId),
+  });
+}
+
+export function useCompareBobaCandidates(projectId: string) {
+  return useMutation({
+    mutationFn: (candidateIds: string[]) =>
+      api.compareBobaCandidates(projectId, candidateIds),
+  });
+}
+
+export function useCreateBobaCandidateAction(projectId: string) {
+  return useMutation({
+    mutationFn: (input: BobaCandidateActionInput) =>
+      api.createBobaCandidateAction(projectId, input),
+  });
+}
+
+export function useValidateBobaCandidateAction(projectId: string) {
+  return useMutation({
+    mutationFn: (requestId: string) => api.validateBobaCandidateAction(projectId, requestId),
+  });
+}
+
+/**
+ * Submit a confirmed candidate action to its canonical owner.
+ *
+ * Every affected canonical query is invalidated on completion. Candidate status
+ * is only ever re-read from the owning module, never assumed.
+ */
+export function useSubmitBobaCandidateAction(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (requestId: string) => api.submitBobaCandidateAction(projectId, requestId),
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["boba", "projects", projectId, "candidate-review"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaReviewUi(projectId),
+      });
+    },
+  });
+}
+
+export function useExportBobaCandidateReview(projectId: string) {
+  return useMutation({ mutationFn: () => api.exportBobaCandidateReview(projectId) });
 }
