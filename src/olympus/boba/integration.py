@@ -26,6 +26,7 @@ from olympus.boba.autopilot_controller import (
     BobaAutopilotTriggerV1,
 )
 from olympus.boba.brain import BobaBrain
+from olympus.boba.candidate_review import BobaCandidateReviewV1
 from olympus.boba.candidate_video_scorer import (
     BobaCandidateVideoScorerSetV1,
     BobaCandidateVideoScorerV1,
@@ -378,6 +379,25 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "review_ui.load",
     "review_ui.export",
     "review_ui.reset",
+    "candidate_review.inspect_registry",
+    "candidate_review.create_session",
+    "candidate_review.update_session",
+    "candidate_review.build_queue",
+    "candidate_review.inspect_queue",
+    "candidate_review.build_snapshot",
+    "candidate_review.refresh_snapshot",
+    "candidate_review.inspect_candidate",
+    "candidate_review.compare_candidates",
+    "candidate_review.calculate_overlaps",
+    "candidate_review.create_action",
+    "candidate_review.validate_action",
+    "candidate_review.submit_action",
+    "candidate_review.inspect_receipt",
+    "candidate_review.inspect_timeline",
+    "candidate_review.inspect_events",
+    "candidate_review.load",
+    "candidate_review.export",
+    "candidate_review.reset",
 )
 
 
@@ -475,6 +495,7 @@ class BobaIntegration:
             integration_layer_factory=self._integration_layer,
         )
         self.review_ui = BobaReviewUiV1(store, self)
+        self.candidate_review = BobaCandidateReviewV1(store, self)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
 
@@ -1289,6 +1310,177 @@ class BobaIntegration:
     ) -> dict[str, Any]:
         return self.review_ui.reset_review_ui_metadata(project_id, session_id)
 
+    # ------------------------------------------------------------------
+    # BOBA Candidate Review Panel V1 - fixed projection and routing helpers
+    # ------------------------------------------------------------------
+    def build_boba_candidate_review_registry(self, project_id: str) -> dict[str, Any]:
+        return self.candidate_review.build_candidate_review_registry(project_id)
+
+    def inspect_boba_candidate_review_registry(self, project_id: str) -> dict[str, Any]:
+        return self.candidate_review.inspect_candidate_review_registry(project_id)
+
+    def create_boba_candidate_review_session(
+        self,
+        project_id: str,
+        *,
+        reviewer_context_id: str,
+        selected_candidate_id: str | None = None,
+        expires_in_seconds: int = 3_600,
+    ) -> dict[str, Any]:
+        session = self.candidate_review.create_candidate_review_session(
+            project_id,
+            reviewer_context_id=reviewer_context_id,
+            selected_candidate_id=selected_candidate_id,
+            expires_in_seconds=expires_in_seconds,
+        )
+        return session.model_dump(mode="json")
+
+    def inspect_boba_candidate_review_session(
+        self, project_id: str, session_id: str
+    ) -> dict[str, Any]:
+        return self.candidate_review.get_candidate_review_session(
+            project_id, session_id
+        ).model_dump(mode="json")
+
+    def update_boba_candidate_review_session(
+        self, project_id: str, session_id: str, updates: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return self.candidate_review.update_candidate_review_session(
+            project_id, session_id, updates
+        ).model_dump(mode="json")
+
+    def build_boba_candidate_review_queue(
+        self,
+        project_id: str,
+        *,
+        review_filter: str = "all_current",
+        sort: str = "review_priority",
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self.candidate_review.build_candidate_queue(
+            project_id,
+            review_filter=review_filter,
+            sort=sort,
+            offset=offset,
+            limit=limit,
+        )
+
+    def inspect_boba_candidate_review_queue(
+        self, project_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        return self.candidate_review.inspect_candidate_queue(project_id, **kwargs)
+
+    def build_boba_candidate_snapshot(
+        self, project_id: str, session_id: str, candidate_id: str
+    ) -> dict[str, Any]:
+        return self.candidate_review.build_candidate_snapshot(
+            project_id, session_id, candidate_id
+        )
+
+    def refresh_boba_candidate_snapshot(
+        self, project_id: str, snapshot_id: str
+    ) -> dict[str, Any]:
+        return self.candidate_review.refresh_candidate_snapshot(project_id, snapshot_id)
+
+    def inspect_boba_candidate(self, project_id: str, candidate_id: str) -> dict[str, Any]:
+        return self.candidate_review.inspect_candidate(project_id, candidate_id)
+
+    def build_boba_candidate_comparison(
+        self,
+        project_id: str,
+        candidate_ids: list[str],
+        *,
+        comparison_type: str = "side_by_side",
+    ) -> dict[str, Any]:
+        return self.candidate_review.build_candidate_comparison(
+            project_id, candidate_ids, comparison_type=comparison_type
+        )
+
+    def calculate_boba_candidate_overlaps(
+        self, project_id: str, candidate_id: str
+    ) -> dict[str, Any]:
+        return self.candidate_review.inspect_candidate_overlaps(project_id, candidate_id)
+
+    def inspect_boba_candidate_transcript(
+        self, project_id: str, candidate_id: str, *, context_seconds: int = 15
+    ) -> dict[str, Any]:
+        return self.candidate_review.inspect_candidate_transcript(
+            project_id, candidate_id, context_seconds=context_seconds
+        )
+
+    def create_boba_candidate_action_request(
+        self,
+        project_id: str,
+        *,
+        candidate_review_session_id: str,
+        candidate_snapshot_id: str,
+        action_descriptor_id: str,
+        decision_value: str | None = None,
+        reason: str = "",
+        confirmation_context_digest: str,
+        idempotency_key: str,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        request = self.candidate_review.create_candidate_action_request(
+            project_id,
+            candidate_review_session_id=candidate_review_session_id,
+            candidate_snapshot_id=candidate_snapshot_id,
+            action_descriptor_id=action_descriptor_id,
+            decision_value=decision_value,
+            reason=reason,
+            confirmation_context_digest=confirmation_context_digest,
+            idempotency_key=idempotency_key,
+            confirmed=confirmed,
+        )
+        return request.model_dump(mode="json")
+
+    def validate_boba_candidate_action_request(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        return self.candidate_review.validate_candidate_action_request(project_id, request_id)
+
+    async def submit_boba_candidate_action_to_owner(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        receipt = await self.candidate_review.submit_candidate_action_to_owner(
+            project_id, request_id
+        )
+        return receipt.model_dump(mode="json")
+
+    def inspect_boba_candidate_action_receipt(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        return self.candidate_review.inspect_candidate_action_receipt(project_id, request_id)
+
+    def inspect_boba_candidate_review_timeline(
+        self, project_id: str, *, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.candidate_review.inspect_candidate_timeline(project_id, limit=limit)
+
+    def inspect_boba_candidate_review_events(
+        self, project_id: str, *, after_sequence: int = 0, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.candidate_review.inspect_candidate_events(
+            project_id, after_sequence=after_sequence, limit=limit
+        )
+
+    def load_boba_candidate_review(self, project_id: str) -> dict[str, Any]:
+        existing = self.candidate_review.load_candidate_review(project_id)
+        if existing is None:
+            existing = self.candidate_review.build_candidate_review(project_id)
+        if existing is None:
+            raise NotFoundError("BOBA Candidate Review Panel is unavailable.")
+        return existing
+
+    def export_boba_candidate_review(self, project_id: str) -> dict[str, Any]:
+        return self.candidate_review.export_candidate_review(project_id)
+
+    def reset_boba_candidate_review_metadata(
+        self, project_id: str, session_id: str | None = None
+    ) -> dict[str, Any]:
+        return self.candidate_review.reset_candidate_review_metadata(project_id, session_id)
+
     async def _invoke_registered_boba_integration_operation(
         self,
         request: BobaIntegrationRequestV1,
@@ -1318,6 +1510,7 @@ class BobaIntegration:
             "artifact_inspector.load": self.load_boba_artifact_inspector,
             "final_decision_bus.load": self.load_boba_final_decision_bus,
             "review_ui.load": self.load_boba_review_ui,
+            "candidate_review.load": self.load_boba_candidate_review,
         }
         export_handlers = {
             "observer.export": self.export_observer_report,
@@ -1339,6 +1532,7 @@ class BobaIntegration:
             "artifact_inspector.export": self.export_boba_artifact_inspector,
             "final_decision_bus.export": self.export_boba_final_decision_bus,
             "review_ui.export": self.export_boba_review_ui,
+            "candidate_review.export": self.export_boba_candidate_review,
         }
         if operation_id in load_handlers:
             result = load_handlers[operation_id](project_id)
@@ -1843,6 +2037,112 @@ class BobaIntegration:
                 str(values.get("review_session_id") or "") or None,
             )
             side_effects.append("review_ui_active_metadata_reset")
+        elif operation_id == "candidate_review.inspect_registry":
+            result = self.inspect_boba_candidate_review_registry(project_id)
+        elif operation_id == "candidate_review.create_session":
+            result = self.create_boba_candidate_review_session(
+                project_id,
+                reviewer_context_id=str(values.get("reviewer_context_id") or ""),
+                selected_candidate_id=str(values.get("candidate_id") or "") or None,
+            )
+            side_effects.append("candidate_review_session_metadata_updated")
+        elif operation_id == "candidate_review.update_session":
+            result = self.update_boba_candidate_review_session(
+                project_id,
+                str(values.get("candidate_review_session_id") or ""),
+                _dict(values.get("updates")),
+            )
+            side_effects.append("candidate_review_session_metadata_updated")
+        elif operation_id == "candidate_review.build_queue":
+            result = self.build_boba_candidate_review_queue(
+                project_id,
+                review_filter=str(values.get("review_filter") or "all_current"),
+                sort=str(values.get("sort") or "review_priority"),
+                offset=int(values.get("offset") or 0),
+                limit=int(values.get("limit") or 50),
+            )
+        elif operation_id == "candidate_review.inspect_queue":
+            result = self.inspect_boba_candidate_review_queue(project_id)
+        elif operation_id == "candidate_review.build_snapshot":
+            result = self.build_boba_candidate_snapshot(
+                project_id,
+                str(values.get("candidate_review_session_id") or ""),
+                str(values.get("candidate_id") or ""),
+            )
+            side_effects.append("candidate_review_snapshot_metadata_updated")
+        elif operation_id == "candidate_review.refresh_snapshot":
+            result = self.refresh_boba_candidate_snapshot(
+                project_id,
+                str(values.get("candidate_snapshot_id") or ""),
+            )
+            target_revalidated = True
+            side_effects.append("candidate_review_snapshot_metadata_updated")
+        elif operation_id == "candidate_review.inspect_candidate":
+            result = self.inspect_boba_candidate(
+                project_id, str(values.get("candidate_id") or "")
+            )
+        elif operation_id == "candidate_review.compare_candidates":
+            raw_ids = values.get("candidate_ids")
+            result = self.build_boba_candidate_comparison(
+                project_id,
+                [str(item) for item in raw_ids] if isinstance(raw_ids, list) else [],
+                comparison_type=str(values.get("comparison_type") or "side_by_side"),
+            )
+        elif operation_id == "candidate_review.calculate_overlaps":
+            result = self.calculate_boba_candidate_overlaps(
+                project_id, str(values.get("candidate_id") or "")
+            )
+        elif operation_id == "candidate_review.create_action":
+            result = self.create_boba_candidate_action_request(
+                project_id,
+                candidate_review_session_id=str(
+                    values.get("candidate_review_session_id") or ""
+                ),
+                candidate_snapshot_id=str(values.get("candidate_snapshot_id") or ""),
+                action_descriptor_id=str(values.get("action_descriptor_id") or ""),
+                decision_value=str(values.get("decision_value") or "") or None,
+                reason=str(values.get("reason") or ""),
+                confirmation_context_digest=str(
+                    values.get("confirmation_context_digest") or ""
+                ),
+                idempotency_key=str(values.get("idempotency_key") or ""),
+                confirmed=bool(values.get("confirmed")),
+            )
+            side_effects.append("candidate_review_action_request_recorded")
+        elif operation_id == "candidate_review.validate_action":
+            result = self.validate_boba_candidate_action_request(
+                project_id,
+                str(values.get("candidate_action_request_id") or ""),
+            )
+            target_revalidated = True
+        elif operation_id == "candidate_review.submit_action":
+            result = await self.submit_boba_candidate_action_to_owner(
+                project_id,
+                str(values.get("candidate_action_request_id") or ""),
+            )
+            target_revalidated = True
+            side_effects.append("candidate_review_action_receipt_recorded")
+        elif operation_id == "candidate_review.inspect_receipt":
+            result = self.inspect_boba_candidate_action_receipt(
+                project_id,
+                str(values.get("candidate_action_request_id") or ""),
+            )
+        elif operation_id == "candidate_review.inspect_timeline":
+            result = self.inspect_boba_candidate_review_timeline(
+                project_id, limit=int(values.get("limit") or 100)
+            )
+        elif operation_id == "candidate_review.inspect_events":
+            result = self.inspect_boba_candidate_review_events(
+                project_id,
+                after_sequence=int(values.get("after_sequence") or 0),
+                limit=int(values.get("limit") or 100),
+            )
+        elif operation_id == "candidate_review.reset":
+            result = self.reset_boba_candidate_review_metadata(
+                project_id,
+                str(values.get("candidate_review_session_id") or "") or None,
+            )
+            side_effects.append("candidate_review_active_metadata_reset")
         elif operation_id == "observer.generate":
             result = await self.generate_observer_report(
                 project_id,
