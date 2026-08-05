@@ -6528,6 +6528,14 @@ class BobaMemoryStore:
                 return
             self._atomic_write_compact(path, safe)
 
+    def load_boba_review_ui_registry(
+        self,
+        project_id: str,
+        registry_id: str,
+    ) -> dict[str, Any] | None:
+        raw = self._read(self.boba_review_ui_registry_path(project_id, registry_id), None)
+        return raw if isinstance(raw, dict) else None
+
     def save_boba_review_ui_session(
         self,
         project_id: str,

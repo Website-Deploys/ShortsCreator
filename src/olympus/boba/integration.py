@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -154,6 +155,11 @@ from olympus.boba.report_reader import (
 from olympus.boba.research_brain import (
     BobaResearchBrainSetV1,
     BobaResearchBrainV1,
+)
+from olympus.boba.review_ui import (
+    BobaReviewUiV1,
+    ReviewMode,
+    ReviewTargetType,
 )
 from olympus.boba.rights_permission_gate import (
     BobaRightsPermissionGateSetV1,
@@ -354,6 +360,24 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "final_decision_bus.load",
     "final_decision_bus.export",
     "final_decision_bus.reset",
+    "review_ui.inspect_registry",
+    "review_ui.create_session",
+    "review_ui.update_session",
+    "review_ui.build_queue",
+    "review_ui.inspect_queue",
+    "review_ui.build_snapshot",
+    "review_ui.refresh_snapshot",
+    "review_ui.inspect_target",
+    "review_ui.create_action",
+    "review_ui.validate_action",
+    "review_ui.submit_action",
+    "review_ui.inspect_receipt",
+    "review_ui.inspect_timeline",
+    "review_ui.inspect_events",
+    "review_ui.acknowledge_notification",
+    "review_ui.load",
+    "review_ui.export",
+    "review_ui.reset",
 )
 
 
@@ -450,6 +474,7 @@ class BobaIntegration:
             store,
             integration_layer_factory=self._integration_layer,
         )
+        self.review_ui = BobaReviewUiV1(store, self)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
 
@@ -1069,6 +1094,201 @@ class BobaIntegration:
     def reset_boba_final_decision_bus(self, project_id: str) -> dict[str, Any]:
         return self.final_decision_bus.reset_final_decision_bus_metadata(project_id)
 
+    # ------------------------------------------------------------------
+    # BOBA Review UI V1 - fixed presentation and routing helpers
+    # ------------------------------------------------------------------
+    def build_boba_review_ui_registry(self, project_id: str) -> dict[str, Any]:
+        return self.review_ui.build_review_ui_registry(project_id)
+
+    def inspect_boba_review_ui_registry(self, project_id: str) -> dict[str, Any]:
+        return self.review_ui.inspect_review_ui_registry(project_id)
+
+    def create_boba_review_session(
+        self,
+        project_id: str,
+        *,
+        reviewer_context_id: str,
+        review_mode: str = "project_overview",
+        target_type: str = "project",
+        target_id: str = "",
+        expires_in_seconds: int = 3_600,
+    ) -> dict[str, Any]:
+        session = self.review_ui.create_review_session(
+            project_id,
+            reviewer_context_id=reviewer_context_id,
+            review_mode=cast(ReviewMode, review_mode),
+            target_type=cast(ReviewTargetType, target_type),
+            target_id=target_id,
+            expires_in_seconds=expires_in_seconds,
+        )
+        return session.model_dump(mode="json")
+
+    def inspect_boba_review_session(
+        self,
+        project_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        return self.review_ui.get_review_session(project_id, session_id).model_dump(
+            mode="json"
+        )
+
+    def update_boba_review_preferences(
+        self,
+        project_id: str,
+        session_id: str,
+        updates: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        session = self.review_ui.update_review_preferences(project_id, session_id, updates)
+        return session.model_dump(mode="json")
+
+    def build_boba_review_queue(
+        self,
+        project_id: str,
+        *,
+        category: str | None = None,
+        include_historical: bool = False,
+        sort: str = "priority",
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self.review_ui.build_review_queue(
+            project_id,
+            category=category,
+            include_historical=include_historical,
+            sort=sort,
+            offset=offset,
+            limit=limit,
+        )
+
+    def inspect_boba_review_queue(
+        self,
+        project_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.review_ui.inspect_review_queue(project_id, **kwargs)
+
+    def build_boba_review_snapshot(
+        self,
+        project_id: str,
+        session_id: str,
+        review_target_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.review_ui.build_review_snapshot(project_id, session_id, review_target_id)
+
+    def refresh_boba_review_snapshot(
+        self,
+        project_id: str,
+        snapshot_id: str,
+    ) -> dict[str, Any]:
+        return self.review_ui.refresh_review_snapshot(project_id, snapshot_id)
+
+    def inspect_boba_review_target(
+        self,
+        project_id: str,
+        review_target_id: str,
+    ) -> dict[str, Any]:
+        return self.review_ui.inspect_review_target(project_id, review_target_id)
+
+    def create_boba_review_action_request(
+        self,
+        project_id: str,
+        *,
+        review_session_id: str,
+        review_snapshot_id: str,
+        action_descriptor_id: str,
+        decision_value: str | None = None,
+        reason: str = "",
+        confirmation_context_digest: str,
+        idempotency_key: str,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        request = self.review_ui.create_review_action_request(
+            project_id,
+            review_session_id=review_session_id,
+            review_snapshot_id=review_snapshot_id,
+            action_descriptor_id=action_descriptor_id,
+            decision_value=decision_value,
+            reason=reason,
+            confirmation_context_digest=confirmation_context_digest,
+            idempotency_key=idempotency_key,
+            confirmed=confirmed,
+        )
+        return request.model_dump(mode="json")
+
+    def validate_boba_review_action_request(
+        self,
+        project_id: str,
+        action_request_id: str,
+    ) -> dict[str, Any]:
+        return self.review_ui.validate_review_action_request(project_id, action_request_id)
+
+    async def submit_boba_review_action_to_owner(
+        self,
+        project_id: str,
+        action_request_id: str,
+    ) -> dict[str, Any]:
+        receipt = await self.review_ui.submit_review_action_to_owner(
+            project_id, action_request_id
+        )
+        return receipt.model_dump(mode="json")
+
+    def inspect_boba_review_action_receipt(
+        self,
+        project_id: str,
+        action_request_id: str,
+    ) -> dict[str, Any]:
+        return self.review_ui.inspect_review_action_receipt(project_id, action_request_id)
+
+    def inspect_boba_review_timeline(
+        self,
+        project_id: str,
+        *,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return self.review_ui.inspect_review_timeline(project_id, limit=limit)
+
+    def inspect_boba_review_events(
+        self,
+        project_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return self.review_ui.inspect_review_events(
+            project_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+    def acknowledge_boba_review_notification(
+        self,
+        project_id: str,
+        session_id: str,
+        notification_id: str,
+    ) -> dict[str, Any]:
+        session = self.review_ui.acknowledge_review_notification(
+            project_id, session_id, notification_id
+        )
+        return session.model_dump(mode="json")
+
+    def load_boba_review_ui(self, project_id: str) -> dict[str, Any]:
+        existing = self.review_ui.load_review_ui(project_id)
+        if existing is None:
+            existing = self.review_ui.build_review_ui(project_id)
+        if existing is None:
+            raise NotFoundError("BOBA Review UI is unavailable.")
+        return existing
+
+    def export_boba_review_ui(self, project_id: str) -> dict[str, Any]:
+        return self.review_ui.export_review_ui(project_id)
+
+    def reset_boba_review_ui_metadata(
+        self,
+        project_id: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.review_ui.reset_review_ui_metadata(project_id, session_id)
+
     async def _invoke_registered_boba_integration_operation(
         self,
         request: BobaIntegrationRequestV1,
@@ -1097,6 +1317,7 @@ class BobaIntegration:
             "report_reader.load": self.load_boba_report_reader,
             "artifact_inspector.load": self.load_boba_artifact_inspector,
             "final_decision_bus.load": self.load_boba_final_decision_bus,
+            "review_ui.load": self.load_boba_review_ui,
         }
         export_handlers = {
             "observer.export": self.export_observer_report,
@@ -1117,6 +1338,7 @@ class BobaIntegration:
             "report_reader.export": self.export_boba_report_reader,
             "artifact_inspector.export": self.export_boba_artifact_inspector,
             "final_decision_bus.export": self.export_boba_final_decision_bus,
+            "review_ui.export": self.export_boba_review_ui,
         }
         if operation_id in load_handlers:
             result = load_handlers[operation_id](project_id)
@@ -1516,6 +1738,111 @@ class BobaIntegration:
         elif operation_id == "final_decision_bus.reset":
             result = self.reset_boba_final_decision_bus(project_id)
             side_effects.append("final_decision_active_metadata_reset")
+        elif operation_id == "review_ui.inspect_registry":
+            result = self.inspect_boba_review_ui_registry(project_id)
+        elif operation_id == "review_ui.create_session":
+            result = self.create_boba_review_session(
+                project_id,
+                reviewer_context_id=str(values.get("reviewer_context_id") or ""),
+                review_mode=str(values.get("review_mode") or "project_overview"),
+                target_type=str(values.get("target_type") or "project"),
+                target_id=str(values.get("target_id") or ""),
+            )
+            side_effects.append("review_ui_session_metadata_updated")
+        elif operation_id == "review_ui.update_session":
+            result = self.update_boba_review_preferences(
+                project_id,
+                str(values.get("review_session_id") or ""),
+                _dict(values.get("updates")),
+            )
+            side_effects.append("review_ui_session_metadata_updated")
+        elif operation_id == "review_ui.build_queue":
+            result = self.build_boba_review_queue(
+                project_id,
+                category=str(values.get("category") or "") or None,
+                include_historical=bool(values.get("include_historical")),
+                sort=str(values.get("sort") or "priority"),
+                offset=int(values.get("offset") or 0),
+                limit=int(values.get("limit") or 50),
+            )
+        elif operation_id == "review_ui.inspect_queue":
+            result = self.inspect_boba_review_queue(project_id)
+        elif operation_id == "review_ui.build_snapshot":
+            result = self.build_boba_review_snapshot(
+                project_id,
+                str(values.get("review_session_id") or ""),
+                str(values.get("review_target_id") or "") or None,
+            )
+            side_effects.append("review_ui_snapshot_metadata_updated")
+        elif operation_id == "review_ui.refresh_snapshot":
+            result = self.refresh_boba_review_snapshot(
+                project_id,
+                str(values.get("review_snapshot_id") or ""),
+            )
+            target_revalidated = True
+            side_effects.append("review_ui_snapshot_metadata_updated")
+        elif operation_id == "review_ui.inspect_target":
+            result = self.inspect_boba_review_target(
+                project_id,
+                str(values.get("review_target_id") or ""),
+            )
+        elif operation_id == "review_ui.create_action":
+            result = self.create_boba_review_action_request(
+                project_id,
+                review_session_id=str(values.get("review_session_id") or ""),
+                review_snapshot_id=str(values.get("review_snapshot_id") or ""),
+                action_descriptor_id=str(values.get("action_descriptor_id") or ""),
+                decision_value=str(values.get("decision_value") or "") or None,
+                reason=str(values.get("reason") or ""),
+                confirmation_context_digest=str(
+                    values.get("confirmation_context_digest") or ""
+                ),
+                idempotency_key=str(values.get("idempotency_key") or ""),
+                confirmed=bool(values.get("confirmed")),
+            )
+            side_effects.append("review_ui_action_request_recorded")
+        elif operation_id == "review_ui.validate_action":
+            result = self.validate_boba_review_action_request(
+                project_id,
+                str(values.get("review_action_request_id") or ""),
+            )
+            target_revalidated = True
+        elif operation_id == "review_ui.submit_action":
+            result = await self.submit_boba_review_action_to_owner(
+                project_id,
+                str(values.get("review_action_request_id") or ""),
+            )
+            target_revalidated = True
+            side_effects.append("review_ui_action_receipt_recorded")
+        elif operation_id == "review_ui.inspect_receipt":
+            result = self.inspect_boba_review_action_receipt(
+                project_id,
+                str(values.get("review_action_request_id") or ""),
+            )
+        elif operation_id == "review_ui.inspect_timeline":
+            result = self.inspect_boba_review_timeline(
+                project_id,
+                limit=int(values.get("limit") or 100),
+            )
+        elif operation_id == "review_ui.inspect_events":
+            result = self.inspect_boba_review_events(
+                project_id,
+                after_sequence=int(values.get("after_sequence") or 0),
+                limit=int(values.get("limit") or 100),
+            )
+        elif operation_id == "review_ui.acknowledge_notification":
+            result = self.acknowledge_boba_review_notification(
+                project_id,
+                str(values.get("review_session_id") or ""),
+                str(values.get("notification_id") or ""),
+            )
+            side_effects.append("review_ui_session_metadata_updated")
+        elif operation_id == "review_ui.reset":
+            result = self.reset_boba_review_ui_metadata(
+                project_id,
+                str(values.get("review_session_id") or "") or None,
+            )
+            side_effects.append("review_ui_active_metadata_reset")
         elif operation_id == "observer.generate":
             result = await self.generate_observer_report(
                 project_id,

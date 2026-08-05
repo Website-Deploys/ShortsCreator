@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from olympus.api.dependencies import (
@@ -1060,6 +1063,12 @@ class IntegrationLayerRouteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     transaction_id: str = Field(min_length=1, max_length=180)
+
+
+def _sse_frame(event: str, payload: dict[str, Any]) -> bytes:
+    """Serialise one bounded server-sent event frame."""
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    return f"event: {event}\ndata: {body}\n\n".encode()
 
 
 def _require_enabled(settings: SettingsDep) -> None:
@@ -5362,3 +5371,419 @@ async def reset_final_decision_bus(
     _require_enabled(settings)
     await _require_project(project_id, boba)
     return boba.reset_boba_final_decision_bus(project_id)
+
+
+class ReviewUiSessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_context_id: str = Field(min_length=1, max_length=160)
+    review_mode: str = Field(default="project_overview", max_length=80)
+    target_type: str = Field(default="project", max_length=80)
+    target_id: str = Field(default="", max_length=180)
+    expires_in_seconds: int = Field(default=3_600, ge=60, le=28_800)
+
+
+class ReviewUiSessionUpdateRequest(BaseModel):
+    """Only bounded, UI-owned session metadata may be updated."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    selected_review_mode: str | None = Field(default=None, max_length=80)
+    selected_target_type: str | None = Field(default=None, max_length=80)
+    selected_target_id: str | None = Field(default=None, max_length=180)
+    selected_clip_id: str | None = Field(default=None, max_length=180)
+    selected_output_id: str | None = Field(default=None, max_length=180)
+    selected_attempt_id: str | None = Field(default=None, max_length=180)
+    comparison_target_ids: list[str] | None = Field(default=None, max_length=4)
+    active_filter_id: str | None = Field(default=None, max_length=80)
+    active_sort: str | None = Field(default=None, max_length=40)
+    active_tab: str | None = Field(default=None, max_length=40)
+    evidence_drawer_open: bool | None = None
+    event_drawer_open: bool | None = None
+    compact_mode: bool | None = None
+    read_queue_item_ids: list[str] | None = Field(default=None, max_length=256)
+
+
+class ReviewUiSnapshotCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_session_id: str = Field(min_length=1, max_length=180)
+
+
+class ReviewUiActionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_session_id: str = Field(min_length=1, max_length=180)
+    review_snapshot_id: str = Field(min_length=1, max_length=180)
+    action_descriptor_id: str = Field(min_length=1, max_length=180)
+    decision_value: str | None = Field(default=None, max_length=160)
+    reason: str = Field(default="", max_length=1_200)
+    confirmation_context_digest: str = Field(min_length=64, max_length=64)
+    idempotency_key: str = Field(min_length=8, max_length=180)
+    confirmed: bool = False
+
+
+class ReviewUiAcknowledgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_session_id: str = Field(min_length=1, max_length=180)
+
+
+@router.get("/projects/{project_id}/review-ui")
+async def get_review_ui(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.review_ui.build_review_ui(project_id)
+
+
+@router.get("/projects/{project_id}/review-ui/registry")
+async def get_review_ui_registry(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_review_ui_registry(project_id)
+
+
+@router.get("/projects/{project_id}/review-ui/views")
+async def get_review_ui_views(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    registry = await get_review_ui_registry(project_id, boba, settings)
+    return {
+        "schema_version": "boba_review_ui_views_v1",
+        "project_id": project_id,
+        "views": registry.get("views", []),
+    }
+
+
+@router.get("/projects/{project_id}/review-ui/actions")
+async def get_review_ui_actions(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    registry = await get_review_ui_registry(project_id, boba, settings)
+    return {
+        "schema_version": "boba_review_ui_actions_v1",
+        "project_id": project_id,
+        "actions": registry.get("actions", []),
+    }
+
+
+@router.post("/projects/{project_id}/review-ui/sessions")
+async def create_review_ui_session(
+    project_id: str,
+    body: ReviewUiSessionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_review_session(
+        project_id,
+        reviewer_context_id=body.reviewer_context_id,
+        review_mode=body.review_mode,
+        target_type=body.target_type,
+        target_id=body.target_id,
+        expires_in_seconds=body.expires_in_seconds,
+    )
+
+
+@router.get("/projects/{project_id}/review-ui/sessions/{session_id}")
+async def get_review_ui_session(
+    project_id: str,
+    session_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_review_session(project_id, session_id)
+
+
+@router.patch("/projects/{project_id}/review-ui/sessions/{session_id}")
+async def update_review_ui_session(
+    project_id: str,
+    session_id: str,
+    body: ReviewUiSessionUpdateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        raise ValidationError("No supported review session updates were supplied.")
+    return boba.update_boba_review_preferences(project_id, session_id, updates)
+
+
+@router.delete("/projects/{project_id}/review-ui/sessions/{session_id}")
+async def reset_review_ui_session(
+    project_id: str,
+    session_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_review_ui_metadata(project_id, session_id)
+
+
+@router.get("/projects/{project_id}/review-ui/queue")
+async def get_review_ui_queue(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    category: str | None = None,
+    include_historical: bool = False,
+    sort: str = "priority",
+    offset: int = 0,
+    limit: int = 50,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    if sort not in {"priority", "updated"}:
+        raise ValidationError("Unsupported review queue sort.")
+    return boba.build_boba_review_queue(
+        project_id,
+        category=category,
+        include_historical=include_historical,
+        sort=sort,
+        offset=max(0, offset),
+        limit=max(1, min(limit, 100)),
+    )
+
+
+@router.get("/projects/{project_id}/review-ui/targets/{target_id}")
+async def get_review_ui_target(
+    project_id: str,
+    target_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_review_target(project_id, target_id)
+
+
+@router.post("/projects/{project_id}/review-ui/targets/{target_id}/snapshot")
+async def create_review_ui_snapshot(
+    project_id: str,
+    target_id: str,
+    body: ReviewUiSnapshotCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_review_snapshot(project_id, body.review_session_id, target_id)
+
+
+@router.post("/projects/{project_id}/review-ui/snapshots/{snapshot_id}/refresh")
+async def refresh_review_ui_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.refresh_boba_review_snapshot(project_id, snapshot_id)
+
+
+@router.post("/projects/{project_id}/review-ui/actions")
+async def create_review_ui_action(
+    project_id: str,
+    body: ReviewUiActionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_review_action_request(
+        project_id,
+        review_session_id=body.review_session_id,
+        review_snapshot_id=body.review_snapshot_id,
+        action_descriptor_id=body.action_descriptor_id,
+        decision_value=body.decision_value,
+        reason=body.reason,
+        confirmation_context_digest=body.confirmation_context_digest,
+        idempotency_key=body.idempotency_key,
+        confirmed=body.confirmed,
+    )
+
+
+@router.post("/projects/{project_id}/review-ui/actions/{action_request_id}/validate")
+async def validate_review_ui_action(
+    project_id: str,
+    action_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validate_boba_review_action_request(project_id, action_request_id)
+
+
+@router.post("/projects/{project_id}/review-ui/actions/{action_request_id}/submit")
+async def submit_review_ui_action(
+    project_id: str,
+    action_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return await boba.submit_boba_review_action_to_owner(project_id, action_request_id)
+
+
+@router.get("/projects/{project_id}/review-ui/actions/{action_request_id}")
+async def get_review_ui_action(
+    project_id: str,
+    action_request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_review_action_receipt(project_id, action_request_id)
+
+
+@router.get("/projects/{project_id}/review-ui/timeline")
+async def get_review_ui_timeline(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_review_timeline(project_id, limit=max(1, min(limit, 100)))
+
+
+@router.get("/projects/{project_id}/review-ui/events")
+async def get_review_ui_events(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    after_sequence: int = 0,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_review_events(
+        project_id,
+        after_sequence=max(0, after_sequence),
+        limit=max(1, min(limit, 100)),
+    )
+
+
+@router.get("/projects/{project_id}/review-ui/events/stream")
+async def stream_review_ui_events(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    after_sequence: int = 0,
+    max_frames: int = 8,
+    poll_seconds: float = 1.0,
+) -> StreamingResponse:
+    """Bounded, project-scoped SSE over canonical events only.
+
+    The stream never invents progress.  Control frames are explicitly marked as
+    non-work so that an idle stream is never displayed as activity.
+    """
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    frames = max(1, min(max_frames, 60))
+    interval = max(0.1, min(poll_seconds, 5.0))
+
+    async def publish() -> AsyncIterator[bytes]:
+        cursor = max(0, after_sequence)
+        yield _sse_frame(
+            "review_stream_open",
+            {
+                "schema_version": "boba_review_ui_stream_v1",
+                "project_id": project_id,
+                "after_sequence": cursor,
+                "canonical": True,
+                "represents_work": False,
+            },
+        )
+        for _ in range(frames):
+            payload = boba.inspect_boba_review_events(
+                project_id,
+                after_sequence=cursor,
+                limit=50,
+            )
+            events = payload.get("events", [])
+            if events:
+                cursor = max(cursor, int(payload.get("latest_sequence") or cursor))
+                yield _sse_frame("review_canonical_events", payload)
+            else:
+                yield _sse_frame(
+                    "review_stream_idle",
+                    {
+                        "schema_version": "boba_review_ui_stream_v1",
+                        "project_id": project_id,
+                        "after_sequence": cursor,
+                        "canonical": True,
+                        "represents_work": False,
+                    },
+                )
+            await asyncio.sleep(interval)
+        yield _sse_frame(
+            "review_stream_complete",
+            {
+                "schema_version": "boba_review_ui_stream_v1",
+                "project_id": project_id,
+                "after_sequence": cursor,
+                "canonical": True,
+                "represents_work": False,
+                "reconnect_recommended": True,
+            },
+        )
+
+    return StreamingResponse(
+        publish(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post(
+    "/projects/{project_id}/review-ui/notifications/{notification_id}/acknowledge"
+)
+async def acknowledge_review_ui_notification(
+    project_id: str,
+    notification_id: str,
+    body: ReviewUiAcknowledgeRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.acknowledge_boba_review_notification(
+        project_id,
+        body.review_session_id,
+        notification_id,
+    )
+
+
+@router.get("/projects/{project_id}/review-ui/export")
+async def export_review_ui(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_review_ui(project_id)
