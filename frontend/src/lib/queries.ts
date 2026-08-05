@@ -10,6 +10,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiClientError } from "@/lib/apiClient";
 import type {
+  BobaReviewActionInput,
+  BobaReviewSessionInput,
+} from "@/lib/apiClient";
+import type {
   ActivityFeedResponse,
   Analysis,
   AssetsResponse,
@@ -172,6 +176,15 @@ export const queryKeys = {
     ["boba", "projects", id, "safety-gate"] as const,
   bobaIntegrationLayer: (id: string) =>
     ["boba", "projects", id, "integration-layer"] as const,
+  bobaReviewUi: (id: string) => ["boba", "projects", id, "review-ui"] as const,
+  bobaReviewQueue: (id: string, category: string, includeHistorical: boolean) =>
+    ["boba", "projects", id, "review-ui", "queue", category, includeHistorical] as const,
+  bobaReviewSnapshot: (id: string, targetId: string) =>
+    ["boba", "projects", id, "review-ui", "snapshot", targetId] as const,
+  bobaReviewEvents: (id: string) =>
+    ["boba", "projects", id, "review-ui", "events"] as const,
+  bobaReviewTimeline: (id: string) =>
+    ["boba", "projects", id, "review-ui", "timeline"] as const,
   bobaWorkflowController: (id: string) =>
     ["boba", "projects", id, "workflow-controller"] as const,
   bobaCandidates: ["boba", "candidates"] as const,
@@ -3091,4 +3104,153 @@ export function useMonitoringAdmin(enabled = true) {
     refetchInterval: enabled ? MONITORING_REFRESH_MS : false,
     queryFn: (): Promise<AdminSnapshot> => api.getMonitoringAdmin(),
   });
+}
+
+
+/* ---------------------------------------------------------------------------
+ * BOBA Review UI V1
+ *
+ * Every hook here is read-only except the explicitly confirmed action pipeline.
+ * Mutations never optimistically update authority: they invalidate the canonical
+ * queries so displayed state always comes from the owning module.
+ * ------------------------------------------------------------------------- */
+
+export function useBobaReviewUi(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaReviewUi(projectId),
+    queryFn: () => api.getBobaReviewUi(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaReviewQueue(
+  projectId: string,
+  options: { category?: string; includeHistorical?: boolean; sort?: string; enabled?: boolean } = {},
+) {
+  const category = options.category ?? "all";
+  const includeHistorical = options.includeHistorical ?? false;
+  return useQuery({
+    queryKey: queryKeys.bobaReviewQueue(projectId, category, includeHistorical),
+    queryFn: () =>
+      api.getBobaReviewQueue(projectId, {
+        category: category === "all" ? undefined : category,
+        include_historical: includeHistorical,
+        sort: options.sort ?? "priority",
+        limit: 100,
+      }),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
+    staleTime: 10_000,
+  });
+}
+
+export function useBobaReviewEvents(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaReviewEvents(projectId),
+    queryFn: () => api.getBobaReviewEvents(projectId, 0, 100),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 5_000,
+  });
+}
+
+export function useBobaReviewTimeline(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaReviewTimeline(projectId),
+    queryFn: () => api.getBobaReviewTimeline(projectId, 100),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 10_000,
+  });
+}
+
+export function useCreateBobaReviewSession(projectId: string) {
+  return useMutation({
+    mutationFn: (input: BobaReviewSessionInput) => api.createBobaReviewSession(projectId, input),
+  });
+}
+
+export function useUpdateBobaReviewSession(projectId: string) {
+  return useMutation({
+    mutationFn: ({
+      sessionId,
+      updates,
+    }: {
+      sessionId: string;
+      updates: Record<string, unknown>;
+    }) => api.updateBobaReviewSession(projectId, sessionId, updates),
+  });
+}
+
+export function useCreateBobaReviewSnapshot(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ targetId, sessionId }: { targetId: string; sessionId: string }) =>
+      api.createBobaReviewSnapshot(projectId, targetId, sessionId),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaReviewSnapshot(projectId, variables.targetId),
+      });
+    },
+  });
+}
+
+export function useRefreshBobaReviewSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: (snapshotId: string) => api.refreshBobaReviewSnapshot(projectId, snapshotId),
+  });
+}
+
+export function useCreateBobaReviewAction(projectId: string) {
+  return useMutation({
+    mutationFn: (input: BobaReviewActionInput) => api.createBobaReviewAction(projectId, input),
+  });
+}
+
+export function useValidateBobaReviewAction(projectId: string) {
+  return useMutation({
+    mutationFn: (actionRequestId: string) =>
+      api.validateBobaReviewAction(projectId, actionRequestId),
+  });
+}
+
+/**
+ * Submit a confirmed action to its canonical owner.
+ *
+ * On completion every affected canonical query is invalidated. Displayed
+ * authority is only ever re-read from the owning module - never assumed.
+ */
+export function useSubmitBobaReviewAction(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (actionRequestId: string) =>
+      api.submitBobaReviewAction(projectId, actionRequestId),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bobaReviewUi(projectId) });
+      void queryClient.invalidateQueries({
+        queryKey: ["boba", "projects", projectId, "review-ui"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaWorkflowController(projectId),
+      });
+    },
+  });
+}
+
+export function useAcknowledgeBobaReviewNotification(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      notificationId,
+      sessionId,
+    }: {
+      notificationId: string;
+      sessionId: string;
+    }) => api.acknowledgeBobaReviewNotification(projectId, notificationId, sessionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bobaReviewUi(projectId) });
+    },
+  });
+}
+
+export function useExportBobaReviewUi(projectId: string) {
+  return useMutation({ mutationFn: () => api.exportBobaReviewUi(projectId) });
 }

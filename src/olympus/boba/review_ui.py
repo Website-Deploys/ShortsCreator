@@ -1481,7 +1481,29 @@ class BobaReviewUiV1:
                 section.model_dump(mode="json")
                 for section in self._sections(snapshot, cards)
             ],
+            "action_confirmations": self._action_confirmations(snapshot, target),
         }
+
+    def _action_confirmations(
+        self,
+        snapshot: BobaReviewSnapshotV1,
+        target: BobaReviewTargetV1,
+    ) -> dict[str, str]:
+        """Return the confirmation token a reviewer must echo back per action.
+
+        The token binds the exact snapshot, action and target together, so a
+        confirmation cannot be replayed against different canonical state.
+        """
+        registry = build_fixed_review_action_registry()
+        confirmations: dict[str, str] = {}
+        for action_id in snapshot.available_action_descriptor_ids:
+            descriptor = registry.get(action_id)
+            if descriptor is None:
+                continue
+            confirmations[action_id] = self.build_confirmation_digest(
+                snapshot, descriptor, target
+            )
+        return confirmations
 
     def refresh_review_snapshot(self, project_id: str, snapshot_id: str) -> dict[str, Any]:
         snapshot = self._snapshot(project_id, snapshot_id)
