@@ -12,6 +12,7 @@ import { api, ApiClientError } from "@/lib/apiClient";
 import type {
   BobaCandidateActionInput,
   BobaClipBriefActionInput,
+  BobaErrorDoctorActionInput,
   BobaReviewActionInput,
   BobaReviewSessionInput,
 } from "@/lib/apiClient";
@@ -189,6 +190,16 @@ export const queryKeys = {
     ["boba", "projects", id, "candidate-review", "candidate", candidateId] as const,
   bobaCandidateTranscript: (id: string, candidateId: string, context: number) =>
     ["boba", "projects", id, "candidate-review", "transcript", candidateId, context] as const,
+  bobaErrorDoctorReview: (id: string) =>
+    ["boba", "projects", id, "error-doctor-review"] as const,
+  bobaErrorDoctorRegistry: (id: string) =>
+    ["boba", "projects", id, "error-doctor-review", "registry"] as const,
+  bobaIncidentQueue: (id: string, filter: string, sort: string) =>
+    ["boba", "projects", id, "error-doctor-review", "queue", filter, sort] as const,
+  bobaIncidentDetail: (id: string, incidentId: string) =>
+    ["boba", "projects", id, "error-doctor-review", "incident", incidentId] as const,
+  bobaIncidentTimeline: (id: string) =>
+    ["boba", "projects", id, "error-doctor-review", "timeline"] as const,
   bobaClipBriefReview: (id: string) =>
     ["boba", "projects", id, "clip-brief-review"] as const,
   bobaClipBriefRegistry: (id: string) =>
@@ -3577,4 +3588,130 @@ export function useSubmitBobaClipBriefAction(projectId: string) {
 
 export function useExportBobaClipBriefReview(projectId: string) {
   return useMutation({ mutationFn: () => api.exportBobaClipBriefReview(projectId) });
+}
+
+/* ------------------------------------------------------------------ */
+/* BOBA Error Doctor Panel V1                                          */
+/* ------------------------------------------------------------------ */
+
+export function useBobaErrorDoctorReview(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaErrorDoctorReview(projectId),
+    queryFn: () => api.getBobaErrorDoctorReview(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaErrorDoctorRegistry(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaErrorDoctorRegistry(projectId),
+    queryFn: () => api.getBobaErrorDoctorReviewRegistry(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useBobaIncidentQueue(
+  projectId: string,
+  options: { filter?: string; sort?: string; enabled?: boolean } = {},
+) {
+  const filter = options.filter ?? "all_current";
+  const sort = options.sort ?? "review_priority";
+  return useQuery({
+    queryKey: queryKeys.bobaIncidentQueue(projectId, filter, sort),
+    queryFn: () =>
+      api.getBobaIncidentQueue(projectId, { review_filter: filter, sort, limit: 50 }),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
+    staleTime: 10_000,
+  });
+}
+
+export function useBobaIncident(projectId: string, incidentId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.bobaIncidentDetail(projectId, incidentId ?? "none"),
+    queryFn: () => api.getBobaIncident(projectId, incidentId!),
+    enabled: Boolean(projectId) && Boolean(incidentId),
+    staleTime: 15_000,
+  });
+}
+
+export function useCreateBobaErrorDoctorReviewSession(projectId: string) {
+  return useMutation({
+    mutationFn: (input: { reviewer_context_id: string }) =>
+      api.createBobaErrorDoctorReviewSession(projectId, input),
+  });
+}
+
+export function useUpdateBobaErrorDoctorReviewSession(projectId: string) {
+  return useMutation({
+    mutationFn: ({
+      sessionId,
+      updates,
+    }: {
+      sessionId: string;
+      updates: Record<string, unknown>;
+    }) => api.updateBobaErrorDoctorReviewSession(projectId, sessionId, updates),
+  });
+}
+
+export function useCreateBobaIncidentSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: ({ incidentId, sessionId }: { incidentId: string; sessionId: string }) =>
+      api.createBobaIncidentSnapshot(projectId, incidentId, sessionId),
+  });
+}
+
+export function useRefreshBobaIncidentSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: (snapshotId: string) =>
+      api.refreshBobaIncidentSnapshot(projectId, snapshotId),
+  });
+}
+
+export function useCompareBobaIncidents(projectId: string) {
+  return useMutation({
+    mutationFn: (incidentIds: string[]) =>
+      api.compareBobaIncidents(projectId, incidentIds),
+  });
+}
+
+export function useCreateBobaErrorDoctorAction(projectId: string) {
+  return useMutation({
+    mutationFn: (input: BobaErrorDoctorActionInput) =>
+      api.createBobaErrorDoctorAction(projectId, input),
+  });
+}
+
+export function useValidateBobaErrorDoctorAction(projectId: string) {
+  return useMutation({
+    mutationFn: (requestId: string) =>
+      api.validateBobaErrorDoctorAction(projectId, requestId),
+  });
+}
+
+/**
+ * Submit a confirmed incident action to its canonical owner.
+ *
+ * Every affected canonical query is invalidated on completion. Incident state is
+ * only ever re-read from the owning module, never assumed from the response.
+ */
+export function useSubmitBobaErrorDoctorAction(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (requestId: string) =>
+      api.submitBobaErrorDoctorAction(projectId, requestId),
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["boba", "projects", projectId, "error-doctor-review"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaReviewUi(projectId),
+      });
+    },
+  });
+}
+
+export function useExportBobaErrorDoctorReview(projectId: string) {
+  return useMutation({ mutationFn: () => api.exportBobaErrorDoctorReview(projectId) });
 }

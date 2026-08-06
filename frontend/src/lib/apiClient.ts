@@ -18,6 +18,19 @@ import type {
   CandidateSnapshot,
 } from "@/lib/candidateReview";
 import type {
+  DiagnosisProjection,
+  ErrorConflict,
+  ErrorDoctorActionDescriptor,
+  ErrorDoctorActionReceipt,
+  ErrorEvidenceCard,
+  IncidentQueueItem,
+  IncidentReference,
+  IncidentSnapshot,
+  RecoveryAttemptProjection,
+  RepairPlanProjection,
+  RootCauseProjection,
+} from "@/lib/errorDoctorReview";
+import type {
   ClipBriefActionDescriptor,
   ClipBriefActionReceipt,
   ClipBriefComparison,
@@ -1965,6 +1978,155 @@ export const api = {
       `/boba/projects/${projectId}/clip-brief-review/export`,
     ),
 
+  /* BOBA Error Doctor Panel V1 - read-only incident projection and safe routing. */
+  getBobaErrorDoctorReview: (projectId: string) =>
+    request<Record<string, unknown>>(`/boba/projects/${projectId}/error-doctor-review`),
+  getBobaErrorDoctorReviewRegistry: (projectId: string) =>
+    request<BobaErrorDoctorRegistryResponse>(
+      `/boba/projects/${projectId}/error-doctor-review/registry`,
+    ),
+  createBobaErrorDoctorReviewSession: (
+    projectId: string,
+    input: { reviewer_context_id: string; selected_incident_id?: string | null },
+  ) =>
+    request<BobaErrorDoctorReviewSession>(
+      `/boba/projects/${projectId}/error-doctor-review/sessions`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  getBobaErrorDoctorReviewSession: (projectId: string, sessionId: string) =>
+    request<BobaErrorDoctorReviewSession>(
+      `/boba/projects/${projectId}/error-doctor-review/sessions/${sessionId}`,
+    ),
+  updateBobaErrorDoctorReviewSession: (
+    projectId: string,
+    sessionId: string,
+    updates: Record<string, unknown>,
+  ) =>
+    request<BobaErrorDoctorReviewSession>(
+      `/boba/projects/${projectId}/error-doctor-review/sessions/${sessionId}`,
+      { method: "PATCH", body: JSON.stringify(updates) },
+    ),
+  deleteBobaErrorDoctorReviewSession: (projectId: string, sessionId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/sessions/${sessionId}`,
+      { method: "DELETE" },
+    ),
+  getBobaIncidentQueue: (
+    projectId: string,
+    params: { review_filter?: string; sort?: string; offset?: number; limit?: number } = {},
+  ) =>
+    request<BobaIncidentQueueResponse>(
+      `/boba/projects/${projectId}/error-doctor-review/queue${_qs({
+        review_filter: params.review_filter,
+        sort: params.sort,
+        offset: params.offset === undefined ? undefined : String(params.offset),
+        limit: params.limit === undefined ? undefined : String(params.limit),
+      })}`,
+    ),
+  getBobaIncident: (projectId: string, incidentId: string) =>
+    request<BobaIncidentDetailResponse>(
+      `/boba/projects/${projectId}/error-doctor-review/incidents/${incidentId}`,
+    ),
+  createBobaIncidentSnapshot: (
+    projectId: string,
+    incidentId: string,
+    sessionId: string,
+  ) =>
+    request<BobaIncidentSnapshotResponse>(
+      `/boba/projects/${projectId}/error-doctor-review/incidents/${incidentId}/snapshot`,
+      {
+        method: "POST",
+        body: JSON.stringify({ error_doctor_review_session_id: sessionId }),
+      },
+    ),
+  refreshBobaIncidentSnapshot: (projectId: string, snapshotId: string) =>
+    request<BobaIncidentSnapshotResponse>(
+      `/boba/projects/${projectId}/error-doctor-review/snapshots/${snapshotId}/refresh`,
+      { method: "POST" },
+    ),
+  getBobaIncidentDiagnosis: (projectId: string, incidentId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/incidents/${incidentId}/diagnosis`,
+    ),
+  getBobaIncidentRootCause: (projectId: string, incidentId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/incidents/${incidentId}/root-cause`,
+    ),
+  getBobaIncidentRepairPlan: (projectId: string, incidentId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/incidents/${incidentId}/repair-plan`,
+    ),
+  getBobaIncidentRecoveryHistory: (projectId: string, incidentId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/incidents/${incidentId}/recovery-history`,
+    ),
+  getBobaIncidentValidationEvidence: (projectId: string, incidentId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/incidents/${incidentId}/validation`,
+    ),
+  getBobaIncidentArtifactEvidence: (projectId: string, incidentId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/incidents/${incidentId}/artifacts`,
+    ),
+  getBobaIncidentConflicts: (projectId: string, incidentId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/incidents/${incidentId}/conflicts`,
+    ),
+  compareBobaIncidents: (
+    projectId: string,
+    incidentIds: string[],
+    comparisonType = "side_by_side",
+  ) =>
+    request<{ comparison: Record<string, unknown> }>(
+      `/boba/projects/${projectId}/error-doctor-review/compare`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          incident_ids: incidentIds,
+          comparison_type: comparisonType,
+        }),
+      },
+    ),
+  createBobaErrorDoctorAction: (
+    projectId: string,
+    input: BobaErrorDoctorActionInput,
+  ) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/actions`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  validateBobaErrorDoctorAction: (projectId: string, requestId: string) =>
+    request<{ valid: boolean; code: string; message: string }>(
+      `/boba/projects/${projectId}/error-doctor-review/actions/${requestId}/validate`,
+      { method: "POST" },
+    ),
+  submitBobaErrorDoctorAction: (projectId: string, requestId: string) =>
+    request<ErrorDoctorActionReceipt>(
+      `/boba/projects/${projectId}/error-doctor-review/actions/${requestId}/submit`,
+      { method: "POST" },
+    ),
+  getBobaErrorDoctorActionReceipt: (projectId: string, requestId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/actions/${requestId}`,
+    ),
+  getBobaIncidentTimeline: (projectId: string, limit = 100) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/timeline${_qs({
+        limit: String(limit),
+      })}`,
+    ),
+  getBobaIncidentEvents: (projectId: string, afterSequence = 0, limit = 100) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/events${_qs({
+        after_sequence: String(afterSequence),
+        limit: String(limit),
+      })}`,
+    ),
+  exportBobaErrorDoctorReview: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/error-doctor-review/export`,
+    ),
+
   /* BOBA Review UI V1 - presentation and canonical action routing only. */
   getBobaReviewUi: (projectId: string) =>
     request<Record<string, unknown>>(`/boba/projects/${projectId}/review-ui`),
@@ -2351,6 +2513,95 @@ export interface BobaClipBriefConflictsResponse {
 export interface BobaClipBriefActionInput {
   clip_brief_review_session_id: string;
   brief_snapshot_id: string;
+  action_descriptor_id: string;
+  decision_value?: string | null;
+  reason?: string;
+  confirmation_context_digest: string;
+  idempotency_key: string;
+  confirmed: boolean;
+}
+
+export interface BobaErrorDoctorReviewSession {
+  error_doctor_review_session_id: string;
+  project_id: string;
+  reviewer_context_id: string;
+  selected_incident_id: string | null;
+  comparison_incident_ids: string[];
+  active_filter: string;
+  active_sort: string;
+  active_section_id: string;
+  show_recovered: boolean;
+  show_resolved: boolean;
+  show_historical: boolean;
+  show_technical_details: boolean;
+  show_bounded_logs: boolean;
+  show_repair_history: boolean;
+  evidence_drawer_open: boolean;
+  timeline_drawer_open: boolean;
+  local_annotations: {
+    annotation_id: string;
+    incident_id: string;
+    section_id: string;
+    text: string;
+    notice: string;
+  }[];
+  read_incident_ids: string[];
+  expires_at: string;
+  limitations: string[];
+}
+
+export interface BobaErrorDoctorRegistryResponse {
+  registry_snapshot: Record<string, unknown>;
+  sources: Record<string, unknown>[];
+  sections: Record<string, unknown>[];
+  actions: ErrorDoctorActionDescriptor[];
+  priority_tiers: { priority: number; reason: string }[];
+  source_severity_order: string[];
+  supported_incident_schema_id: string;
+}
+
+export interface BobaIncidentQueueResponse {
+  schema_version: string;
+  project_id: string;
+  total: number;
+  offset: number;
+  limit: number;
+  active_filter: string;
+  active_sort: string;
+  priority_tiers: { priority: number; reason: string }[];
+  items: IncidentQueueItem[];
+}
+
+export interface BobaIncidentSnapshotResponse {
+  snapshot: IncidentSnapshot;
+  incident_reference: IncidentReference;
+  diagnosis_projections: DiagnosisProjection[];
+  root_cause_projections: RootCauseProjection[];
+  evidence_cards: ErrorEvidenceCard[];
+  repair_plan_projections: RepairPlanProjection[];
+  recovery_attempt_projections: RecoveryAttemptProjection[];
+  validation_evidence: Record<string, unknown>;
+  artifact_evidence: Record<string, unknown>;
+  conflict_records: ErrorConflict[];
+  action_confirmations: Record<string, string>;
+}
+
+export interface BobaIncidentDetailResponse {
+  schema_version: string;
+  project_id: string;
+  incident_id: string;
+  incident_reference: IncidentReference;
+  diagnosis_projections: DiagnosisProjection[];
+  root_cause_projections: RootCauseProjection[];
+  evidence_cards: ErrorEvidenceCard[];
+  repair_plan_projections: RepairPlanProjection[];
+  recovery_attempt_projections: RecoveryAttemptProjection[];
+  conflict_records: ErrorConflict[];
+}
+
+export interface BobaErrorDoctorActionInput {
+  error_doctor_review_session_id: string;
+  incident_snapshot_id: string;
   action_descriptor_id: string;
   decision_value?: string | null;
   reason?: string;
