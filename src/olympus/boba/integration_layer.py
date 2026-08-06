@@ -1132,6 +1132,23 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
         "path": "olympus.boba.final_decision_bus",
         "deps": ["integration_layer", "safety_gate", "workflow_controller"],
     },
+    "error_doctor_review": {
+        "name": "Error Doctor Panel",
+        "path": "olympus.boba.error_doctor_review",
+        "deps": [
+            "integration_layer",
+            "safety_gate",
+            "review_ui",
+            "observer",
+            "error_doctor",
+            "root_cause_analyzer",
+            "repair_planner",
+            "tool_recovery_brain",
+            "validator_runner",
+            "artifact_inspector",
+            "workflow_controller",
+        ],
+    },
     "clip_brief_review": {
         "name": "Clip Brief Panel",
         "path": "olympus.boba.clip_brief_review",
@@ -1618,6 +1635,82 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
             ),
             _operation(
                 "candidate_review", "inspect_events", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "error_doctor_review", "inspect_registry", "read_only", side_effect_class="none"
+            ),
+            _operation("error_doctor_review", "create_session", "metadata_reset"),
+            _operation("error_doctor_review", "update_session", "metadata_reset"),
+            _operation(
+                "error_doctor_review", "build_queue", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "error_doctor_review", "inspect_queue", "read_only", side_effect_class="none"
+            ),
+            _operation("error_doctor_review", "build_snapshot", "read_only"),
+            _operation("error_doctor_review", "refresh_snapshot", "read_only"),
+            _operation(
+                "error_doctor_review", "inspect_incident", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "error_doctor_review", "inspect_diagnosis", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "error_doctor_review", "inspect_root_cause", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "error_doctor_review",
+                "inspect_repair_plan",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "error_doctor_review",
+                "inspect_recovery_history",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "error_doctor_review",
+                "inspect_validation_evidence",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "error_doctor_review",
+                "inspect_artifact_evidence",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "error_doctor_review", "detect_conflicts", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "error_doctor_review",
+                "compare_incidents",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation("error_doctor_review", "create_action", "read_only"),
+            _operation(
+                "error_doctor_review", "validate_action", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "error_doctor_review",
+                "submit_action",
+                "read_only",
+                approval=True,
+                approval_type="exact_error_doctor_review_action",
+                safety=True,
+            ),
+            _operation(
+                "error_doctor_review", "inspect_receipt", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "error_doctor_review", "inspect_timeline", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "error_doctor_review", "inspect_events", "read_only", side_effect_class="none"
             ),
             _operation(
                 "clip_brief_review", "inspect_registry", "read_only", side_effect_class="none"

@@ -6458,3 +6458,399 @@ async def export_clip_brief_review(
     _require_enabled(settings)
     await _require_project(project_id, boba)
     return boba.export_boba_clip_brief_review(project_id)
+
+
+# ----------------------------------------------------------------------
+# BOBA Error Doctor Panel V1
+# ----------------------------------------------------------------------
+class ErrorDoctorReviewSessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_context_id: str = Field(min_length=1, max_length=160)
+    selected_incident_id: str | None = Field(default=None, max_length=180)
+
+
+class ErrorDoctorReviewSessionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selected_incident_id: str | None = Field(default=None, max_length=180)
+    comparison_incident_ids: list[str] | None = Field(default=None, max_length=4)
+    active_filter: str | None = Field(default=None, max_length=80)
+    active_sort: str | None = Field(default=None, max_length=80)
+    active_section_id: str | None = Field(default=None, max_length=80)
+    show_recovered: bool | None = None
+    show_resolved: bool | None = None
+    show_historical: bool | None = None
+    show_technical_details: bool | None = None
+    show_bounded_logs: bool | None = None
+    show_repair_history: bool | None = None
+    evidence_drawer_open: bool | None = None
+    timeline_drawer_open: bool | None = None
+    local_annotations: list[dict[str, str]] | None = Field(default=None, max_length=32)
+    read_incident_ids: list[str] | None = Field(default=None, max_length=256)
+
+
+class IncidentSnapshotCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    error_doctor_review_session_id: str = Field(min_length=1, max_length=180)
+
+
+class IncidentComparisonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    incident_ids: list[str] = Field(min_length=2, max_length=4)
+    comparison_type: str = Field(default="side_by_side", max_length=80)
+
+
+class ErrorDoctorActionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    error_doctor_review_session_id: str = Field(min_length=1, max_length=180)
+    incident_snapshot_id: str = Field(min_length=1, max_length=180)
+    action_descriptor_id: str = Field(min_length=1, max_length=180)
+    decision_value: str | None = Field(default=None, max_length=160)
+    reason: str = Field(default="", max_length=500)
+    confirmation_context_digest: str = Field(min_length=64, max_length=64)
+    idempotency_key: str = Field(min_length=8, max_length=180)
+    confirmed: bool = False
+
+
+@router.get("/projects/{project_id}/error-doctor-review")
+async def get_error_doctor_review(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.error_doctor_review.build_error_doctor_review(project_id)
+
+
+@router.get("/projects/{project_id}/error-doctor-review/registry")
+async def get_error_doctor_review_registry(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_error_doctor_review_registry(project_id)
+
+
+@router.post("/projects/{project_id}/error-doctor-review/sessions")
+async def create_error_doctor_review_session(
+    project_id: str,
+    body: ErrorDoctorReviewSessionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_error_doctor_review_session(
+        project_id,
+        reviewer_context_id=body.reviewer_context_id,
+        selected_incident_id=body.selected_incident_id,
+    )
+
+
+@router.get("/projects/{project_id}/error-doctor-review/sessions/{session_id}")
+async def get_error_doctor_review_session(
+    project_id: str,
+    session_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_error_doctor_review_session(project_id, session_id)
+
+
+@router.patch("/projects/{project_id}/error-doctor-review/sessions/{session_id}")
+async def update_error_doctor_review_session(
+    project_id: str,
+    session_id: str,
+    body: ErrorDoctorReviewSessionUpdateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    updates = body.model_dump(exclude_none=True)
+    return boba.update_boba_error_doctor_review_session(project_id, session_id, updates)
+
+
+@router.delete("/projects/{project_id}/error-doctor-review/sessions/{session_id}")
+async def reset_error_doctor_review_session(
+    project_id: str,
+    session_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_error_doctor_review_metadata(project_id, session_id)
+
+
+@router.get("/projects/{project_id}/error-doctor-review/queue")
+async def get_incident_queue(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    review_filter: str = "all_current",
+    sort: str = "review_priority",
+    offset: int = 0,
+    limit: int = 50,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_incident_queue(
+        project_id, review_filter=review_filter, sort=sort, offset=offset, limit=limit
+    )
+
+
+@router.get("/projects/{project_id}/error-doctor-review/incidents/{incident_id}")
+async def get_incident(
+    project_id: str,
+    incident_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_incident(project_id, incident_id)
+
+
+@router.post("/projects/{project_id}/error-doctor-review/incidents/{incident_id}/snapshot")
+async def create_incident_snapshot(
+    project_id: str,
+    incident_id: str,
+    body: IncidentSnapshotCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_incident_snapshot(
+        project_id, body.error_doctor_review_session_id, incident_id
+    )
+
+
+@router.post("/projects/{project_id}/error-doctor-review/snapshots/{snapshot_id}/refresh")
+async def refresh_incident_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.refresh_boba_incident_snapshot(project_id, snapshot_id)
+
+
+@router.get(
+    "/projects/{project_id}/error-doctor-review/incidents/{incident_id}/diagnosis"
+)
+async def get_incident_diagnosis(
+    project_id: str,
+    incident_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_incident_diagnosis(project_id, incident_id)
+
+
+@router.get(
+    "/projects/{project_id}/error-doctor-review/incidents/{incident_id}/root-cause"
+)
+async def get_incident_root_cause(
+    project_id: str,
+    incident_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_incident_root_cause(project_id, incident_id)
+
+
+@router.get(
+    "/projects/{project_id}/error-doctor-review/incidents/{incident_id}/repair-plan"
+)
+async def get_incident_repair_plan(
+    project_id: str,
+    incident_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_incident_repair_plan(project_id, incident_id)
+
+
+@router.get(
+    "/projects/{project_id}/error-doctor-review/incidents/{incident_id}/recovery-history"
+)
+async def get_incident_recovery_history(
+    project_id: str,
+    incident_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_incident_recovery_history(project_id, incident_id)
+
+
+@router.get(
+    "/projects/{project_id}/error-doctor-review/incidents/{incident_id}/validation"
+)
+async def get_incident_validation_evidence(
+    project_id: str,
+    incident_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_incident_validation_evidence(project_id, incident_id)
+
+
+@router.get(
+    "/projects/{project_id}/error-doctor-review/incidents/{incident_id}/artifacts"
+)
+async def get_incident_artifact_evidence(
+    project_id: str,
+    incident_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_incident_artifact_evidence(project_id, incident_id)
+
+
+@router.get(
+    "/projects/{project_id}/error-doctor-review/incidents/{incident_id}/conflicts"
+)
+async def get_incident_conflicts(
+    project_id: str,
+    incident_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.detect_boba_incident_conflicts(project_id, incident_id)
+
+
+@router.post("/projects/{project_id}/error-doctor-review/compare")
+async def compare_incidents(
+    project_id: str,
+    body: IncidentComparisonRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.compare_boba_incidents(
+        project_id, list(body.incident_ids), comparison_type=body.comparison_type
+    )
+
+
+@router.post("/projects/{project_id}/error-doctor-review/actions")
+async def create_error_doctor_action(
+    project_id: str,
+    body: ErrorDoctorActionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_error_doctor_action_request(
+        project_id,
+        error_doctor_review_session_id=body.error_doctor_review_session_id,
+        incident_snapshot_id=body.incident_snapshot_id,
+        action_descriptor_id=body.action_descriptor_id,
+        decision_value=body.decision_value,
+        reason=body.reason,
+        confirmation_context_digest=body.confirmation_context_digest,
+        idempotency_key=body.idempotency_key,
+        confirmed=body.confirmed,
+    )
+
+
+@router.post("/projects/{project_id}/error-doctor-review/actions/{request_id}/validate")
+async def validate_error_doctor_action(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validate_boba_error_doctor_action_request(project_id, request_id)
+
+
+@router.post("/projects/{project_id}/error-doctor-review/actions/{request_id}/submit")
+async def submit_error_doctor_action(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return await boba.submit_boba_error_doctor_action_to_owner(project_id, request_id)
+
+
+@router.get("/projects/{project_id}/error-doctor-review/actions/{request_id}")
+async def get_error_doctor_action_receipt(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_error_doctor_action_receipt(project_id, request_id)
+
+
+@router.get("/projects/{project_id}/error-doctor-review/timeline")
+async def get_incident_timeline(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_incident_timeline(project_id, limit=limit)
+
+
+@router.get("/projects/{project_id}/error-doctor-review/events")
+async def get_incident_events(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    after_sequence: int = 0,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_incident_events(
+        project_id, after_sequence=after_sequence, limit=limit
+    )
+
+
+@router.get("/projects/{project_id}/error-doctor-review/export")
+async def export_error_doctor_review(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_error_doctor_review(project_id)

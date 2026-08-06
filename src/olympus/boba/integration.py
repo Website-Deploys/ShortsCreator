@@ -86,6 +86,7 @@ from olympus.boba.editorial_decision import (
 )
 from olympus.boba.editorial_policy import create_editorial_policy
 from olympus.boba.error_doctor import BobaErrorDoctorSetV1, BobaErrorDoctorV1
+from olympus.boba.error_doctor_review import BobaErrorDoctorReviewV1
 from olympus.boba.experimentation import (
     BobaExperimentationSetV1,
     BobaExperimentationSystemV1,
@@ -399,6 +400,31 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "candidate_review.load",
     "candidate_review.export",
     "candidate_review.reset",
+    "error_doctor_review.inspect_registry",
+    "error_doctor_review.create_session",
+    "error_doctor_review.update_session",
+    "error_doctor_review.build_queue",
+    "error_doctor_review.inspect_queue",
+    "error_doctor_review.build_snapshot",
+    "error_doctor_review.refresh_snapshot",
+    "error_doctor_review.inspect_incident",
+    "error_doctor_review.inspect_diagnosis",
+    "error_doctor_review.inspect_root_cause",
+    "error_doctor_review.inspect_repair_plan",
+    "error_doctor_review.inspect_recovery_history",
+    "error_doctor_review.inspect_validation_evidence",
+    "error_doctor_review.inspect_artifact_evidence",
+    "error_doctor_review.detect_conflicts",
+    "error_doctor_review.compare_incidents",
+    "error_doctor_review.create_action",
+    "error_doctor_review.validate_action",
+    "error_doctor_review.submit_action",
+    "error_doctor_review.inspect_receipt",
+    "error_doctor_review.inspect_timeline",
+    "error_doctor_review.inspect_events",
+    "error_doctor_review.load",
+    "error_doctor_review.export",
+    "error_doctor_review.reset",
     "clip_brief_review.inspect_registry",
     "clip_brief_review.create_session",
     "clip_brief_review.update_session",
@@ -519,6 +545,7 @@ class BobaIntegration:
         self.review_ui = BobaReviewUiV1(store, self)
         self.candidate_review = BobaCandidateReviewV1(store, self)
         self.clip_brief_review = BobaClipBriefReviewV1(store, self)
+        self.error_doctor_review = BobaErrorDoctorReviewV1(store, self)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
 
@@ -1503,6 +1530,199 @@ class BobaIntegration:
         self, project_id: str, session_id: str | None = None
     ) -> dict[str, Any]:
         return self.candidate_review.reset_candidate_review_metadata(project_id, session_id)
+
+
+    # ------------------------------------------------------------------
+    # BOBA Error Doctor Panel V1
+    # ------------------------------------------------------------------
+    def build_boba_error_doctor_review_registry(self, project_id: str) -> dict[str, Any]:
+        return self.error_doctor_review.build_error_doctor_review_registry(project_id)
+
+    def inspect_boba_error_doctor_review_registry(self, project_id: str) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_error_doctor_review_registry(project_id)
+
+    def create_boba_error_doctor_review_session(
+        self,
+        project_id: str,
+        *,
+        reviewer_context_id: str,
+        selected_incident_id: str | None = None,
+        expires_in_seconds: int = 3_600,
+    ) -> dict[str, Any]:
+        session = self.error_doctor_review.create_error_doctor_review_session(
+            project_id,
+            reviewer_context_id=reviewer_context_id,
+            selected_incident_id=selected_incident_id,
+            expires_in_seconds=expires_in_seconds,
+        )
+        return session.model_dump(mode="json")
+
+    def inspect_boba_error_doctor_review_session(
+        self, project_id: str, session_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.get_error_doctor_review_session(
+            project_id, session_id
+        ).model_dump(mode="json")
+
+    def update_boba_error_doctor_review_session(
+        self, project_id: str, session_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.update_error_doctor_review_session(
+            project_id, session_id, updates
+        ).model_dump(mode="json")
+
+    def build_boba_incident_queue(
+        self,
+        project_id: str,
+        *,
+        review_filter: str = "all_current",
+        sort: str = "review_priority",
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.build_incident_queue(
+            project_id, review_filter=review_filter, sort=sort, offset=offset, limit=limit
+        )
+
+    def inspect_boba_incident_queue(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_incident_queue(project_id, **kwargs)
+
+    def inspect_boba_incident(self, project_id: str, incident_id: str) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_incident(project_id, incident_id)
+
+    def build_boba_incident_snapshot(
+        self, project_id: str, session_id: str, incident_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.build_incident_snapshot(
+            project_id, session_id, incident_id
+        )
+
+    def refresh_boba_incident_snapshot(
+        self, project_id: str, snapshot_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.refresh_incident_snapshot(project_id, snapshot_id)
+
+    def inspect_boba_incident_diagnosis(
+        self, project_id: str, incident_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_diagnosis(project_id, incident_id)
+
+    def inspect_boba_incident_root_cause(
+        self, project_id: str, incident_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_root_cause(project_id, incident_id)
+
+    def inspect_boba_incident_repair_plan(
+        self, project_id: str, incident_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_repair_plan(project_id, incident_id)
+
+    def inspect_boba_incident_recovery_history(
+        self, project_id: str, incident_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_recovery_history(project_id, incident_id)
+
+    def inspect_boba_incident_validation_evidence(
+        self, project_id: str, incident_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_validation_evidence(project_id, incident_id)
+
+    def inspect_boba_incident_artifact_evidence(
+        self, project_id: str, incident_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_artifact_evidence(project_id, incident_id)
+
+    def detect_boba_incident_conflicts(
+        self, project_id: str, incident_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_incident_conflicts(project_id, incident_id)
+
+    def compare_boba_incidents(
+        self,
+        project_id: str,
+        incident_ids: list[str],
+        *,
+        comparison_type: str = "side_by_side",
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.compare_incidents(
+            project_id, incident_ids, comparison_type=comparison_type
+        )
+
+    def create_boba_error_doctor_action_request(
+        self,
+        project_id: str,
+        *,
+        error_doctor_review_session_id: str,
+        incident_snapshot_id: str,
+        action_descriptor_id: str,
+        decision_value: str | None = None,
+        reason: str = "",
+        confirmation_context_digest: str,
+        idempotency_key: str,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        request = self.error_doctor_review.create_error_doctor_action_request(
+            project_id,
+            error_doctor_review_session_id=error_doctor_review_session_id,
+            incident_snapshot_id=incident_snapshot_id,
+            action_descriptor_id=action_descriptor_id,
+            decision_value=decision_value,
+            reason=reason,
+            confirmation_context_digest=confirmation_context_digest,
+            idempotency_key=idempotency_key,
+            confirmed=confirmed,
+        )
+        return request.model_dump(mode="json")
+
+    def validate_boba_error_doctor_action_request(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.validate_error_doctor_action_request(
+            project_id, request_id
+        )
+
+    async def submit_boba_error_doctor_action_to_owner(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        receipt = await self.error_doctor_review.submit_error_doctor_action_to_owner(
+            project_id, request_id
+        )
+        return receipt.model_dump(mode="json")
+
+    def inspect_boba_error_doctor_action_receipt(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_error_doctor_action_receipt(
+            project_id, request_id
+        )
+
+    def inspect_boba_incident_timeline(
+        self, project_id: str, *, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_incident_timeline(project_id, limit=limit)
+
+    def inspect_boba_incident_events(
+        self, project_id: str, *, after_sequence: int = 0, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.inspect_incident_events(
+            project_id, after_sequence=after_sequence, limit=limit
+        )
+
+    def load_boba_error_doctor_review(self, project_id: str) -> dict[str, Any]:
+        payload = self.error_doctor_review.load_error_doctor_review(project_id)
+        if payload is None:
+            return self.error_doctor_review.build_error_doctor_review(project_id)
+        return payload
+
+    def export_boba_error_doctor_review(self, project_id: str) -> dict[str, Any]:
+        return self.error_doctor_review.export_error_doctor_review(project_id)
+
+    def reset_boba_error_doctor_review_metadata(
+        self, project_id: str, session_id: str | None = None
+    ) -> dict[str, Any]:
+        return self.error_doctor_review.reset_error_doctor_review_metadata(
+            project_id, session_id
+        )
 
     # ------------------------------------------------------------------
     # BOBA Clip Brief Panel V1 - fixed projection and routing helpers
