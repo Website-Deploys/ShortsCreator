@@ -14,6 +14,10 @@ import {
   BobaClipBriefReviewErrorBoundary,
   BobaClipBriefReviewPanel,
 } from "@/components/review/BobaClipBriefReviewPanel";
+import {
+  BobaErrorDoctorReviewErrorBoundary,
+  BobaErrorDoctorReviewPanel,
+} from "@/components/review/BobaErrorDoctorReviewPanel";
 import { BobaReviewWorkspace } from "@/components/project/BobaReviewWorkspace";
 import { BobaReportReaderPanel } from "@/components/project/BobaReportReaderPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -12177,6 +12181,11 @@ export function ResultsSection({
       <BobaClipBriefReviewPanel projectId={projectId} />
     </BobaClipBriefReviewErrorBoundary>
   );
+  const errorDoctorReviewPanel = (
+    <BobaErrorDoctorReviewErrorBoundary>
+      <BobaErrorDoctorReviewPanel projectId={projectId} />
+    </BobaErrorDoctorReviewErrorBoundary>
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -12220,6 +12229,7 @@ export function ResultsSection({
         {reviewWorkspace}
         {candidateReviewPanel}
         {clipBriefReviewPanel}
+        {errorDoctorReviewPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -12275,6 +12285,7 @@ export function ResultsSection({
         {reviewWorkspace}
         {candidateReviewPanel}
         {clipBriefReviewPanel}
+        {errorDoctorReviewPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -12326,6 +12337,7 @@ export function ResultsSection({
         {reviewWorkspace}
         {candidateReviewPanel}
         {clipBriefReviewPanel}
+        {errorDoctorReviewPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -12377,6 +12389,7 @@ export function ResultsSection({
         {reviewWorkspace}
         {candidateReviewPanel}
         {clipBriefReviewPanel}
+        {errorDoctorReviewPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}
