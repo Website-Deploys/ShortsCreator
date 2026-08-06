@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiClientError } from "@/lib/apiClient";
 import type {
   BobaCandidateActionInput,
+  BobaClipBriefActionInput,
   BobaReviewActionInput,
   BobaReviewSessionInput,
 } from "@/lib/apiClient";
@@ -188,6 +189,22 @@ export const queryKeys = {
     ["boba", "projects", id, "candidate-review", "candidate", candidateId] as const,
   bobaCandidateTranscript: (id: string, candidateId: string, context: number) =>
     ["boba", "projects", id, "candidate-review", "transcript", candidateId, context] as const,
+  bobaClipBriefReview: (id: string) =>
+    ["boba", "projects", id, "clip-brief-review"] as const,
+  bobaClipBriefRegistry: (id: string) =>
+    ["boba", "projects", id, "clip-brief-review", "registry"] as const,
+  bobaClipBriefQueue: (id: string, filter: string, sort: string) =>
+    ["boba", "projects", id, "clip-brief-review", "queue", filter, sort] as const,
+  bobaClipBriefDetail: (id: string, briefId: string) =>
+    ["boba", "projects", id, "clip-brief-review", "brief", briefId] as const,
+  bobaClipBriefCompleteness: (id: string, briefId: string) =>
+    ["boba", "projects", id, "clip-brief-review", "completeness", briefId] as const,
+  bobaClipBriefEvidence: (id: string, briefId: string) =>
+    ["boba", "projects", id, "clip-brief-review", "evidence", briefId] as const,
+  bobaClipBriefConflicts: (id: string, briefId: string) =>
+    ["boba", "projects", id, "clip-brief-review", "conflicts", briefId] as const,
+  bobaClipBriefTimeline: (id: string) =>
+    ["boba", "projects", id, "clip-brief-review", "timeline"] as const,
   bobaReviewQueue: (id: string, category: string, includeHistorical: boolean) =>
     ["boba", "projects", id, "review-ui", "queue", category, includeHistorical] as const,
   bobaReviewSnapshot: (id: string, targetId: string) =>
@@ -3410,4 +3427,154 @@ export function useSubmitBobaCandidateAction(projectId: string) {
 
 export function useExportBobaCandidateReview(projectId: string) {
   return useMutation({ mutationFn: () => api.exportBobaCandidateReview(projectId) });
+}
+
+/* ------------------------------------------------------------------ */
+/* BOBA Clip Brief Panel V1                                            */
+/* ------------------------------------------------------------------ */
+
+export function useBobaClipBriefReview(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaClipBriefReview(projectId),
+    queryFn: () => api.getBobaClipBriefReview(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaClipBriefRegistry(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaClipBriefRegistry(projectId),
+    queryFn: () => api.getBobaClipBriefReviewRegistry(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useBobaClipBriefQueue(
+  projectId: string,
+  options: { filter?: string; sort?: string; enabled?: boolean } = {},
+) {
+  const filter = options.filter ?? "all_current";
+  const sort = options.sort ?? "review_priority";
+  return useQuery({
+    queryKey: queryKeys.bobaClipBriefQueue(projectId, filter, sort),
+    queryFn: () =>
+      api.getBobaClipBriefQueue(projectId, { review_filter: filter, sort, limit: 50 }),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
+    staleTime: 10_000,
+  });
+}
+
+export function useBobaClipBrief(projectId: string, briefId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.bobaClipBriefDetail(projectId, briefId ?? "none"),
+    queryFn: () => api.getBobaClipBrief(projectId, briefId!),
+    enabled: Boolean(projectId) && Boolean(briefId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaClipBriefCompleteness(projectId: string, briefId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.bobaClipBriefCompleteness(projectId, briefId ?? "none"),
+    queryFn: () => api.getBobaClipBriefCompleteness(projectId, briefId!),
+    enabled: Boolean(projectId) && Boolean(briefId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaClipBriefEvidence(projectId: string, briefId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.bobaClipBriefEvidence(projectId, briefId ?? "none"),
+    queryFn: () => api.getBobaClipBriefEvidence(projectId, briefId!),
+    enabled: Boolean(projectId) && Boolean(briefId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaClipBriefConflicts(projectId: string, briefId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.bobaClipBriefConflicts(projectId, briefId ?? "none"),
+    queryFn: () => api.getBobaClipBriefConflicts(projectId, briefId!),
+    enabled: Boolean(projectId) && Boolean(briefId),
+    staleTime: 15_000,
+  });
+}
+
+export function useCreateBobaClipBriefReviewSession(projectId: string) {
+  return useMutation({
+    mutationFn: (input: { reviewer_context_id: string }) =>
+      api.createBobaClipBriefReviewSession(projectId, input),
+  });
+}
+
+export function useUpdateBobaClipBriefReviewSession(projectId: string) {
+  return useMutation({
+    mutationFn: ({
+      sessionId,
+      updates,
+    }: {
+      sessionId: string;
+      updates: Record<string, unknown>;
+    }) => api.updateBobaClipBriefReviewSession(projectId, sessionId, updates),
+  });
+}
+
+export function useCreateBobaClipBriefSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: ({ briefId, sessionId }: { briefId: string; sessionId: string }) =>
+      api.createBobaClipBriefSnapshot(projectId, briefId, sessionId),
+  });
+}
+
+export function useRefreshBobaClipBriefSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: (snapshotId: string) =>
+      api.refreshBobaClipBriefSnapshot(projectId, snapshotId),
+  });
+}
+
+export function useCompareBobaClipBriefs(projectId: string) {
+  return useMutation({
+    mutationFn: (briefIds: string[]) => api.compareBobaClipBriefs(projectId, briefIds),
+  });
+}
+
+export function useCreateBobaClipBriefAction(projectId: string) {
+  return useMutation({
+    mutationFn: (input: BobaClipBriefActionInput) =>
+      api.createBobaClipBriefAction(projectId, input),
+  });
+}
+
+export function useValidateBobaClipBriefAction(projectId: string) {
+  return useMutation({
+    mutationFn: (requestId: string) => api.validateBobaClipBriefAction(projectId, requestId),
+  });
+}
+
+/**
+ * Submit a confirmed clip brief action to its canonical owner.
+ *
+ * Every affected canonical query is invalidated on completion. Brief state is
+ * only ever re-read from the owning module, never assumed from the response.
+ */
+export function useSubmitBobaClipBriefAction(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (requestId: string) => api.submitBobaClipBriefAction(projectId, requestId),
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["boba", "projects", projectId, "clip-brief-review"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaReviewUi(projectId),
+      });
+    },
+  });
+}
+
+export function useExportBobaClipBriefReview(projectId: string) {
+  return useMutation({ mutationFn: () => api.exportBobaClipBriefReview(projectId) });
 }

@@ -6461,6 +6461,241 @@ class BobaMemoryStore:
         }
 
     @staticmethod
+    def _validate_clip_brief_review_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
+            raise ValidationError(f"Invalid BOBA clip brief review {label}.")
+        return value
+
+    def boba_clip_brief_review_path(self, project_id: str) -> Path:
+        return self._path(project_id, "clip_brief_review/index.json")
+
+    def boba_clip_brief_review_registry_path(self, project_id: str, record_id: str) -> Path:
+        self._validate_clip_brief_review_record_id(record_id, label="registry id")
+        return self._path(project_id, f"clip_brief_review/registries/{record_id}.json")
+
+    def boba_clip_brief_review_session_path(self, project_id: str, record_id: str) -> Path:
+        self._validate_clip_brief_review_record_id(record_id, label="session id")
+        return self._path(project_id, f"clip_brief_review/sessions/{record_id}.json")
+
+    def boba_clip_brief_review_snapshot_path(self, project_id: str, record_id: str) -> Path:
+        self._validate_clip_brief_review_record_id(record_id, label="snapshot id")
+        return self._path(project_id, f"clip_brief_review/snapshots/{record_id}.json")
+
+    def boba_clip_brief_review_action_path(self, project_id: str, record_id: str) -> Path:
+        self._validate_clip_brief_review_record_id(record_id, label="action id")
+        return self._path(project_id, f"clip_brief_review/actions/{record_id}.json")
+
+    def boba_clip_brief_review_receipt_path(self, project_id: str, record_id: str) -> Path:
+        self._validate_clip_brief_review_record_id(record_id, label="receipt id")
+        return self._path(project_id, f"clip_brief_review/receipts/{record_id}.json")
+
+    def boba_clip_brief_review_event_cursor_path(
+        self, project_id: str, session_id: str
+    ) -> Path:
+        self._validate_clip_brief_review_record_id(session_id, label="session id")
+        return self._path(project_id, f"clip_brief_review/event_cursors/{session_id}.json")
+
+    def _write_boba_clip_brief_review_record(
+        self, path: Path, payload: dict[str, Any], *, scope: str
+    ) -> None:
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path=f"boba.clip_brief_review.{scope}",
+        )
+        self._atomic_write_compact(path, safe)
+
+    def _write_immutable_boba_clip_brief_review_record(
+        self, path: Path, payload: dict[str, Any], *, scope: str, label: str
+    ) -> None:
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path=f"boba.clip_brief_review.{scope}",
+        )
+        with self._lock:
+            if path.exists():
+                existing = self._read(path, None)
+                if existing != safe:
+                    raise ValidationError(
+                        f"BOBA clip brief review {label} are immutable."
+                    )
+                return
+            self._atomic_write_compact(path, safe)
+
+    def save_boba_clip_brief_review(self, project_id: str, payload: dict[str, Any]) -> None:
+        self._write_boba_clip_brief_review_record(
+            self.boba_clip_brief_review_path(project_id), payload, scope="index"
+        )
+
+    def load_boba_clip_brief_review(self, project_id: str) -> dict[str, Any] | None:
+        raw = self._read(self.boba_clip_brief_review_path(project_id), None)
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_clip_brief_review_registry(
+        self, project_id: str, record_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_immutable_boba_clip_brief_review_record(
+            self.boba_clip_brief_review_registry_path(project_id, record_id),
+            payload,
+            scope="registry",
+            label="registry snapshots",
+        )
+
+    def load_boba_clip_brief_review_registry(
+        self, project_id: str, record_id: str
+    ) -> dict[str, Any] | None:
+        raw = self._read(
+            self.boba_clip_brief_review_registry_path(project_id, record_id), None
+        )
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_clip_brief_review_session(
+        self, project_id: str, record_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_boba_clip_brief_review_record(
+            self.boba_clip_brief_review_session_path(project_id, record_id),
+            payload,
+            scope="session",
+        )
+
+    def load_boba_clip_brief_review_session(
+        self, project_id: str, record_id: str
+    ) -> dict[str, Any] | None:
+        raw = self._read(
+            self.boba_clip_brief_review_session_path(project_id, record_id), None
+        )
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_clip_brief_review_snapshot(
+        self, project_id: str, record_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_boba_clip_brief_review_record(
+            self.boba_clip_brief_review_snapshot_path(project_id, record_id),
+            payload,
+            scope="snapshot",
+        )
+
+    def load_boba_clip_brief_review_snapshot(
+        self, project_id: str, record_id: str
+    ) -> dict[str, Any] | None:
+        raw = self._read(
+            self.boba_clip_brief_review_snapshot_path(project_id, record_id), None
+        )
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_clip_brief_review_action(
+        self, project_id: str, record_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_immutable_boba_clip_brief_review_record(
+            self.boba_clip_brief_review_action_path(project_id, record_id),
+            payload,
+            scope="action",
+            label="action requests",
+        )
+
+    def load_boba_clip_brief_review_action(
+        self, project_id: str, record_id: str
+    ) -> dict[str, Any] | None:
+        raw = self._read(
+            self.boba_clip_brief_review_action_path(project_id, record_id), None
+        )
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_clip_brief_review_receipt(
+        self, project_id: str, record_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_immutable_boba_clip_brief_review_record(
+            self.boba_clip_brief_review_receipt_path(project_id, record_id),
+            payload,
+            scope="receipt",
+            label="receipts",
+        )
+
+    def load_boba_clip_brief_review_receipt(
+        self, project_id: str, record_id: str
+    ) -> dict[str, Any] | None:
+        raw = self._read(
+            self.boba_clip_brief_review_receipt_path(project_id, record_id), None
+        )
+        return raw if isinstance(raw, dict) else None
+
+    def delete_boba_clip_brief_review_session(self, project_id: str, session_id: str) -> bool:
+        path = self.boba_clip_brief_review_session_path(project_id, session_id)
+        with self._lock:
+            existed = path.exists()
+            path.unlink(missing_ok=True)
+            self.boba_clip_brief_review_event_cursor_path(
+                project_id, session_id
+            ).unlink(missing_ok=True)
+        return existed
+
+    def load_boba_clip_brief_review_receipt_for_action(
+        self, project_id: str, action_id: str
+    ) -> dict[str, Any] | None:
+        self._validate_clip_brief_review_record_id(action_id, label="action id")
+        directory = self._path(project_id, "clip_brief_review/receipts")
+        if not directory.exists():
+            return None
+        for path in sorted(directory.glob("*.json"))[:256]:
+            raw = self._read(path, None)
+            if isinstance(raw, dict) and (
+                raw.get("clip_brief_action_request_id") == action_id
+            ):
+                return raw
+        return None
+
+    def save_boba_clip_brief_review_event_cursor(
+        self, project_id: str, session_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_boba_clip_brief_review_record(
+            self.boba_clip_brief_review_event_cursor_path(project_id, session_id),
+            payload,
+            scope="event_cursor",
+        )
+
+    def reset_boba_clip_brief_review_metadata(self, project_id: str) -> dict[str, Any]:
+        directory = self.boba_clip_brief_review_path(project_id).parent.resolve()
+        project_directory = self._project_dir(project_id).resolve()
+        if directory.parent != project_directory or directory.name != "clip_brief_review":
+            raise ValidationError("Invalid BOBA clip brief review reset path.")
+        with self._lock:
+            index_removed = self.boba_clip_brief_review_path(project_id).exists()
+            self.boba_clip_brief_review_path(project_id).unlink(missing_ok=True)
+            sessions_directory = directory / "sessions"
+            removed_sessions = (
+                len(list(sessions_directory.glob("*.json")))
+                if sessions_directory.exists()
+                else 0
+            )
+            for child in (
+                sessions_directory,
+                directory / "event_cursors",
+                directory / "snapshots",
+            ):
+                if child.exists():
+                    shutil.rmtree(child)
+        return {
+            "schema_version": "boba_clip_brief_review_reset_v1",
+            "project_id": project_id,
+            "active_index_removed": index_removed,
+            "review_sessions_removed": removed_sessions,
+            "registry_history_preserved": True,
+            "action_request_history_preserved": True,
+            "action_receipt_history_preserved": True,
+            "clip_brief_records_preserved": True,
+            "candidate_records_preserved": True,
+            "editorial_history_preserved": True,
+            "candidate_review_history_preserved": True,
+            "review_ui_history_preserved": True,
+            "workflow_history_preserved": True,
+            "artifact_history_preserved": True,
+            "validation_history_preserved": True,
+            "source_media_removed": False,
+            "accepted_outputs_removed": False,
+        }
+
+    @staticmethod
     def _validate_candidate_review_record_id(value: str, *, label: str) -> str:
         if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
             raise ValidationError(f"Invalid BOBA candidate review {label}.")

@@ -10,6 +10,10 @@ import { BobaValidatorRunnerPanel } from "@/components/project/BobaValidatorRunn
 import { BobaArtifactInspectorPanel } from "@/components/project/BobaArtifactInspectorPanel";
 import { BobaFinalDecisionBusPanel } from "@/components/project/BobaFinalDecisionBusPanel";
 import { BobaCandidateReviewPanel } from "@/components/review/BobaCandidateReviewPanel";
+import {
+  BobaClipBriefReviewErrorBoundary,
+  BobaClipBriefReviewPanel,
+} from "@/components/review/BobaClipBriefReviewPanel";
 import { BobaReviewWorkspace } from "@/components/project/BobaReviewWorkspace";
 import { BobaReportReaderPanel } from "@/components/project/BobaReportReaderPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -12168,6 +12172,11 @@ export function ResultsSection({
   const finalDecisionBusPanel = <BobaFinalDecisionBusPanel projectId={projectId} />;
   const reviewWorkspace = <BobaReviewWorkspace projectId={projectId} />;
   const candidateReviewPanel = <BobaCandidateReviewPanel projectId={projectId} />;
+  const clipBriefReviewPanel = (
+    <BobaClipBriefReviewErrorBoundary>
+      <BobaClipBriefReviewPanel projectId={projectId} />
+    </BobaClipBriefReviewErrorBoundary>
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -12210,6 +12219,7 @@ export function ResultsSection({
         {finalDecisionBusPanel}
         {reviewWorkspace}
         {candidateReviewPanel}
+        {clipBriefReviewPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -12264,6 +12274,7 @@ export function ResultsSection({
         {finalDecisionBusPanel}
         {reviewWorkspace}
         {candidateReviewPanel}
+        {clipBriefReviewPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -12314,6 +12325,7 @@ export function ResultsSection({
         {finalDecisionBusPanel}
         {reviewWorkspace}
         {candidateReviewPanel}
+        {clipBriefReviewPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -12364,6 +12376,7 @@ export function ResultsSection({
         {finalDecisionBusPanel}
         {reviewWorkspace}
         {candidateReviewPanel}
+        {clipBriefReviewPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

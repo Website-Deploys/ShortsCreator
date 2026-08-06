@@ -18,6 +18,20 @@ import type {
   CandidateSnapshot,
 } from "@/lib/candidateReview";
 import type {
+  ClipBriefActionDescriptor,
+  ClipBriefActionReceipt,
+  ClipBriefComparison,
+  ClipBriefCompleteness,
+  ClipBriefConflict,
+  ClipBriefEvidenceLink,
+  ClipBriefFieldProjection,
+  ClipBriefQueueItem,
+  ClipBriefReference,
+  ClipBriefSectionProjection,
+  ClipBriefSnapshot,
+  ClipBriefSourceCard,
+} from "@/lib/clipBriefReview";
+import type {
   ReviewActionReceipt,
   ReviewEvent,
   ReviewQueueItem,
@@ -1833,6 +1847,124 @@ export const api = {
       `/boba/projects/${projectId}/candidate-review/export`,
     ),
 
+  /* BOBA Clip Brief Panel V1 - read-only brief projection and safe routing. */
+  getBobaClipBriefReview: (projectId: string) =>
+    request<Record<string, unknown>>(`/boba/projects/${projectId}/clip-brief-review`),
+  getBobaClipBriefReviewRegistry: (projectId: string) =>
+    request<BobaClipBriefRegistryResponse>(
+      `/boba/projects/${projectId}/clip-brief-review/registry`,
+    ),
+  createBobaClipBriefReviewSession: (
+    projectId: string,
+    input: { reviewer_context_id: string; selected_brief_id?: string | null },
+  ) =>
+    request<BobaClipBriefReviewSession>(
+      `/boba/projects/${projectId}/clip-brief-review/sessions`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  getBobaClipBriefReviewSession: (projectId: string, sessionId: string) =>
+    request<BobaClipBriefReviewSession>(
+      `/boba/projects/${projectId}/clip-brief-review/sessions/${sessionId}`,
+    ),
+  updateBobaClipBriefReviewSession: (
+    projectId: string,
+    sessionId: string,
+    updates: Record<string, unknown>,
+  ) =>
+    request<BobaClipBriefReviewSession>(
+      `/boba/projects/${projectId}/clip-brief-review/sessions/${sessionId}`,
+      { method: "PATCH", body: JSON.stringify(updates) },
+    ),
+  deleteBobaClipBriefReviewSession: (projectId: string, sessionId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/clip-brief-review/sessions/${sessionId}`,
+      { method: "DELETE" },
+    ),
+  getBobaClipBriefQueue: (
+    projectId: string,
+    params: { review_filter?: string; sort?: string; offset?: number; limit?: number } = {},
+  ) =>
+    request<BobaClipBriefQueueResponse>(
+      `/boba/projects/${projectId}/clip-brief-review/queue${_qs({
+        review_filter: params.review_filter,
+        sort: params.sort,
+        offset: params.offset === undefined ? undefined : String(params.offset),
+        limit: params.limit === undefined ? undefined : String(params.limit),
+      })}`,
+    ),
+  getBobaClipBrief: (projectId: string, briefId: string) =>
+    request<BobaClipBriefDetailResponse>(
+      `/boba/projects/${projectId}/clip-brief-review/briefs/${briefId}`,
+    ),
+  getBobaClipBriefCompleteness: (projectId: string, briefId: string) =>
+    request<BobaClipBriefCompletenessResponse>(
+      `/boba/projects/${projectId}/clip-brief-review/briefs/${briefId}/completeness`,
+    ),
+  getBobaClipBriefEvidence: (projectId: string, briefId: string) =>
+    request<BobaClipBriefEvidenceResponse>(
+      `/boba/projects/${projectId}/clip-brief-review/briefs/${briefId}/evidence`,
+    ),
+  getBobaClipBriefConflicts: (projectId: string, briefId: string) =>
+    request<BobaClipBriefConflictsResponse>(
+      `/boba/projects/${projectId}/clip-brief-review/briefs/${briefId}/conflicts`,
+    ),
+  createBobaClipBriefSnapshot: (projectId: string, briefId: string, sessionId: string) =>
+    request<BobaClipBriefSnapshotResponse>(
+      `/boba/projects/${projectId}/clip-brief-review/briefs/${briefId}/snapshot`,
+      { method: "POST", body: JSON.stringify({ clip_brief_review_session_id: sessionId }) },
+    ),
+  refreshBobaClipBriefSnapshot: (projectId: string, snapshotId: string) =>
+    request<BobaClipBriefSnapshotResponse>(
+      `/boba/projects/${projectId}/clip-brief-review/snapshots/${snapshotId}/refresh`,
+      { method: "POST" },
+    ),
+  compareBobaClipBriefs: (
+    projectId: string,
+    briefIds: string[],
+    comparisonType = "side_by_side",
+  ) =>
+    request<{ comparison: ClipBriefComparison }>(
+      `/boba/projects/${projectId}/clip-brief-review/compare`,
+      {
+        method: "POST",
+        body: JSON.stringify({ brief_ids: briefIds, comparison_type: comparisonType }),
+      },
+    ),
+  createBobaClipBriefAction: (projectId: string, input: BobaClipBriefActionInput) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/clip-brief-review/actions`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  validateBobaClipBriefAction: (projectId: string, requestId: string) =>
+    request<{ valid: boolean; code: string; message: string }>(
+      `/boba/projects/${projectId}/clip-brief-review/actions/${requestId}/validate`,
+      { method: "POST" },
+    ),
+  submitBobaClipBriefAction: (projectId: string, requestId: string) =>
+    request<ClipBriefActionReceipt>(
+      `/boba/projects/${projectId}/clip-brief-review/actions/${requestId}/submit`,
+      { method: "POST" },
+    ),
+  getBobaClipBriefActionReceipt: (projectId: string, requestId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/clip-brief-review/actions/${requestId}`,
+    ),
+  getBobaClipBriefReviewTimeline: (projectId: string, limit = 100) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/clip-brief-review/timeline${_qs({ limit: String(limit) })}`,
+    ),
+  getBobaClipBriefReviewEvents: (projectId: string, afterSequence = 0, limit = 100) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/clip-brief-review/events${_qs({
+        after_sequence: String(afterSequence),
+        limit: String(limit),
+      })}`,
+    ),
+  exportBobaClipBriefReview: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/clip-brief-review/export`,
+    ),
+
   /* BOBA Review UI V1 - presentation and canonical action routing only. */
   getBobaReviewUi: (projectId: string) =>
     request<Record<string, unknown>>(`/boba/projects/${projectId}/review-ui`),
@@ -2114,6 +2246,111 @@ export interface BobaCandidateComparisonResponse {
 export interface BobaCandidateActionInput {
   candidate_review_session_id: string;
   candidate_snapshot_id: string;
+  action_descriptor_id: string;
+  decision_value?: string | null;
+  reason?: string;
+  confirmation_context_digest: string;
+  idempotency_key: string;
+  confirmed: boolean;
+}
+
+export interface BobaClipBriefReviewSession {
+  clip_brief_review_session_id: string;
+  project_id: string;
+  reviewer_context_id: string;
+  selected_brief_id: string | null;
+  selected_candidate_id: string | null;
+  comparison_brief_ids: string[];
+  active_filter: string;
+  active_sort: string;
+  active_section_id: string;
+  show_historical: boolean;
+  show_technical_details: boolean;
+  show_source_evidence: boolean;
+  show_empty_optional_fields: boolean;
+  evidence_drawer_open: boolean;
+  timeline_drawer_open: boolean;
+  local_annotations: { annotation_id: string; field_path: string; text: string; notice: string }[];
+  expires_at: string;
+  limitations: string[];
+}
+
+export interface BobaClipBriefRegistryResponse {
+  registry_snapshot: Record<string, unknown>;
+  sources: Record<string, unknown>[];
+  sections: Record<string, unknown>[];
+  actions: ClipBriefActionDescriptor[];
+  required_field_paths: string[];
+  optional_field_paths: string[];
+  supported_brief_schema_id: string;
+}
+
+export interface BobaClipBriefQueueResponse {
+  schema_version: string;
+  project_id: string;
+  total: number;
+  offset: number;
+  limit: number;
+  active_filter: string;
+  active_sort: string;
+  priority_tiers: { priority: number; reason: string }[];
+  items: ClipBriefQueueItem[];
+}
+
+export interface BobaClipBriefSnapshotResponse {
+  snapshot: ClipBriefSnapshot;
+  brief_reference: ClipBriefReference;
+  field_projections: ClipBriefFieldProjection[];
+  section_projections: ClipBriefSectionProjection[];
+  source_cards: ClipBriefSourceCard[];
+  evidence_links: ClipBriefEvidenceLink[];
+  completeness: ClipBriefCompleteness;
+  conflict_records: ClipBriefConflict[];
+  action_confirmations: Record<string, string>;
+}
+
+export interface BobaClipBriefDetailResponse {
+  schema_version: string;
+  project_id: string;
+  brief_id: string;
+  brief_reference: ClipBriefReference;
+  field_projections: ClipBriefFieldProjection[];
+  section_projections: ClipBriefSectionProjection[];
+  source_cards: ClipBriefSourceCard[];
+  evidence_links: ClipBriefEvidenceLink[];
+  completeness: ClipBriefCompleteness;
+  conflict_records: ClipBriefConflict[];
+}
+
+export interface BobaClipBriefCompletenessResponse {
+  schema_version: string;
+  project_id: string;
+  brief_id: string;
+  completeness: ClipBriefCompleteness;
+  limitations: string[];
+}
+
+export interface BobaClipBriefEvidenceResponse {
+  schema_version: string;
+  project_id: string;
+  brief_id: string;
+  evidence_links: ClipBriefEvidenceLink[];
+  missing_evidence_count: number;
+  limitations: string[];
+}
+
+export interface BobaClipBriefConflictsResponse {
+  schema_version: string;
+  project_id: string;
+  brief_id: string;
+  conflict_records: ClipBriefConflict[];
+  blocking_conflict_count: number;
+  limitations: string[];
+}
+
+export interface BobaClipBriefActionInput {
+  clip_brief_review_session_id: string;
+  brief_snapshot_id: string;
   action_descriptor_id: string;
   decision_value?: string | null;
   reason?: string;
