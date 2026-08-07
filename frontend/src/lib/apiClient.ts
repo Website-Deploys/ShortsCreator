@@ -18,6 +18,20 @@ import type {
   CandidateSnapshot,
 } from "@/lib/candidateReview";
 import type {
+  RepairApprovalRequirement,
+  RepairEvidenceCard,
+  RepairPlanActionDescriptor,
+  RepairPlanActionReceipt,
+  RepairPlanConflict,
+  RepairPlanQueueItem,
+  RepairPlanReference,
+  RepairPlanSnapshot,
+  RepairRecoveryLink,
+  RepairRiskProjection,
+  RepairStepProjection,
+  RepairVerificationRequirement,
+} from "@/lib/repairPlanReview";
+import type {
   DiagnosisProjection,
   ErrorConflict,
   ErrorDoctorActionDescriptor,
@@ -2127,6 +2141,162 @@ export const api = {
       `/boba/projects/${projectId}/error-doctor-review/export`,
     ),
 
+  /* BOBA Repair Plan Panel V1 - read-only plan projection and safe routing.
+     No method here approves, rejects, revises or executes a repair plan, runs a
+     command, restores a checkpoint, restarts a process or changes a workflow. */
+  getBobaRepairPlanReview: (projectId: string) =>
+    request<Record<string, unknown>>(`/boba/projects/${projectId}/repair-plan-review`),
+  getBobaRepairPlanReviewRegistry: (projectId: string) =>
+    request<BobaRepairPlanRegistryResponse>(
+      `/boba/projects/${projectId}/repair-plan-review/registry`,
+    ),
+  createBobaRepairPlanReviewSession: (
+    projectId: string,
+    input: { reviewer_context_id: string; selected_repair_plan_id?: string | null },
+  ) =>
+    request<BobaRepairPlanReviewSession>(
+      `/boba/projects/${projectId}/repair-plan-review/sessions`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  getBobaRepairPlanReviewSession: (projectId: string, sessionId: string) =>
+    request<BobaRepairPlanReviewSession>(
+      `/boba/projects/${projectId}/repair-plan-review/sessions/${sessionId}`,
+    ),
+  updateBobaRepairPlanReviewSession: (
+    projectId: string,
+    sessionId: string,
+    updates: Record<string, unknown>,
+  ) =>
+    request<BobaRepairPlanReviewSession>(
+      `/boba/projects/${projectId}/repair-plan-review/sessions/${sessionId}`,
+      { method: "PATCH", body: JSON.stringify(updates) },
+    ),
+  deleteBobaRepairPlanReviewSession: (projectId: string, sessionId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/sessions/${sessionId}`,
+      { method: "DELETE" },
+    ),
+  getBobaRepairPlanQueue: (
+    projectId: string,
+    params: { review_filter?: string; sort?: string; offset?: number; limit?: number } = {},
+  ) =>
+    request<BobaRepairPlanQueueResponse>(
+      `/boba/projects/${projectId}/repair-plan-review/queue${_qs({
+        review_filter: params.review_filter,
+        sort: params.sort,
+        offset: params.offset === undefined ? undefined : String(params.offset),
+        limit: params.limit === undefined ? undefined : String(params.limit),
+      })}`,
+    ),
+  getBobaRepairPlan: (projectId: string, repairPlanId: string) =>
+    request<BobaRepairPlanDetailResponse>(
+      `/boba/projects/${projectId}/repair-plan-review/plans/${repairPlanId}`,
+    ),
+  createBobaRepairPlanSnapshot: (
+    projectId: string,
+    repairPlanId: string,
+    sessionId: string,
+  ) =>
+    request<BobaRepairPlanSnapshotResponse>(
+      `/boba/projects/${projectId}/repair-plan-review/plans/${repairPlanId}/snapshot`,
+      {
+        method: "POST",
+        body: JSON.stringify({ repair_plan_review_session_id: sessionId }),
+      },
+    ),
+  refreshBobaRepairPlanSnapshot: (projectId: string, snapshotId: string) =>
+    request<BobaRepairPlanSnapshotResponse>(
+      `/boba/projects/${projectId}/repair-plan-review/snapshots/${snapshotId}/refresh`,
+      { method: "POST" },
+    ),
+  getBobaRepairPlanSteps: (projectId: string, repairPlanId: string) =>
+    request<BobaRepairPlanStepsResponse>(
+      `/boba/projects/${projectId}/repair-plan-review/plans/${repairPlanId}/steps`,
+    ),
+  getBobaRepairPlanRisk: (projectId: string, repairPlanId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/plans/${repairPlanId}/risk`,
+    ),
+  getBobaRepairPlanApprovals: (projectId: string, repairPlanId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/plans/${repairPlanId}/approvals`,
+    ),
+  getBobaRepairPlanVerification: (projectId: string, repairPlanId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/plans/${repairPlanId}/verification`,
+    ),
+  getBobaRepairPlanEvidence: (projectId: string, repairPlanId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/plans/${repairPlanId}/evidence`,
+    ),
+  getBobaRepairPlanRecoveryHistory: (projectId: string, repairPlanId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/plans/${repairPlanId}/recovery-history`,
+    ),
+  getBobaRepairPlanConflicts: (projectId: string, repairPlanId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/plans/${repairPlanId}/conflicts`,
+    ),
+  compareBobaRepairPlans: (
+    projectId: string,
+    repairPlanIds: string[],
+    comparisonType = "side_by_side",
+  ) =>
+    request<{ comparison: Record<string, unknown> }>(
+      `/boba/projects/${projectId}/repair-plan-review/compare`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          repair_plan_ids: repairPlanIds,
+          comparison_type: comparisonType,
+        }),
+      },
+    ),
+  describeBobaRepairPlanActionConfirmation: (
+    projectId: string,
+    snapshotId: string,
+    actionDescriptorId: string,
+  ) =>
+    request<BobaRepairPlanConfirmationResponse>(
+      `/boba/projects/${projectId}/repair-plan-review/snapshots/${snapshotId}/confirmations/${actionDescriptorId}`,
+    ),
+  createBobaRepairPlanAction: (projectId: string, input: BobaRepairPlanActionInput) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/actions`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  validateBobaRepairPlanAction: (projectId: string, requestId: string) =>
+    request<{ valid: boolean; code: string; message: string }>(
+      `/boba/projects/${projectId}/repair-plan-review/actions/${requestId}/validate`,
+      { method: "POST" },
+    ),
+  submitBobaRepairPlanAction: (projectId: string, requestId: string) =>
+    request<RepairPlanActionReceipt>(
+      `/boba/projects/${projectId}/repair-plan-review/actions/${requestId}/submit`,
+      { method: "POST" },
+    ),
+  getBobaRepairPlanActionReceipt: (projectId: string, requestId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/actions/${requestId}`,
+    ),
+  getBobaRepairPlanTimeline: (projectId: string, limit = 100) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/timeline${_qs({
+        limit: String(limit),
+      })}`,
+    ),
+  getBobaRepairPlanEvents: (projectId: string, afterSequence = 0, limit = 100) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/events${_qs({
+        after_sequence: String(afterSequence),
+        limit: String(limit),
+      })}`,
+    ),
+  exportBobaRepairPlanReview: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/repair-plan-review/export`,
+    ),
+
   /* BOBA Review UI V1 - presentation and canonical action routing only. */
   getBobaReviewUi: (projectId: string) =>
     request<Record<string, unknown>>(`/boba/projects/${projectId}/review-ui`),
@@ -2597,6 +2767,149 @@ export interface BobaIncidentDetailResponse {
   repair_plan_projections: RepairPlanProjection[];
   recovery_attempt_projections: RecoveryAttemptProjection[];
   conflict_records: ErrorConflict[];
+}
+
+export interface BobaRepairPlanReviewSession {
+  repair_plan_review_session_id: string;
+  project_id: string;
+  reviewer_context_id: string;
+  selected_repair_plan_id: string | null;
+  comparison_repair_plan_ids: string[];
+  active_filter: string;
+  active_sort: string;
+  active_section_id: string;
+  show_historical: boolean;
+  show_superseded: boolean;
+  show_completed: boolean;
+  show_technical_details: boolean;
+  show_recovery_history: boolean;
+  evidence_drawer_open: boolean;
+  timeline_drawer_open: boolean;
+  local_annotations: {
+    annotation_id: string;
+    repair_plan_id: string;
+    section_id: string;
+    text: string;
+    notice: string;
+  }[];
+  read_repair_plan_ids: string[];
+  session_digest: string;
+  warnings: string[];
+  limitations: string[];
+}
+
+export interface BobaRepairPlanRegistryResponse {
+  registry_snapshot: Record<string, unknown>;
+  sources: Record<string, unknown>[];
+  sections: Record<string, unknown>[];
+  actions: RepairPlanActionDescriptor[];
+  priority_tiers: { priority: number; reason: string }[];
+  source_risk_order: string[];
+  risk_dimensions: string[];
+  supported_repair_plan_schema_id: string;
+  withheld_notices: {
+    command: string;
+    private_path: string;
+    not_executable: string;
+    source_retained: string;
+  };
+}
+
+export interface BobaRepairPlanQueueResponse {
+  schema_version: string;
+  project_id: string;
+  active_filter: string;
+  active_sort: string;
+  offset: number;
+  limit: number;
+  total_count: number;
+  filtered_count: number;
+  returned_count: number;
+  has_more: boolean;
+  items: RepairPlanQueueItem[];
+  priority_tiers: { priority: number; reason: string }[];
+  limitations: string[];
+}
+
+export interface BobaRepairPlanSnapshotResponse {
+  snapshot: RepairPlanSnapshot;
+  repair_plan_reference: RepairPlanReference;
+  step_projections: RepairStepProjection[];
+  risk_projections: RepairRiskProjection[];
+  approval_requirements: RepairApprovalRequirement[];
+  verification_requirements: RepairVerificationRequirement[];
+  evidence_cards: RepairEvidenceCard[];
+  recovery_links: RepairRecoveryLink[];
+  conflict_records: RepairPlanConflict[];
+  action_confirmations: Record<string, string>;
+}
+
+export interface BobaRepairPlanDetailResponse {
+  schema_version: string;
+  project_id: string;
+  repair_plan_id: string;
+  repair_plan_reference: RepairPlanReference;
+  step_projections: RepairStepProjection[];
+  risk_projections: RepairRiskProjection[];
+  approval_requirements: RepairApprovalRequirement[];
+  verification_requirements: RepairVerificationRequirement[];
+  evidence_cards: RepairEvidenceCard[];
+  recovery_links: RepairRecoveryLink[];
+  conflict_records: RepairPlanConflict[];
+  notices: {
+    command: string;
+    private_path: string;
+    not_executable: string;
+    source_retained: string;
+  };
+  limitations: string[];
+}
+
+export interface BobaRepairPlanStepsResponse {
+  schema_version: string;
+  project_id: string;
+  repair_plan_id: string;
+  step_projections: RepairStepProjection[];
+  step_count: number;
+  command_bearing_step_count: number;
+  destructive_step_count: number;
+  read_only_step_count: number;
+  raw_command_exposed: false;
+  private_path_exposed: false;
+  executable_by_panel: false;
+  notices: {
+    command: string;
+    private_path: string;
+    not_executable: string;
+    source_retained: string;
+  };
+}
+
+export interface BobaRepairPlanConfirmationResponse {
+  schema_version: string;
+  project_id: string;
+  repair_plan_snapshot_id: string;
+  repair_plan_id: string;
+  action_descriptor_id: string;
+  available: boolean;
+  unavailable_reason: string;
+  confirmation_context_digest: string | null;
+  owning_module_id: string;
+  owning_operation_id: string;
+  consequences: string[];
+  does_not_do: string[];
+  confirmation_statement: string;
+}
+
+export interface BobaRepairPlanActionInput {
+  repair_plan_review_session_id: string;
+  repair_plan_snapshot_id: string;
+  action_descriptor_id: string;
+  decision_value?: string | null;
+  reason?: string;
+  confirmation_context_digest: string;
+  idempotency_key: string;
+  confirmed: boolean;
 }
 
 export interface BobaErrorDoctorActionInput {

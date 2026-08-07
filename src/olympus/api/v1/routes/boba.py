@@ -6854,3 +6854,411 @@ async def export_error_doctor_review(
     _require_enabled(settings)
     await _require_project(project_id, boba)
     return boba.export_boba_error_doctor_review(project_id)
+
+# ----------------------------------------------------------------------
+# BOBA Repair Plan Panel V1
+#
+# Every route below is read-only or review-session metadata only. No route
+# generates a repair plan, revises one, approves or rejects one, executes a
+# plan or a step, runs a command, restores a checkpoint, restarts a process,
+# transitions the workflow, modifies code or artifacts, uploads or publishes.
+# A repair plan identity is the Repair Planner repair_strategy_id.
+# ----------------------------------------------------------------------
+class RepairPlanReviewSessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_context_id: str = Field(min_length=1, max_length=160)
+    selected_repair_plan_id: str | None = Field(default=None, max_length=180)
+
+
+class RepairPlanReviewSessionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selected_repair_plan_id: str | None = Field(default=None, max_length=180)
+    comparison_repair_plan_ids: list[str] | None = Field(default=None, max_length=4)
+    active_filter: str | None = Field(default=None, max_length=80)
+    active_sort: str | None = Field(default=None, max_length=80)
+    active_section_id: str | None = Field(default=None, max_length=80)
+    show_historical: bool | None = None
+    show_superseded: bool | None = None
+    show_completed: bool | None = None
+    show_technical_details: bool | None = None
+    show_recovery_history: bool | None = None
+    evidence_drawer_open: bool | None = None
+    timeline_drawer_open: bool | None = None
+    local_annotations: list[dict[str, str]] | None = Field(default=None, max_length=32)
+    read_repair_plan_ids: list[str] | None = Field(default=None, max_length=256)
+
+
+class RepairPlanSnapshotCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repair_plan_review_session_id: str = Field(min_length=1, max_length=180)
+
+
+class RepairPlanComparisonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repair_plan_ids: list[str] = Field(min_length=2, max_length=4)
+    comparison_type: str = Field(default="side_by_side", max_length=80)
+
+
+class RepairPlanActionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repair_plan_review_session_id: str = Field(min_length=1, max_length=180)
+    repair_plan_snapshot_id: str = Field(min_length=1, max_length=180)
+    action_descriptor_id: str = Field(min_length=1, max_length=180)
+    decision_value: str | None = Field(default=None, max_length=160)
+    reason: str = Field(default="", max_length=500)
+    confirmation_context_digest: str = Field(min_length=64, max_length=64)
+    idempotency_key: str = Field(min_length=8, max_length=180)
+    confirmed: bool = False
+
+
+@router.get("/projects/{project_id}/repair-plan-review")
+async def get_repair_plan_review(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_repair_plan_review(project_id)
+
+
+@router.get("/projects/{project_id}/repair-plan-review/registry")
+async def get_repair_plan_review_registry(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_review_registry(project_id)
+
+
+@router.post("/projects/{project_id}/repair-plan-review/sessions")
+async def create_repair_plan_review_session(
+    project_id: str,
+    body: RepairPlanReviewSessionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_repair_plan_review_session(
+        project_id,
+        reviewer_context_id=body.reviewer_context_id,
+        selected_repair_plan_id=body.selected_repair_plan_id,
+    )
+
+
+@router.get("/projects/{project_id}/repair-plan-review/sessions/{session_id}")
+async def get_repair_plan_review_session(
+    project_id: str,
+    session_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_review_session(project_id, session_id)
+
+
+@router.patch("/projects/{project_id}/repair-plan-review/sessions/{session_id}")
+async def update_repair_plan_review_session(
+    project_id: str,
+    session_id: str,
+    body: RepairPlanReviewSessionUpdateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    updates = body.model_dump(exclude_none=True)
+    return boba.update_boba_repair_plan_review_session(project_id, session_id, updates)
+
+
+@router.delete("/projects/{project_id}/repair-plan-review/sessions/{session_id}")
+async def reset_repair_plan_review_session(
+    project_id: str,
+    session_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_repair_plan_review_metadata(project_id, session_id)
+
+
+@router.get("/projects/{project_id}/repair-plan-review/queue")
+async def get_repair_plan_queue(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    review_filter: str = "all_current",
+    sort: str = "review_priority",
+    offset: int = 0,
+    limit: int = 50,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_repair_plan_queue(
+        project_id, review_filter=review_filter, sort=sort, offset=offset, limit=limit
+    )
+
+
+@router.get("/projects/{project_id}/repair-plan-review/plans/{repair_plan_id}")
+async def get_repair_plan(
+    project_id: str,
+    repair_plan_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan(project_id, repair_plan_id)
+
+
+@router.post("/projects/{project_id}/repair-plan-review/plans/{repair_plan_id}/snapshot")
+async def create_repair_plan_snapshot(
+    project_id: str,
+    repair_plan_id: str,
+    body: RepairPlanSnapshotCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_repair_plan_snapshot(
+        project_id, body.repair_plan_review_session_id, repair_plan_id
+    )
+
+
+@router.post("/projects/{project_id}/repair-plan-review/snapshots/{snapshot_id}/refresh")
+async def refresh_repair_plan_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.refresh_boba_repair_plan_snapshot(project_id, snapshot_id)
+
+
+@router.get("/projects/{project_id}/repair-plan-review/plans/{repair_plan_id}/steps")
+async def get_repair_plan_steps(
+    project_id: str,
+    repair_plan_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_steps(project_id, repair_plan_id)
+
+
+@router.get("/projects/{project_id}/repair-plan-review/plans/{repair_plan_id}/risk")
+async def get_repair_plan_risk(
+    project_id: str,
+    repair_plan_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_risks(project_id, repair_plan_id)
+
+
+@router.get("/projects/{project_id}/repair-plan-review/plans/{repair_plan_id}/approvals")
+async def get_repair_plan_approvals(
+    project_id: str,
+    repair_plan_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_approvals(project_id, repair_plan_id)
+
+
+@router.get(
+    "/projects/{project_id}/repair-plan-review/plans/{repair_plan_id}/verification"
+)
+async def get_repair_plan_verification(
+    project_id: str,
+    repair_plan_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_verification(project_id, repair_plan_id)
+
+
+@router.get("/projects/{project_id}/repair-plan-review/plans/{repair_plan_id}/evidence")
+async def get_repair_plan_evidence(
+    project_id: str,
+    repair_plan_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_evidence(project_id, repair_plan_id)
+
+
+@router.get(
+    "/projects/{project_id}/repair-plan-review/plans/{repair_plan_id}/recovery-history"
+)
+async def get_repair_plan_recovery_history(
+    project_id: str,
+    repair_plan_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_recovery_history(project_id, repair_plan_id)
+
+
+@router.get("/projects/{project_id}/repair-plan-review/plans/{repair_plan_id}/conflicts")
+async def get_repair_plan_conflicts(
+    project_id: str,
+    repair_plan_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.detect_boba_repair_plan_conflicts(project_id, repair_plan_id)
+
+
+@router.post("/projects/{project_id}/repair-plan-review/compare")
+async def compare_repair_plans(
+    project_id: str,
+    body: RepairPlanComparisonRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.compare_boba_repair_plans(
+        project_id, list(body.repair_plan_ids), comparison_type=body.comparison_type
+    )
+
+
+@router.get(
+    "/projects/{project_id}/repair-plan-review/snapshots/{snapshot_id}"
+    "/confirmations/{action_descriptor_id}"
+)
+async def describe_repair_plan_action_confirmation(
+    project_id: str,
+    snapshot_id: str,
+    action_descriptor_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.describe_boba_repair_plan_action_confirmation(
+        project_id, snapshot_id, action_descriptor_id
+    )
+
+
+@router.post("/projects/{project_id}/repair-plan-review/actions")
+async def create_repair_plan_action(
+    project_id: str,
+    body: RepairPlanActionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_repair_plan_action_request(
+        project_id,
+        repair_plan_review_session_id=body.repair_plan_review_session_id,
+        repair_plan_snapshot_id=body.repair_plan_snapshot_id,
+        action_descriptor_id=body.action_descriptor_id,
+        decision_value=body.decision_value,
+        reason=body.reason,
+        confirmation_context_digest=body.confirmation_context_digest,
+        idempotency_key=body.idempotency_key,
+        confirmed=body.confirmed,
+    )
+
+
+@router.post("/projects/{project_id}/repair-plan-review/actions/{request_id}/validate")
+async def validate_repair_plan_action(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.validate_boba_repair_plan_action_request(project_id, request_id)
+
+
+@router.post("/projects/{project_id}/repair-plan-review/actions/{request_id}/submit")
+async def submit_repair_plan_action(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return await boba.submit_boba_repair_plan_action_to_owner(project_id, request_id)
+
+
+@router.get("/projects/{project_id}/repair-plan-review/actions/{request_id}")
+async def get_repair_plan_action_receipt(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_action_receipt(project_id, request_id)
+
+
+@router.get("/projects/{project_id}/repair-plan-review/timeline")
+async def get_repair_plan_timeline(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_timeline(project_id, limit=limit)
+
+
+@router.get("/projects/{project_id}/repair-plan-review/events")
+async def get_repair_plan_events(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    after_sequence: int = 0,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_repair_plan_events(
+        project_id, after_sequence=after_sequence, limit=limit
+    )
+
+
+@router.get("/projects/{project_id}/repair-plan-review/export")
+async def export_repair_plan_review(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_repair_plan_review(project_id)

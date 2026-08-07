@@ -1149,6 +1149,25 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
             "workflow_controller",
         ],
     },
+    "repair_plan_review": {
+        "name": "Repair Plan Panel",
+        "path": "olympus.boba.repair_plan_review",
+        "deps": [
+            "integration_layer",
+            "safety_gate",
+            "review_ui",
+            "error_doctor_review",
+            "repair_planner",
+            "root_cause_analyzer",
+            "error_doctor",
+            "code_surgeon",
+            "tool_recovery_brain",
+            "validator_runner",
+            "artifact_inspector",
+            "output_quality_reviewer",
+            "workflow_controller",
+        ],
+    },
     "clip_brief_review": {
         "name": "Clip Brief Panel",
         "path": "olympus.boba.clip_brief_review",
@@ -1711,6 +1730,76 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
             ),
             _operation(
                 "error_doctor_review", "inspect_events", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "inspect_registry", "read_only", side_effect_class="none"
+            ),
+            _operation("repair_plan_review", "create_session", "metadata_reset"),
+            _operation("repair_plan_review", "update_session", "metadata_reset"),
+            _operation(
+                "repair_plan_review", "build_queue", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "inspect_queue", "read_only", side_effect_class="none"
+            ),
+            _operation("repair_plan_review", "build_snapshot", "read_only"),
+            _operation("repair_plan_review", "refresh_snapshot", "read_only"),
+            _operation(
+                "repair_plan_review", "inspect_plan", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "inspect_steps", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "inspect_risks", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "inspect_approvals", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "inspect_verification", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "inspect_evidence", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review",
+                "inspect_recovery_history",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "repair_plan_review", "detect_conflicts", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "inspect_conflicts", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "compare_plans", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "describe_confirmation", "read_only", side_effect_class="none"
+            ),
+            _operation("repair_plan_review", "create_action", "read_only"),
+            _operation(
+                "repair_plan_review", "validate_action", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review",
+                "submit_action",
+                "read_only",
+                approval=True,
+                approval_type="exact_repair_plan_review_action",
+                safety=True,
+            ),
+            _operation(
+                "repair_plan_review", "inspect_receipt", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "inspect_timeline", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "repair_plan_review", "inspect_events", "read_only", side_effect_class="none"
             ),
             _operation(
                 "clip_brief_review", "inspect_registry", "read_only", side_effect_class="none"

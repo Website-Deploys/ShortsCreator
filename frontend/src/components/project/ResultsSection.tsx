@@ -18,6 +18,10 @@ import {
   BobaErrorDoctorReviewErrorBoundary,
   BobaErrorDoctorReviewPanel,
 } from "@/components/review/BobaErrorDoctorReviewPanel";
+import {
+  BobaRepairPlanReviewErrorBoundary,
+  BobaRepairPlanReviewPanel,
+} from "@/components/review/BobaRepairPlanReviewPanel";
 import { BobaReviewWorkspace } from "@/components/project/BobaReviewWorkspace";
 import { BobaReportReaderPanel } from "@/components/project/BobaReportReaderPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -12186,6 +12190,11 @@ export function ResultsSection({
       <BobaErrorDoctorReviewPanel projectId={projectId} />
     </BobaErrorDoctorReviewErrorBoundary>
   );
+  const repairPlanReviewPanel = (
+    <BobaRepairPlanReviewErrorBoundary>
+      <BobaRepairPlanReviewPanel projectId={projectId} />
+    </BobaRepairPlanReviewErrorBoundary>
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -12230,6 +12239,7 @@ export function ResultsSection({
         {candidateReviewPanel}
         {clipBriefReviewPanel}
         {errorDoctorReviewPanel}
+        {repairPlanReviewPanel}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -12286,6 +12296,7 @@ export function ResultsSection({
         {candidateReviewPanel}
         {clipBriefReviewPanel}
         {errorDoctorReviewPanel}
+        {repairPlanReviewPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -12338,6 +12349,7 @@ export function ResultsSection({
         {candidateReviewPanel}
         {clipBriefReviewPanel}
         {errorDoctorReviewPanel}
+        {repairPlanReviewPanel}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -12390,6 +12402,7 @@ export function ResultsSection({
         {candidateReviewPanel}
         {clipBriefReviewPanel}
         {errorDoctorReviewPanel}
+        {repairPlanReviewPanel}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}
