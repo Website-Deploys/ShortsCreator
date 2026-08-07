@@ -1779,6 +1779,12 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
                 "approval_controls", "inspect_events", "read_only", side_effect_class="none"
             ),
             _operation(
+                "approval_controls", "inspect_timeline", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "approval_controls", "compare_decisions", "read_only", side_effect_class="none"
+            ),
+            _operation(
                 "repair_plan_review", "inspect_registry", "read_only", side_effect_class="none"
             ),
             _operation("repair_plan_review", "create_session", "metadata_reset"),

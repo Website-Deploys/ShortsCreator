@@ -7436,6 +7436,40 @@ async def get_approval_control_events(
     )
 
 
+class ApprovalDecisionComparisonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_action_request_ids: list[str] = Field(min_length=2, max_length=4)
+
+
+@router.get("/projects/{project_id}/approval-controls/timeline")
+async def get_approval_control_timeline(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Read-only projection of existing events and owner decision records."""
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_approval_timeline(project_id, limit=limit)
+
+
+@router.post("/projects/{project_id}/approval-controls/comparison")
+async def compare_approval_decisions(
+    project_id: str,
+    body: ApprovalDecisionComparisonRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    """Read-only side-by-side comparison. Selects no winner and mutates nothing."""
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.compare_boba_approval_decisions(
+        project_id, list(body.review_action_request_ids)
+    )
+
+
 @router.get("/projects/{project_id}/approval-controls/export")
 async def export_approval_controls(
     project_id: str,

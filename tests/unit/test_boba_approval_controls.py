@@ -302,9 +302,11 @@ def test_scenario_catalogue_covers_every_required_group() -> None:
         "invalidation", "safety-gate", "rights", "evidence", "revision", "digest",
         "idempotency", "concurrency", "events", "receipts", "persistence", "api",
         "frontend-contract", "security", "reset", "regression-protection",
+        # added with the timeline and comparison surfaces
+        "timeline", "comparison",
     ):
         assert required in groups
-    assert len(groups) == 22
+    assert len(groups) == 24
     assert len(SCENARIO_NAMES) == len(set(SCENARIO_NAMES))
 
 
@@ -854,13 +856,13 @@ def test_module_is_registered_read_only() -> None:
     assert module.execution_capable is False
 
 
-def test_twelve_operations_registered() -> None:
+def test_fourteen_operations_registered() -> None:
     ops = {
         k.split(".", 1)[1]
         for k in build_boba_operation_registry()
         if k.startswith("approval_controls.")
     }
-    assert len(ops) == 12
+    assert len(ops) == 14
     assert "submit_decision" in ops
     assert not any("execute" in op for op in ops)
 
@@ -873,7 +875,7 @@ def test_submit_decision_requires_approval_and_safety() -> None:
 
 def test_safety_gate_classifies_every_operation_read_only() -> None:
     ops = build_safety_module_operation_registry()["approval_controls"]
-    assert len(ops) == 12
+    assert len(ops) == 14
     assert set(ops.values()) <= {"automatic_read_only", "approval_required_read_only"}
     assert ops["submit_decision"] == "approval_required_read_only"
 
@@ -959,3 +961,364 @@ def test_api_unknown_project_is_client_error(tmp_path: Path) -> None:
         "/api/v1/boba/projects/project-does-not-exist/approval-controls/registry"
     )
     assert 400 <= response.status_code < 500
+
+
+# ---------------------------------------------------------------------------
+# Timeline (read-only projection)
+# ---------------------------------------------------------------------------
+def test_timeline_is_truthful_when_empty(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path, {})
+    timeline = engine.inspect_approval_timeline(PROJECT_ID)
+    assert timeline["empty"] is True
+    assert timeline["entry_count"] == 0
+    assert timeline["entries"] == []
+    assert "No approval decision" in timeline["status"]
+
+
+def test_timeline_never_mutates_or_duplicates_the_stream(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    timeline = engine.inspect_approval_timeline(PROJECT_ID)
+    assert timeline["mutation_performed"] is False
+    assert timeline["second_event_stream_created"] is False
+
+
+def test_timeline_projects_control_events(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    request_id = _decide(engine)
+    asyncio.run(engine.submit_approval_decision(PROJECT_ID, request_id, APPROVE_DECISION))
+    entries = engine.inspect_approval_timeline(PROJECT_ID)["entries"]
+    assert any(e["entry_kind"] == "approval_control_event" for e in entries)
+    assert {e["event_type"] for e in entries} >= {"approval_requested", "approval_confirmed"}
+
+
+def test_timeline_includes_owner_decision_records(tmp_path: Path) -> None:
+    decided = _workflow()
+    decided["human_decisions"] = [
+        {"human_decision_id": "d1", "decision": "reject", "bounded_reason": "not ready",
+         "decided_at": "2026-02-01T11:00:00+00:00", "workflow_revision": 3,
+         "stage_instance_id": "render"}
+    ]
+    engine, _ = _engine(tmp_path, {"workflow_controller": decided, "safety_gate": _safety()})
+    rows = [
+        e for e in engine.inspect_approval_timeline(PROJECT_ID)["entries"]
+        if e["entry_kind"] == "owner_decision_record"
+    ]
+    assert rows
+    assert rows[0]["source_module_id"] == "workflow_controller"
+    assert rows[0]["decision_value"] == "reject"
+    assert rows[0]["timestamp_precision"] == "source"
+    assert rows[0]["confirmed_order"] is True
+
+
+def test_timeline_separates_owner_facts_from_presentation(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    request_id = _decide(engine)
+    asyncio.run(engine.submit_approval_decision(PROJECT_ID, request_id, APPROVE_DECISION))
+    for entry in engine.inspect_approval_timeline(PROJECT_ID)["entries"]:
+        assert entry["owner_fact"] is True
+        assert "derived_title" in entry
+        assert "derived_summary" in entry
+
+
+def test_timeline_ordering_is_deterministic(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    request_id = _decide(engine)
+    asyncio.run(engine.submit_approval_decision(PROJECT_ID, request_id, APPROVE_DECISION))
+    first = [
+        e["timeline_entry_id"]
+        for e in engine.inspect_approval_timeline(PROJECT_ID)["entries"]
+    ]
+    second = [
+        e["timeline_entry_id"]
+        for e in engine.inspect_approval_timeline(PROJECT_ID)["entries"]
+    ]
+    assert first == second
+
+
+def test_timeline_output_is_bounded_and_reports_truncation(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    request_id = _decide(engine)
+    asyncio.run(engine.submit_approval_decision(PROJECT_ID, request_id, APPROVE_DECISION))
+    bounded = engine.inspect_approval_timeline(PROJECT_ID, limit=1)
+    assert len(bounded["entries"]) == 1
+    assert bounded["has_more"] is True
+    assert bounded["total_available"] >= 2
+
+
+def test_timeline_redacts_private_paths(tmp_path: Path) -> None:
+    decided = _workflow()
+    decided["human_decisions"] = [
+        {"human_decision_id": "d1", "decision": "approve",
+         "bounded_reason": "see /home/operator/secret.mp4",
+         "decided_at": "2026-02-01T11:00:00+00:00"}
+    ]
+    engine, _ = _engine(tmp_path, {"workflow_controller": decided, "safety_gate": _safety()})
+    assert "/home/operator" not in json.dumps(engine.inspect_approval_timeline(PROJECT_ID))
+
+
+def test_timeline_entries_claim_no_side_effects(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    request_id = _decide(engine)
+    asyncio.run(engine.submit_approval_decision(PROJECT_ID, request_id, APPROVE_DECISION))
+    for entry in engine.inspect_approval_timeline(PROJECT_ID)["entries"]:
+        assert entry["claims_execution"] is False
+        assert entry["claims_workflow_advance"] is False
+        assert entry["claims_safety_approval"] is False
+
+
+def test_timeline_survives_reset_because_history_is_immutable(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    request_id = _decide(engine)
+    asyncio.run(engine.submit_approval_decision(PROJECT_ID, request_id, APPROVE_DECISION))
+    before = engine.inspect_approval_timeline(PROJECT_ID)["entry_count"]
+    engine.reset_approval_control_metadata(PROJECT_ID)
+    assert engine.inspect_approval_timeline(PROJECT_ID)["entry_count"] == before
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["claims_execution", "claims_workflow_advance", "claims_safety_approval"],
+)
+def test_timeline_contract_pins_no_claims(field: str) -> None:
+    from olympus.boba.approval_controls import BobaApprovalTimelineEntryV1
+
+    entry = BobaApprovalTimelineEntryV1(
+        timeline_entry_id="t", project_id=PROJECT_ID,
+        entry_kind="approval_control_event", source_module_id="approval_controls",
+        source_record_id="e1",
+    )
+    assert getattr(entry, field) is False
+    with pytest.raises(PydanticValidationError):
+        BobaApprovalTimelineEntryV1(
+            timeline_entry_id="t", project_id=PROJECT_ID,
+            entry_kind="approval_control_event", source_module_id="approval_controls",
+            source_record_id="e1", **{field: True},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Comparison (read-only projection)
+# ---------------------------------------------------------------------------
+def _two_decisions(engine: BobaApprovalControlsV1) -> tuple[str, str]:
+    ids: list[str] = []
+    for index, kind in enumerate((APPROVE_DECISION, REJECT_DECISION)):
+        created = engine.create_approval_decision_request(
+            PROJECT_ID, approval_control_snapshot_id=_snapshot_id(engine),
+            decision_kind=kind, reason="Reviewed.",
+            idempotency_key=f"idem_cmp_{index}_key", confirmed=True,
+        )
+        request_id = str(created["review_action_request_id"])
+        asyncio.run(engine.submit_approval_decision(PROJECT_ID, request_id, kind))
+        ids.append(request_id)
+    return ids[0], ids[1]
+
+
+def test_comparison_compares_same_target_decisions(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, second = _two_decisions(engine)
+    result = engine.compare_approval_decisions(PROJECT_ID, [first, second])["comparison"]
+    assert result["compatible"] is True
+    assert result["same_target_type"] is True
+    assert result["same_target_id"] is True
+    assert len(result["owner_fact_rows"]) == 2
+
+
+def test_comparison_preserves_approve_versus_reject(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, second = _two_decisions(engine)
+    result = engine.compare_approval_decisions(PROJECT_ID, [first, second])["comparison"]
+    assert set(result["decision_kinds"]) == {"approve", "reject"}
+    assert "decision_kind" in result["differing_fields"]
+
+
+def test_comparison_preserves_stale_versus_current(tmp_path: Path) -> None:
+    engine, owner = _engine(tmp_path)
+    first, _ = _two_decisions(engine)
+    owner.stale = True
+    created = engine.create_approval_decision_request(
+        PROJECT_ID, approval_control_snapshot_id=_snapshot_id(engine),
+        decision_kind=APPROVE_DECISION, reason="Reviewed.",
+        idempotency_key="idem_cmp_stale_key", confirmed=True,
+    )
+    stale_id = str(created["review_action_request_id"])
+    asyncio.run(engine.submit_approval_decision(PROJECT_ID, stale_id, APPROVE_DECISION))
+    result = engine.compare_approval_decisions(PROJECT_ID, [first, stale_id])["comparison"]
+    states = {row["derived_state"] for row in result["presentation_rows"]}
+    assert "stale" in states
+    assert "approved" in states
+
+
+def test_comparison_reports_incompatible_targets_truthfully(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, second = _two_decisions(engine)
+    stored = engine.store.load_boba_approval_control_receipt_for_request(PROJECT_ID, second)
+    assert stored is not None
+    forged = dict(stored)
+    forged["approval_decision_receipt_id"] = "approval_decision_receipt_other"
+    forged["review_action_request_id"] = "review_action_other"
+    forged["target_id"] = "assemble"
+    engine.store.save_boba_approval_control_receipt(
+        PROJECT_ID, "approval_decision_receipt_other", forged
+    )
+    result = engine.compare_approval_decisions(
+        PROJECT_ID, [first, "review_action_other"]
+    )["comparison"]
+    assert result["compatible"] is False
+    assert result["same_target_id"] is False
+    assert "do not refer to the same target" in result["incompatibility_reason"]
+
+
+def test_comparison_requires_two_distinct_decisions(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, _ = _two_decisions(engine)
+    with pytest.raises(ValidationError):
+        engine.compare_approval_decisions(PROJECT_ID, [first])
+    with pytest.raises(ValidationError):
+        engine.compare_approval_decisions(PROJECT_ID, [first, first])
+
+
+def test_comparison_is_bounded(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, second = _two_decisions(engine)
+    with pytest.raises(ValidationError):
+        engine.compare_approval_decisions(PROJECT_ID, [first, second, "a", "b", "c"])
+
+
+def test_comparison_collapses_duplicate_references(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, second = _two_decisions(engine)
+    result = engine.compare_approval_decisions(
+        PROJECT_ID, [first, first, second]
+    )["comparison"]
+    assert result["review_action_request_ids"] == [first, second]
+
+
+def test_comparison_rejects_unknown_decision(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, _ = _two_decisions(engine)
+    with pytest.raises(ValidationError):
+        engine.compare_approval_decisions(PROJECT_ID, [first, "review_action_unknown"])
+
+
+def test_comparison_rejects_cross_project_reference(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, second = _two_decisions(engine)
+    with pytest.raises(ValidationError):
+        engine.compare_approval_decisions("another-project", [first, second])
+
+
+def test_comparison_rejects_malformed_reference(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, _ = _two_decisions(engine)
+    with pytest.raises(ValidationError):
+        engine.compare_approval_decisions(PROJECT_ID, [first, "bad id with spaces"])
+
+
+def test_comparison_selects_no_winner_and_changes_nothing(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, second = _two_decisions(engine)
+    result = engine.compare_approval_decisions(PROJECT_ID, [first, second])["comparison"]
+    assert result["no_automatic_winner"] is True
+    assert result["no_best_decision_inferred"] is True
+    assert result["authority_changed"] is False
+    assert result["mutation_performed"] is False
+    assert result["approval_created"] is False
+    assert result["safety_overridden"] is False
+
+
+def test_comparison_output_is_deterministic(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    first, second = _two_decisions(engine)
+    a = engine.compare_approval_decisions(PROJECT_ID, [first, second])["comparison"]
+    b = engine.compare_approval_decisions(PROJECT_ID, [first, second])["comparison"]
+    assert a["comparison_id"] == b["comparison_id"]
+    assert a["owner_fact_rows"] == b["owner_fact_rows"]
+    assert a["differing_fields"] == b["differing_fields"]
+
+
+def test_comparison_contract_pins_no_selection() -> None:
+    from olympus.boba.approval_controls import BobaApprovalDecisionComparisonV1
+
+    with pytest.raises(PydanticValidationError):
+        BobaApprovalDecisionComparisonV1(
+            comparison_id="c", project_id=PROJECT_ID,
+            review_action_request_ids=["a", "b"], no_automatic_winner=False,
+        )
+    with pytest.raises(PydanticValidationError):
+        BobaApprovalDecisionComparisonV1(
+            comparison_id="c", project_id=PROJECT_ID,
+            review_action_request_ids=["a", "b"], authority_changed=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# API for both new surfaces
+# ---------------------------------------------------------------------------
+def test_api_timeline_route(tmp_path: Path) -> None:
+    client, _ = _client(tmp_path)
+    response = client.get(f"{_base()}/timeline")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == "boba_approval_controls_timeline_v1"
+    assert body["mutation_performed"] is False
+    assert body["empty"] is True
+
+
+def test_api_timeline_respects_limit(tmp_path: Path) -> None:
+    client, _ = _client(tmp_path)
+    response = client.get(f"{_base()}/timeline", params={"limit": 1})
+    assert response.status_code == 200
+    assert len(response.json()["entries"]) <= 1
+
+
+def test_api_comparison_rejects_single_decision(tmp_path: Path) -> None:
+    client, _ = _client(tmp_path)
+    response = client.post(
+        f"{_base()}/comparison", json={"review_action_request_ids": ["a"]}
+    )
+    assert response.status_code == 422
+
+
+def test_api_comparison_rejects_too_many_decisions(tmp_path: Path) -> None:
+    client, _ = _client(tmp_path)
+    response = client.post(
+        f"{_base()}/comparison",
+        json={"review_action_request_ids": ["a", "b", "c", "d", "e"]},
+    )
+    assert response.status_code == 422
+
+
+def test_api_comparison_rejects_unknown_decision(tmp_path: Path) -> None:
+    client, _ = _client(tmp_path)
+    response = client.post(
+        f"{_base()}/comparison",
+        json={"review_action_request_ids": ["review_action_a", "review_action_b"]},
+    )
+    assert 400 <= response.status_code < 500
+
+
+def test_api_timeline_and_comparison_unknown_project(tmp_path: Path) -> None:
+    client, _ = _client(tmp_path)
+    base = "/api/v1/boba/projects/project-does-not-exist/approval-controls"
+    assert 400 <= client.get(f"{base}/timeline").status_code < 500
+    assert (
+        400
+        <= client.post(
+            f"{base}/comparison",
+            json={"review_action_request_ids": ["review_action_a", "review_action_b"]},
+        ).status_code
+        < 500
+    )
+
+
+def test_new_operations_are_registered_read_only() -> None:
+    ops = build_boba_operation_registry()
+    for name in (
+        "approval_controls.inspect_timeline",
+        "approval_controls.compare_decisions",
+    ):
+        assert ops[name].operation_class == "read_only"
+        assert ops[name].target_approval_required is False
+    safety = build_safety_module_operation_registry()["approval_controls"]
+    assert safety["inspect_timeline"] == "automatic_read_only"
+    assert safety["compare_decisions"] == "automatic_read_only"

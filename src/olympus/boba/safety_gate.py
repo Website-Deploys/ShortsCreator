@@ -1125,6 +1125,8 @@ def build_safety_module_operation_registry() -> dict[str, dict[str, str]]:
             "inspect_decision_status": "automatic_read_only",
             "inspect_decision_history": "automatic_read_only",
             "inspect_events": "automatic_read_only",
+            "inspect_timeline": "automatic_read_only",
+            "compare_decisions": "automatic_read_only",
             "load": "automatic_read_only",
             "export": "automatic_read_only",
             "reset": "automatic_read_only",

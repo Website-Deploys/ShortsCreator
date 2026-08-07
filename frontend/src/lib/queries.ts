@@ -207,6 +207,8 @@ export const queryKeys = {
     ["boba", "projects", id, "approval-controls", "registry"] as const,
   bobaApprovalEligibility: (id: string, targetType: string, targetId: string) =>
     ["boba", "projects", id, "approval-controls", "eligibility", targetType, targetId] as const,
+  bobaApprovalTimeline: (id: string) =>
+    ["boba", "projects", id, "approval-controls", "timeline"] as const,
   bobaApprovalDecisionHistory: (id: string) =>
     ["boba", "projects", id, "approval-controls", "history"] as const,
   bobaRepairPlanReview: (id: string) =>
@@ -4077,6 +4079,23 @@ export function useSubmitBobaApprovalDecision(projectId: string) {
         queryKey: ["boba", "projects", projectId, "workflow"],
       });
     },
+  });
+}
+
+export function useBobaApprovalTimeline(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaApprovalTimeline(projectId),
+    queryFn: () => api.getBobaApprovalTimeline(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+/** Read-only comparison. Selects no winner and mutates nothing. */
+export function useCompareBobaApprovalDecisions(projectId: string) {
+  return useMutation({
+    mutationFn: (requestIds: string[]) =>
+      api.compareBobaApprovalDecisions(projectId, requestIds),
   });
 }
 

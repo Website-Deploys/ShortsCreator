@@ -33,7 +33,7 @@ media, run a command, upload or publish.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -62,6 +62,8 @@ if TYPE_CHECKING:
 
 MAX_ELIGIBILITY_ROWS = 32
 MAX_HISTORY_ROWS = 100
+MAX_TIMELINE_ENTRIES = 100
+MAX_COMPARISON_DECISIONS = 4
 MAX_EVENTS = 100
 MAX_REASON_LENGTH = 500
 MAX_WARNINGS = 24
@@ -497,6 +499,91 @@ def approval_button_states() -> tuple[str, ...]:
         "requires_review",
         "unavailable",
     )
+
+
+class BobaApprovalTimelineEntryV1(BobaContract):
+    """One read-only timeline entry.
+
+    Owner facts are projected verbatim and kept separate from derived
+    presentation, so a reader can always tell which is which. A timeline entry
+    creates no authority and claims no execution.
+    """
+
+    timeline_entry_id: str = Field(min_length=1, max_length=180)
+    project_id: str = Field(min_length=1, max_length=128)
+    entry_kind: Literal["approval_control_event", "owner_decision_record"]
+    source_module_id: str = Field(min_length=1, max_length=180)
+    source_record_id: str = Field(min_length=1, max_length=180)
+
+    # Owner facts, exactly as the owning record stated them.
+    owner_fact: Literal[True] = True
+    event_type: str = Field(default="", max_length=160)
+    decision_kind: str | None = None
+    decision_value: str = Field(default="", max_length=80)
+    target_type: str = Field(default="", max_length=80)
+    target_id: str = Field(default="", max_length=180)
+    owning_module_id: str = Field(default="", max_length=180)
+    bounded_message: str = Field(default="", max_length=900)
+    bounded_reason: str = Field(default="", max_length=MAX_REASON_LENGTH)
+    workflow_revision: int | None = None
+    sequence: int | None = None
+    occurred_at: str | None = None
+    timestamp_precision: Literal["source", "unknown"] = "unknown"
+    confirmed_order: bool = False
+
+    # Derived presentation, clearly separated from the facts above.
+    derived_title: str = Field(default="", max_length=240)
+    derived_summary: str = Field(default="", max_length=900)
+
+    # A timeline entry never asserts a side effect.
+    claims_execution: Literal[False] = False
+    claims_workflow_advance: Literal[False] = False
+    claims_safety_approval: Literal[False] = False
+    limitations: list[str] = Field(default_factory=list, max_length=16)
+
+
+class BobaApprovalDecisionComparisonV1(BobaContract):
+    """A read-only, side-by-side comparison of existing decisions.
+
+    No winner is selected, no best decision is inferred, and no authority
+    changes. When the decisions refer to incompatible targets the comparison
+    reports that truthfully rather than inventing equivalence.
+    """
+
+    comparison_id: str = Field(min_length=1, max_length=180)
+    project_id: str = Field(min_length=1, max_length=128)
+    review_action_request_ids: list[str] = Field(
+        min_length=2, max_length=MAX_COMPARISON_DECISIONS
+    )
+    created_at: str = Field(default_factory=now_iso)
+
+    compatible: bool = False
+    incompatibility_reason: str = Field(default="", max_length=900)
+    same_target_type: bool = False
+    same_target_id: bool = False
+
+    # Owner facts per decision, projected verbatim.
+    owner_fact_rows: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=MAX_COMPARISON_DECISIONS
+    )
+    # Derived presentation, kept separate from the facts above.
+    presentation_rows: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=MAX_COMPARISON_DECISIONS
+    )
+    differing_fields: list[str] = Field(default_factory=list, max_length=32)
+    decision_kinds: list[str] = Field(default_factory=list, max_length=8)
+    canonical_statuses: list[str] = Field(default_factory=list, max_length=8)
+
+    # Pinned negatives.
+    no_automatic_winner: Literal[True] = True
+    no_best_decision_inferred: Literal[True] = True
+    authority_changed: Literal[False] = False
+    mutation_performed: Literal[False] = False
+    approval_created: Literal[False] = False
+    safety_overridden: Literal[False] = False
+
+    bounded_summary: str = Field(default="", max_length=900)
+    limitations: list[str] = Field(default_factory=list, max_length=16)
 
 
 # ----------------------------------------------------------------------
@@ -1514,3 +1601,279 @@ class BobaApprovalControlsV1:
         """Remove only interaction metadata. Every owner history is preserved."""
         _safe_id(project_id, "project id")
         return self.store.reset_boba_approval_control_metadata(project_id)
+
+    # ------------------------------------------------------------------
+    # Timeline: a read-only projection, never a second event stream
+    # ------------------------------------------------------------------
+    def inspect_approval_timeline(
+        self, project_id: str, *, limit: int = MAX_TIMELINE_ENTRIES
+    ) -> dict[str, Any]:
+        """Project the existing append-only event log and the owner's decisions.
+
+        This opens no second event stream and persists nothing. Every fact comes
+        from a record another owner already wrote; derived presentation is kept
+        in separate fields so a reader can tell the two apart.
+        """
+        _safe_id(project_id, "project id")
+        entries: list[BobaApprovalTimelineEntryV1] = []
+
+        # 1. This layer's own append-only interaction events.
+        for row in self.store.load_boba_approval_control_events(project_id):
+            if not isinstance(row, Mapping):
+                continue
+            event = _as_mapping(_safe_payload(row))
+            sequence = event.get("sequence")
+            event_type = _safe_text(event.get("event_type"), 160)
+            occurred_at = _safe_text(event.get("created_at"), 80) or None
+            entries.append(
+                BobaApprovalTimelineEntryV1(
+                    timeline_entry_id=_stable_id(
+                        "approval_timeline",
+                        project_id,
+                        "event",
+                        _safe_text(event.get("event_id"), 180),
+                    ),
+                    project_id=project_id,
+                    entry_kind="approval_control_event",
+                    source_module_id="approval_controls",
+                    source_record_id=_safe_text(event.get("event_id"), 180) or "event",
+                    event_type=event_type,
+                    decision_kind=_safe_text(event.get("decision_kind"), 80) or None,
+                    target_type=_safe_text(event.get("target_type"), 80),
+                    target_id=_safe_text(event.get("target_id"), 180),
+                    owning_module_id=_safe_text(event.get("owning_module_id"), 180),
+                    bounded_message=_safe_text(event.get("bounded_message"), 900),
+                    sequence=sequence if isinstance(sequence, int) else None,
+                    occurred_at=occurred_at,
+                    timestamp_precision="source" if occurred_at else "unknown",
+                    confirmed_order=isinstance(sequence, int),
+                    derived_title=event_type.replace("_", " ").title() or "Approval Event",
+                    derived_summary=_safe_text(event.get("bounded_message"), 900),
+                    limitations=[NOT_EXECUTION_NOTICE],
+                )
+            )
+
+        # 2. The Workflow Controller's own immutable decision records.
+        for index, row in enumerate(self.inspect_decision_history(project_id)["entries"]):
+            decided_at = _safe_text(row.get("decided_at"), 80) or None
+            decision = _safe_text(row.get("decision"), 80)
+            revision = row.get("workflow_revision")
+            entries.append(
+                BobaApprovalTimelineEntryV1(
+                    timeline_entry_id=_stable_id(
+                        "approval_timeline",
+                        project_id,
+                        "decision",
+                        _safe_text(row.get("human_decision_id"), 180) or str(index),
+                    ),
+                    project_id=project_id,
+                    entry_kind="owner_decision_record",
+                    source_module_id="workflow_controller",
+                    source_record_id=_safe_text(row.get("human_decision_id"), 180)
+                    or f"human_decision_{index}",
+                    event_type="owner_human_decision",
+                    decision_kind=decision
+                    if decision in {APPROVE_DECISION, REJECT_DECISION}
+                    else None,
+                    decision_value=decision,
+                    target_type="workflow_stage",
+                    target_id=_safe_text(row.get("stage_instance_id"), 180),
+                    owning_module_id="workflow_controller",
+                    bounded_reason=_safe_text(row.get("bounded_reason"), MAX_REASON_LENGTH),
+                    workflow_revision=revision if isinstance(revision, int) else None,
+                    occurred_at=decided_at,
+                    timestamp_precision="source" if decided_at else "unknown",
+                    confirmed_order=decided_at is not None,
+                    derived_title=f"Workflow Controller recorded: {decision or 'unknown'}",
+                    derived_summary=_safe_text(row.get("bounded_reason"), 900),
+                    limitations=[
+                        "The Workflow Controller owns this record and its revision.",
+                        NOT_EXECUTION_NOTICE,
+                    ],
+                )
+            )
+
+        # Deterministic ordering: owner timestamps first, then the append-only
+        # sequence, then a stable id. Nothing is reordered by inferred priority.
+        entries.sort(
+            key=lambda item: (
+                item.occurred_at or "",
+                item.entry_kind,
+                item.sequence if item.sequence is not None else 0,
+                item.timeline_entry_id,
+            )
+        )
+        bounded = entries[: max(1, min(limit, MAX_TIMELINE_ENTRIES))]
+        return {
+            "schema_version": "boba_approval_controls_timeline_v1",
+            "project_id": project_id,
+            "entries": [item.model_dump(mode="json") for item in bounded],
+            "entry_count": len(bounded),
+            "total_available": len(entries),
+            "has_more": len(entries) > len(bounded),
+            "empty": not entries,
+            "status": (
+                "No approval decision or approval event has been recorded for this "
+                "project."
+                if not entries
+                else f"{len(entries)} recorded entries projected from their owners."
+            ),
+            "mutation_performed": False,
+            "second_event_stream_created": False,
+            "limitations": [
+                "The timeline is a read-only projection of records their owners "
+                "already wrote. It persists nothing.",
+                "Owner facts and derived presentation are separate fields.",
+                "Entry order follows owner timestamps and the append-only sequence; "
+                "where a record has neither, the order is not confirmed.",
+                NOT_EXECUTION_NOTICE,
+                NOT_WORKFLOW_NOTICE,
+            ],
+        }
+
+    # ------------------------------------------------------------------
+    # Comparison: read-only, never selects a winner
+    # ------------------------------------------------------------------
+    def compare_approval_decisions(
+        self, project_id: str, review_action_request_ids: Sequence[str]
+    ) -> dict[str, Any]:
+        """Compare existing decisions side by side without choosing between them."""
+        _safe_id(project_id, "project id")
+        unique: list[str] = []
+        for item in review_action_request_ids:
+            request_id = _safe_id(str(item), "review action request id")
+            if request_id not in unique:
+                unique.append(request_id)
+        if len(unique) < 2:
+            raise ValidationError("At least two distinct decisions are required.")
+        if len(unique) > MAX_COMPARISON_DECISIONS:
+            raise ValidationError(
+                f"At most {MAX_COMPARISON_DECISIONS} decisions may be compared."
+            )
+
+        receipts: list[BobaApprovalDecisionReceiptV1] = []
+        for request_id in unique:
+            stored = self.store.load_boba_approval_control_receipt_for_request(
+                project_id, request_id
+            )
+            if not isinstance(stored, Mapping):
+                raise ValidationError(
+                    f"Decision '{request_id}' is unknown for this project."
+                )
+            receipt = BobaApprovalDecisionReceiptV1.model_validate(stored)
+            if receipt.project_id != project_id:
+                raise ValidationError("A decision belongs to another project.")
+            receipts.append(receipt)
+
+        target_types = {r.target_type for r in receipts}
+        target_ids = {r.target_id for r in receipts}
+        same_target_type = len(target_types) == 1
+        same_target_id = len(target_ids) == 1
+        compatible = same_target_type and same_target_id
+        incompatibility = ""
+        if not compatible:
+            incompatibility = (
+                "These decisions do not refer to the same target, so their fields "
+                f"are not equivalent. Target types seen: {sorted(target_types)}. "
+                f"Target ids seen: {sorted(target_ids)}."
+            )
+
+        owner_rows = [
+            {
+                "review_action_request_id": r.review_action_request_id,
+                "decision_kind": r.decision_kind,
+                "user_decision_recorded": r.user_decision_recorded,
+                "user_decision_value": r.user_decision_value,
+                "owner_accepted": r.owner_accepted,
+                "canonical_status": r.canonical_status,
+                "canonical_record_id": r.canonical_record_id,
+                "owning_module_id": r.owning_module_id,
+                "owning_operation_id": r.owning_operation_id,
+                "target_type": r.target_type,
+                "target_id": r.target_id,
+                "stale_state_rejected": r.stale_state_rejected,
+                "duplicate_request_reused": r.duplicate_request_reused,
+                "already_decided": r.already_decided,
+                "error_code": r.error_code,
+                "safety_decision_present": r.safety_decision_present,
+                "execution_reported_by_owner": r.execution_reported_by_owner,
+                "workflow_advanced": r.workflow_advanced,
+                "submitted_at": r.submitted_at,
+                "completed_at": r.completed_at,
+            }
+            for r in receipts
+        ]
+
+        def state_of(r: BobaApprovalDecisionReceiptV1) -> str:
+            if r.stale_state_rejected:
+                return "stale"
+            if r.already_decided:
+                return "already_decided"
+            if not r.owner_accepted:
+                return "not_accepted"
+            return "approved" if r.decision_kind == APPROVE_DECISION else "rejected"
+
+        presentation_rows = [
+            {
+                "review_action_request_id": r.review_action_request_id,
+                "derived_state": state_of(r),
+                "derived_label": (
+                    f"{r.owning_module_id} recorded {r.decision_kind}"
+                    if r.owner_accepted
+                    else f"not accepted ({r.canonical_status})"
+                ),
+                "derived_claims_no_side_effects": not (
+                    r.execution_reported_by_owner or r.workflow_advanced
+                ),
+            }
+            for r in receipts
+        ]
+
+        compared_fields = (
+            "decision_kind",
+            "owner_accepted",
+            "canonical_status",
+            "target_type",
+            "target_id",
+            "stale_state_rejected",
+            "already_decided",
+            "error_code",
+            "owning_module_id",
+        )
+        differing = sorted(
+            field
+            for field in compared_fields
+            if len({str(row[field]) for row in owner_rows}) > 1
+        )
+        comparison = BobaApprovalDecisionComparisonV1(
+            comparison_id=_stable_id("approval_comparison", project_id, *unique),
+            project_id=project_id,
+            review_action_request_ids=unique,
+            compatible=compatible,
+            incompatibility_reason=_safe_text(incompatibility, 900),
+            same_target_type=same_target_type,
+            same_target_id=same_target_id,
+            owner_fact_rows=owner_rows,
+            presentation_rows=presentation_rows,
+            differing_fields=differing,
+            decision_kinds=sorted({r.decision_kind for r in receipts}),
+            canonical_statuses=sorted({r.canonical_status for r in receipts}),
+            bounded_summary=_safe_text(
+                f"Comparing {len(unique)} recorded decisions field by field."
+                if compatible
+                else f"Comparing {len(unique)} decisions that do not share a target.",
+                900,
+            ),
+            limitations=[
+                "No winner is selected and no best decision is inferred.",
+                "Owner facts and derived presentation are separate fields.",
+                "Comparison reads persisted receipts only; nothing is mutated.",
+                NOT_EXECUTION_NOTICE,
+                NOT_SAFETY_NOTICE,
+            ],
+        )
+        return {
+            "schema_version": "boba_approval_controls_comparison_v1",
+            "project_id": project_id,
+            "comparison": comparison.model_dump(mode="json"),
+        }

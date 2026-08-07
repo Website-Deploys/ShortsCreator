@@ -190,6 +190,41 @@ describe("api client exposes only the fixed routes", () => {
   });
 });
 
+describe("read-only lifecycle surfaces are exposed", () => {
+  it("declares the timeline client method", () => {
+    expect(apiClient).toContain("getBobaApprovalTimeline: (");
+  });
+  it("declares the comparison client method", () => {
+    expect(apiClient).toContain("compareBobaApprovalDecisions: (");
+  });
+  it("targets the fixed timeline route", () => {
+    expect(apiClient).toContain("approval-controls/timeline");
+  });
+  it("targets the fixed comparison route", () => {
+    expect(apiClient).toContain("approval-controls/comparison");
+  });
+  it("declares the timeline query hook", () => {
+    expect(queries).toContain("export function useBobaApprovalTimeline(");
+  });
+  it("declares the comparison hook", () => {
+    expect(queries).toContain("export function useCompareBobaApprovalDecisions(");
+  });
+  it("declares a timeline query key", () => {
+    expect(queries).toContain("bobaApprovalTimeline: (");
+  });
+  it("states the comparison mutates nothing", () => {
+    expect(flat(queries)).toContain("Selects no winner and mutates nothing");
+  });
+  it("keeps both surfaces free of execution tokens", () => {
+    const lines = apiClient
+      .split("\n")
+      .filter((line) => line.includes("timeline") || line.includes("comparison"));
+    for (const token of ["execute", "advance", "publish", "upload", "render"]) {
+      expect(lines.some((line) => line.includes(token))).toBe(false);
+    }
+  });
+});
+
 describe("react query invalidates canonical state after a decision", () => {
   it.each([
     "useBobaApprovalEligibility", "useBobaApprovalControlRegistry",

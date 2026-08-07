@@ -119,14 +119,56 @@ error receipt.
 
 ## 11. API
 
-Eleven project-scoped routes under `/boba/projects/{project_id}/approval-controls`:
+Thirteen project-scoped routes under `/boba/projects/{project_id}/approval-controls`:
 root, `registry`, `eligibility`, `snapshots`, `snapshots/{id}/revalidate`,
 `decisions`, `decisions/{id}/submit`, `decisions/{id}`, `history`, `events`,
-`export`, plus `DELETE` for the metadata reset.
+`timeline`, `comparison`, `export`, plus `DELETE` for the metadata reset.
 
-Twelve integration-layer operations are registered; Safety Gate classifies all
-twelve, with `submit_decision` as `approval_required_read_only` and the rest
-`automatic_read_only`.
+Fourteen integration-layer operations are registered; Safety Gate classifies all
+fourteen, with `submit_decision` as `approval_required_read_only` and the other
+thirteen `automatic_read_only`.
+
+### 11a. Timeline (read-only)
+
+`GET /timeline` projects the existing append-only Approval Controls event log
+together with the Workflow Controller's own immutable human-decision records. It
+persists nothing, opens no second event stream and mutates nothing.
+
+- **Owner facts are separate from derived presentation.** Every entry carries
+  `owner_fact: Literal[True]` for the verbatim fields, plus distinct
+  `derived_title` and `derived_summary` fields for presentation.
+- **Deterministic ordering** by owner timestamp, then entry kind, then the
+  append-only sequence, then a stable id. Nothing is reordered by inferred
+  priority, and `timestamp_precision` / `confirmed_order` report honestly when a
+  record has no timestamp.
+- **Bounded** to 100 entries with `has_more` and `total_available`.
+- **Redaction** reuses the existing helpers, so private paths never appear.
+- **Truthful empty status** rather than an empty array with no explanation.
+- Every entry pins `claims_execution`, `claims_workflow_advance` and
+  `claims_safety_approval` to `False`.
+- Because registries, receipts and the event log are immutable, the timeline
+  survives a metadata reset unchanged.
+
+### 11b. Comparison (read-only)
+
+`POST /comparison` compares 2–4 existing decisions by exact
+`review_action_request_id`.
+
+- **Refuses** fewer than two distinct decisions, more than four, unknown ids,
+  malformed ids and any cross-project reference.
+- **Selects nothing**: `no_automatic_winner` and `no_best_decision_inferred` are
+  pinned `True`; `authority_changed`, `mutation_performed`, `approval_created`
+  and `safety_overridden` are pinned `False`.
+- **Preserves state differences** across approve / reject / stale /
+  already-decided / not-accepted rather than flattening them.
+- **Owner facts and presentation are separate lists** (`owner_fact_rows` versus
+  `presentation_rows`), with `differing_fields` computed over owner facts only.
+- **Incompatible targets are reported truthfully**: when the decisions do not
+  share a target type and id, `compatible` is `False` and
+  `incompatibility_reason` names the target types and ids seen, rather than
+  inventing equivalence.
+- Deterministic: the comparison id and both row lists are stable across
+  rebuilds.
 
 ## 12. Frontend
 
@@ -154,9 +196,9 @@ decision the owner registry does not offer.
 
 ## 15. Testing
 
-- Validator: **110 scenarios across 22 groups**, plus **35 self-checks**
-- Backend: **268 tests**
-- Frontend: **175 tests** (98 logic, 77 source contract)
+- Validator: **138 scenarios across 24 groups**, plus **39 self-checks**
+- Backend: **333 tests**
+- Frontend: **184 tests** (98 logic, 86 source contract)
 
 ## 16. Limitations
 
@@ -169,5 +211,9 @@ decision the owner registry does not offer.
   two-button surface; it is not offered rather than being mislabelled.
 - Approval does **not** execute anything, advance a workflow, restore a
   checkpoint, grant Safety or Rights, upload or publish.
+- The timeline and comparison endpoints are **read-only projections**. They
+  create no authority, execute nothing, and persist no new model. Comparison
+  reports incompatibility rather than asserting equivalence, and never ranks or
+  recommends a decision.
 - This has not been exercised against production data and is not a
   production-readiness claim.

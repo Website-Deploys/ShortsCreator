@@ -2237,6 +2237,20 @@ export const api = {
         after_sequence: String(afterSequence),
       })}`,
     ),
+  getBobaApprovalTimeline: (projectId: string, limit = 100) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/approval-controls/timeline${_qs({
+        limit: String(limit),
+      })}`,
+    ),
+  compareBobaApprovalDecisions: (projectId: string, requestIds: string[]) =>
+    request<{ comparison: Record<string, unknown> }>(
+      `/boba/projects/${projectId}/approval-controls/comparison`,
+      {
+        method: "POST",
+        body: JSON.stringify({ review_action_request_ids: requestIds }),
+      },
+    ),
   exportBobaApprovalControls: (projectId: string) =>
     request<Record<string, unknown>>(
       `/boba/projects/${projectId}/approval-controls/export`,

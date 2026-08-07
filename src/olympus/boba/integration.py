@@ -441,6 +441,8 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "approval_controls.inspect_decision_status",
     "approval_controls.inspect_decision_history",
     "approval_controls.inspect_events",
+    "approval_controls.inspect_timeline",
+    "approval_controls.compare_decisions",
     "approval_controls.load",
     "approval_controls.export",
     "approval_controls.reset",
@@ -1861,6 +1863,18 @@ class BobaIntegration:
     ) -> dict[str, Any]:
         return self.approval_controls.inspect_approval_events(
             project_id, after_sequence=after_sequence, limit=limit
+        )
+
+    def inspect_boba_approval_timeline(
+        self, project_id: str, *, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.approval_controls.inspect_approval_timeline(project_id, limit=limit)
+
+    def compare_boba_approval_decisions(
+        self, project_id: str, review_action_request_ids: list[str]
+    ) -> dict[str, Any]:
+        return self.approval_controls.compare_approval_decisions(
+            project_id, review_action_request_ids
         )
 
     def build_boba_approval_controls(

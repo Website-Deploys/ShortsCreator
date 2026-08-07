@@ -144,7 +144,7 @@ _CONDITION_GROUPS: dict[str, tuple[str, ...]] = {
         "no-second-database",
         "no-secrets-persisted",
     ),
-    "api": ("routes-registered", "project-scoped", "twelve-operations-registered"),
+    "api": ("routes-registered", "project-scoped", "fourteen-operations-registered"),
     "frontend-contract": (
         "module-present",
         "declares-no-authority",
@@ -174,6 +174,38 @@ _CONDITION_GROUPS: dict[str, tuple[str, ...]] = {
         "preserves-receipts",
         "preserves-event-log",
         "removes-no-media",
+    ),
+    "timeline": (
+        "empty-timeline-truthful",
+        "projects-control-events",
+        "includes-owner-decision-records",
+        "owner-facts-flagged",
+        "derived-presentation-separate",
+        "deterministic-ordering",
+        "bounded-output",
+        "reports-has-more",
+        "redacts-private-paths",
+        "no-mutation",
+        "no-second-event-stream",
+        "claims-no-execution",
+        "survives-reset",
+    ),
+    "comparison": (
+        "compares-same-target",
+        "requires-two-decisions",
+        "bounded-maximum",
+        "collapses-duplicates",
+        "rejects-unknown-decision",
+        "rejects-cross-project",
+        "preserves-approve-vs-reject",
+        "preserves-stale-vs-current",
+        "lists-differing-fields",
+        "incompatible-target-is-truthful",
+        "no-automatic-winner",
+        "no-best-decision-inferred",
+        "no-authority-change",
+        "owner-facts-separate-from-presentation",
+        "deterministic-output",
     ),
     "regression-protection": (
         "review-ui-registry-untouched",
@@ -968,7 +1000,7 @@ def _run_api() -> list[ScenarioResult]:
     c["project-scoped"] = (
         all("{project_id}" in p for p in paths), "every route is project scoped"
     )
-    c["twelve-operations-registered"] = (len(ops) == 12, f"{len(ops)} operations")
+    c["fourteen-operations-registered"] = (len(ops) == 14, f"{len(ops)} operations")
     return _group("api", c)
 
 
@@ -1095,6 +1127,200 @@ def _run_regression_protection() -> list[ScenarioResult]:
     return _group("regression-protection", c)
 
 
+def _run_timeline() -> list[ScenarioResult]:
+    c: dict[str, tuple[bool, str]] = {}
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        empty, _ = _engine(root / "empty")
+        t0 = empty.inspect_approval_timeline(PROJECT_ID)
+        c["empty-timeline-truthful"] = (
+            t0["empty"] is True and t0["entry_count"] == 0
+            and "No approval decision" in t0["status"],
+            "an empty timeline says so plainly",
+        )
+        c["no-mutation"] = (t0["mutation_performed"] is False, "pinned false")
+        c["no-second-event-stream"] = (
+            t0["second_event_stream_created"] is False, "pinned false"
+        )
+
+        e, _ = _state_engine(root / "a", _eligible_raw())
+        request_id, _ = _decide(e)
+        _submit(e, request_id, APPROVE_DECISION)
+        t = e.inspect_approval_timeline(PROJECT_ID)
+        entries = t["entries"]
+        c["projects-control-events"] = (
+            any(x["entry_kind"] == "approval_control_event" for x in entries),
+            f"{len(entries)} entries projected",
+        )
+        c["owner-facts-flagged"] = (
+            all(x["owner_fact"] is True for x in entries), "every entry marks owner facts"
+        )
+        c["derived-presentation-separate"] = (
+            all("derived_title" in x and "derived_summary" in x for x in entries),
+            "derived fields are separate from owner facts",
+        )
+        c["deterministic-ordering"] = (
+            [x["timeline_entry_id"] for x in entries]
+            == [x["timeline_entry_id"] for x in e.inspect_approval_timeline(PROJECT_ID)["entries"]],
+            "identical order across rebuilds",
+        )
+        c["bounded-output"] = (
+            len(e.inspect_approval_timeline(PROJECT_ID, limit=1)["entries"]) == 1,
+            "output honours the limit",
+        )
+        c["reports-has-more"] = (
+            e.inspect_approval_timeline(PROJECT_ID, limit=1)["has_more"] is True,
+            "truncation is reported",
+        )
+        c["claims-no-execution"] = (
+            all(
+                x["claims_execution"] is False
+                and x["claims_workflow_advance"] is False
+                and x["claims_safety_approval"] is False
+                for x in entries
+            ),
+            "no entry claims a side effect",
+        )
+        before = len(entries)
+        e.reset_approval_control_metadata(PROJECT_ID)
+        c["survives-reset"] = (
+            len(e.inspect_approval_timeline(PROJECT_ID)["entries"]) == before,
+            "immutable history survives the metadata reset",
+        )
+
+        decided = _workflow_payload()
+        decided["human_decisions"] = [
+            {
+                "human_decision_id": "d1",
+                "decision": "reject",
+                "bounded_reason": "check /home/operator/secret.mp4",
+                "decided_at": "2026-02-01T11:00:00+00:00",
+                "workflow_revision": 3,
+                "stage_instance_id": "render",
+            }
+        ]
+        owner_engine, _ = _state_engine(
+            root / "b", _eligible_raw(workflow_controller=decided)
+        )
+        owner_timeline = owner_engine.inspect_approval_timeline(PROJECT_ID)
+        rows = [
+            x for x in owner_timeline["entries"] if x["entry_kind"] == "owner_decision_record"
+        ]
+        c["includes-owner-decision-records"] = (
+            bool(rows) and rows[0]["source_module_id"] == "workflow_controller",
+            "the owner's own decision records are projected",
+        )
+        c["redacts-private-paths"] = (
+            "/home/operator" not in json.dumps(owner_timeline),
+            "private paths are redacted by the existing helpers",
+        )
+    return _group("timeline", c)
+
+
+def _run_comparison() -> list[ScenarioResult]:
+    c: dict[str, tuple[bool, str]] = {}
+    with tempfile.TemporaryDirectory() as raw:
+        e, owner = _state_engine(Path(raw), _eligible_raw())
+
+        def decide(kind: str, key: str) -> str:
+            sid = _prepared(e)["snapshot"]["approval_control_snapshot_id"]
+            created = e.create_approval_decision_request(
+                PROJECT_ID, approval_control_snapshot_id=sid, decision_kind=kind,
+                reason="Reviewed.", idempotency_key=key, confirmed=True,
+            )
+            request_id = str(created["review_action_request_id"])
+            _submit(e, request_id, kind)
+            return request_id
+
+        first = decide(APPROVE_DECISION, "idem_cmp_one_key")
+        second = decide(REJECT_DECISION, "idem_cmp_two_key")
+        result = e.compare_approval_decisions(PROJECT_ID, [first, second])["comparison"]
+
+        c["compares-same-target"] = (
+            result["compatible"] is True and result["same_target_id"] is True,
+            "decisions on the same target compare cleanly",
+        )
+        c["requires-two-decisions"] = _expect_error(
+            e.compare_approval_decisions, PROJECT_ID, [first]
+        )
+        c["bounded-maximum"] = _expect_error(
+            e.compare_approval_decisions, PROJECT_ID, [first, second, "a", "b", "c"]
+        )
+        c["collapses-duplicates"] = (
+            len(
+                e.compare_approval_decisions(PROJECT_ID, [first, first, second])[
+                    "comparison"
+                ]["review_action_request_ids"]
+            )
+            == 2,
+            "duplicate ids are collapsed",
+        )
+        c["rejects-unknown-decision"] = _expect_error(
+            e.compare_approval_decisions, PROJECT_ID, [first, "review_action_unknown"]
+        )
+        c["rejects-cross-project"] = _expect_error(
+            e.compare_approval_decisions, "another-project", [first, second]
+        )
+        c["preserves-approve-vs-reject"] = (
+            set(result["decision_kinds"]) == {"approve", "reject"},
+            "approve and reject stay distinct",
+        )
+        c["lists-differing-fields"] = (
+            "decision_kind" in result["differing_fields"],
+            f"differing: {result['differing_fields'][:4]}",
+        )
+        c["no-automatic-winner"] = (
+            result["no_automatic_winner"] is True, "pinned true"
+        )
+        c["no-best-decision-inferred"] = (
+            result["no_best_decision_inferred"] is True, "pinned true"
+        )
+        c["no-authority-change"] = (
+            result["authority_changed"] is False
+            and result["mutation_performed"] is False
+            and result["approval_created"] is False
+            and result["safety_overridden"] is False,
+            "every write claim is pinned false",
+        )
+        c["owner-facts-separate-from-presentation"] = (
+            len(result["owner_fact_rows"]) == 2 and len(result["presentation_rows"]) == 2,
+            "owner facts and presentation are separate lists",
+        )
+        c["deterministic-output"] = (
+            result["comparison_id"]
+            == e.compare_approval_decisions(PROJECT_ID, [first, second])["comparison"][
+                "comparison_id"
+            ],
+            "the comparison id is stable",
+        )
+        owner.stale = True
+        third = decide(APPROVE_DECISION, "idem_cmp_three_key")
+        stale_result = e.compare_approval_decisions(PROJECT_ID, [first, third])["comparison"]
+        states = {row["derived_state"] for row in stale_result["presentation_rows"]}
+        c["preserves-stale-vs-current"] = (
+            "stale" in states and "approved" in states,
+            f"states preserved: {sorted(states)}",
+        )
+        # An incompatible target must be reported, never smoothed over.
+        forged = e.store.load_boba_approval_control_receipt_for_request(PROJECT_ID, second)
+        assert forged is not None
+        forged = dict(forged)
+        forged["approval_decision_receipt_id"] = "approval_decision_receipt_other_target"
+        forged["review_action_request_id"] = "review_action_other_target"
+        forged["target_id"] = "assemble"
+        e.store.save_boba_approval_control_receipt(
+            PROJECT_ID, "approval_decision_receipt_other_target", forged
+        )
+        mixed = e.compare_approval_decisions(
+            PROJECT_ID, [first, "review_action_other_target"]
+        )["comparison"]
+        c["incompatible-target-is-truthful"] = (
+            mixed["compatible"] is False and bool(mixed["incompatibility_reason"]),
+            "an incompatible target yields a bounded truthful result",
+        )
+    return _group("comparison", c)
+
+
 _GROUP_RUNNERS: dict[str, Callable[[], list[ScenarioResult]]] = {
     "registry": _run_registry,
     "eligibility": _run_eligibility,
@@ -1117,6 +1343,8 @@ _GROUP_RUNNERS: dict[str, Callable[[], list[ScenarioResult]]] = {
     "frontend-contract": _run_frontend_contract,
     "security": _run_security,
     "reset": _run_reset,
+    "timeline": _run_timeline,
+    "comparison": _run_comparison,
     "regression-protection": _run_regression_protection,
 }
 
@@ -1162,8 +1390,8 @@ def run_self_check() -> list[ScenarioResult]:
 
         add("module-imports", bool(build_fixed_approval_decision_registry()), "registry builds")
         add("contracts-serialize", isinstance(json.dumps(controls), str), "set serialises")
-        add("operations-registered", len(ops) == 12, f"{len(ops)} operations")
-        add("safety-classified", len(sg) == 12, f"{len(sg)} classifications")
+        add("operations-registered", len(ops) == 14, f"{len(ops)} operations")
+        add("safety-classified", len(sg) == 14, f"{len(sg)} classifications")
         add(
             "no-execution-classification",
             set(sg.values()) <= {"automatic_read_only", "approval_required_read_only"},
@@ -1211,6 +1439,29 @@ def run_self_check() -> list[ScenarioResult]:
             "the four notices are the exact required sentences",
         )
         add("no-command-runner", "subprocess" not in src, "no command runner in the module")
+        timeline = e.inspect_approval_timeline(PROJECT_ID)
+        add(
+            "timeline-is-read-only",
+            timeline["mutation_performed"] is False
+            and timeline["second_event_stream_created"] is False,
+            "the timeline mutates nothing and opens no second stream",
+        )
+        add(
+            "timeline-separates-facts",
+            all(x["owner_fact"] is True for x in timeline["entries"]),
+            "owner facts are flagged and kept separate from presentation",
+        )
+        add(
+            "operations-include-timeline-and-comparison",
+            {"inspect_timeline", "compare_decisions"} <= ops,
+            "both read-only projections are registered operations",
+        )
+        add(
+            "timeline-and-comparison-classified-read-only",
+            sg.get("inspect_timeline") == "automatic_read_only"
+            and sg.get("compare_decisions") == "automatic_read_only",
+            "both are Safety-classified automatic read-only",
+        )
         add("frontend-present", bool(lib) and bool(comp), "frontend modules exist")
         add(
             "frontend-no-optimistic-approval",
