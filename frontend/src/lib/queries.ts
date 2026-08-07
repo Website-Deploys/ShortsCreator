@@ -13,6 +13,7 @@ import type {
   BobaCandidateActionInput,
   BobaClipBriefActionInput,
   BobaErrorDoctorActionInput,
+  BobaRepairPlanActionInput,
   BobaReviewActionInput,
   BobaReviewSessionInput,
 } from "@/lib/apiClient";
@@ -200,6 +201,40 @@ export const queryKeys = {
     ["boba", "projects", id, "error-doctor-review", "incident", incidentId] as const,
   bobaIncidentTimeline: (id: string) =>
     ["boba", "projects", id, "error-doctor-review", "timeline"] as const,
+  bobaRepairPlanReview: (id: string) =>
+    ["boba", "projects", id, "repair-plan-review"] as const,
+  bobaRepairPlanRegistry: (id: string) =>
+    ["boba", "projects", id, "repair-plan-review", "registry"] as const,
+  bobaRepairPlanQueue: (id: string, filter: string, sort: string) =>
+    ["boba", "projects", id, "repair-plan-review", "queue", filter, sort] as const,
+  bobaRepairPlanDetail: (id: string, repairPlanId: string) =>
+    ["boba", "projects", id, "repair-plan-review", "plan", repairPlanId] as const,
+  bobaRepairPlanSteps: (id: string, repairPlanId: string) =>
+    ["boba", "projects", id, "repair-plan-review", "plan", repairPlanId, "steps"] as const,
+  bobaRepairPlanRisk: (id: string, repairPlanId: string) =>
+    ["boba", "projects", id, "repair-plan-review", "plan", repairPlanId, "risk"] as const,
+  bobaRepairPlanApprovals: (id: string, repairPlanId: string) =>
+    [
+      "boba", "projects", id, "repair-plan-review", "plan", repairPlanId, "approvals",
+    ] as const,
+  bobaRepairPlanVerification: (id: string, repairPlanId: string) =>
+    [
+      "boba", "projects", id, "repair-plan-review", "plan", repairPlanId, "verification",
+    ] as const,
+  bobaRepairPlanEvidence: (id: string, repairPlanId: string) =>
+    [
+      "boba", "projects", id, "repair-plan-review", "plan", repairPlanId, "evidence",
+    ] as const,
+  bobaRepairPlanRecovery: (id: string, repairPlanId: string) =>
+    [
+      "boba", "projects", id, "repair-plan-review", "plan", repairPlanId, "recovery",
+    ] as const,
+  bobaRepairPlanConflicts: (id: string, repairPlanId: string) =>
+    [
+      "boba", "projects", id, "repair-plan-review", "plan", repairPlanId, "conflicts",
+    ] as const,
+  bobaRepairPlanTimeline: (id: string) =>
+    ["boba", "projects", id, "repair-plan-review", "timeline"] as const,
   bobaClipBriefReview: (id: string) =>
     ["boba", "projects", id, "clip-brief-review"] as const,
   bobaClipBriefRegistry: (id: string) =>
@@ -3714,4 +3749,230 @@ export function useSubmitBobaErrorDoctorAction(projectId: string) {
 
 export function useExportBobaErrorDoctorReview(projectId: string) {
   return useMutation({ mutationFn: () => api.exportBobaErrorDoctorReview(projectId) });
+}
+
+/* ------------------------------------------------------------------ */
+/* BOBA Repair Plan Panel V1                                           */
+/*                                                                     */
+/* Read-only queries plus one acknowledgement mutation. No hook here    */
+/* approves, rejects, revises or executes a repair plan, runs a         */
+/* command, restores a checkpoint, restarts a process or changes a      */
+/* workflow. Plan state is always re-read from its owner.               */
+/* ------------------------------------------------------------------ */
+
+export function useBobaRepairPlanReview(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanReview(projectId),
+    queryFn: () => api.getBobaRepairPlanReview(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaRepairPlanRegistry(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanRegistry(projectId),
+    queryFn: () => api.getBobaRepairPlanReviewRegistry(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useBobaRepairPlanQueue(
+  projectId: string,
+  options: { filter?: string; sort?: string; enabled?: boolean } = {},
+) {
+  const filter = options.filter ?? "all_current";
+  const sort = options.sort ?? "review_priority";
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanQueue(projectId, filter, sort),
+    queryFn: () =>
+      api.getBobaRepairPlanQueue(projectId, { review_filter: filter, sort, limit: 50 }),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
+    staleTime: 10_000,
+  });
+}
+
+export function useBobaRepairPlan(projectId: string, repairPlanId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanDetail(projectId, repairPlanId ?? "none"),
+    queryFn: () => api.getBobaRepairPlan(projectId, repairPlanId!),
+    enabled: Boolean(projectId) && Boolean(repairPlanId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaRepairPlanSteps(projectId: string, repairPlanId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanSteps(projectId, repairPlanId ?? "none"),
+    queryFn: () => api.getBobaRepairPlanSteps(projectId, repairPlanId!),
+    enabled: Boolean(projectId) && Boolean(repairPlanId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaRepairPlanRisk(projectId: string, repairPlanId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanRisk(projectId, repairPlanId ?? "none"),
+    queryFn: () => api.getBobaRepairPlanRisk(projectId, repairPlanId!),
+    enabled: Boolean(projectId) && Boolean(repairPlanId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaRepairPlanApprovals(
+  projectId: string,
+  repairPlanId: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanApprovals(projectId, repairPlanId ?? "none"),
+    queryFn: () => api.getBobaRepairPlanApprovals(projectId, repairPlanId!),
+    enabled: Boolean(projectId) && Boolean(repairPlanId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaRepairPlanVerification(
+  projectId: string,
+  repairPlanId: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanVerification(projectId, repairPlanId ?? "none"),
+    queryFn: () => api.getBobaRepairPlanVerification(projectId, repairPlanId!),
+    enabled: Boolean(projectId) && Boolean(repairPlanId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaRepairPlanEvidence(
+  projectId: string,
+  repairPlanId: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanEvidence(projectId, repairPlanId ?? "none"),
+    queryFn: () => api.getBobaRepairPlanEvidence(projectId, repairPlanId!),
+    enabled: Boolean(projectId) && Boolean(repairPlanId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaRepairPlanRecoveryHistory(
+  projectId: string,
+  repairPlanId: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanRecovery(projectId, repairPlanId ?? "none"),
+    queryFn: () => api.getBobaRepairPlanRecoveryHistory(projectId, repairPlanId!),
+    enabled: Boolean(projectId) && Boolean(repairPlanId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaRepairPlanConflicts(
+  projectId: string,
+  repairPlanId: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanConflicts(projectId, repairPlanId ?? "none"),
+    queryFn: () => api.getBobaRepairPlanConflicts(projectId, repairPlanId!),
+    enabled: Boolean(projectId) && Boolean(repairPlanId),
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaRepairPlanTimeline(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaRepairPlanTimeline(projectId),
+    queryFn: () => api.getBobaRepairPlanTimeline(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 20_000,
+  });
+}
+
+export function useCreateBobaRepairPlanReviewSession(projectId: string) {
+  return useMutation({
+    mutationFn: (input: { reviewer_context_id: string }) =>
+      api.createBobaRepairPlanReviewSession(projectId, input),
+  });
+}
+
+export function useUpdateBobaRepairPlanReviewSession(projectId: string) {
+  return useMutation({
+    mutationFn: ({
+      sessionId,
+      updates,
+    }: {
+      sessionId: string;
+      updates: Record<string, unknown>;
+    }) => api.updateBobaRepairPlanReviewSession(projectId, sessionId, updates),
+  });
+}
+
+export function useCreateBobaRepairPlanSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: ({
+      repairPlanId,
+      sessionId,
+    }: {
+      repairPlanId: string;
+      sessionId: string;
+    }) => api.createBobaRepairPlanSnapshot(projectId, repairPlanId, sessionId),
+  });
+}
+
+export function useRefreshBobaRepairPlanSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: (snapshotId: string) =>
+      api.refreshBobaRepairPlanSnapshot(projectId, snapshotId),
+  });
+}
+
+export function useCompareBobaRepairPlans(projectId: string) {
+  return useMutation({
+    mutationFn: (repairPlanIds: string[]) =>
+      api.compareBobaRepairPlans(projectId, repairPlanIds),
+  });
+}
+
+export function useCreateBobaRepairPlanAction(projectId: string) {
+  return useMutation({
+    mutationFn: (input: BobaRepairPlanActionInput) =>
+      api.createBobaRepairPlanAction(projectId, input),
+  });
+}
+
+export function useValidateBobaRepairPlanAction(projectId: string) {
+  return useMutation({
+    mutationFn: (requestId: string) =>
+      api.validateBobaRepairPlanAction(projectId, requestId),
+  });
+}
+
+/**
+ * Submit a confirmed repair-plan action to its canonical owner.
+ *
+ * Every affected canonical query is invalidated on completion. Plan state is
+ * only ever re-read from the owning module, never assumed from the response.
+ */
+export function useSubmitBobaRepairPlanAction(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (requestId: string) =>
+      api.submitBobaRepairPlanAction(projectId, requestId),
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["boba", "projects", projectId, "repair-plan-review"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["boba", "projects", projectId, "error-doctor-review"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaReviewUi(projectId),
+      });
+    },
+  });
+}
+
+export function useExportBobaRepairPlanReview(projectId: string) {
+  return useMutation({ mutationFn: () => api.exportBobaRepairPlanReview(projectId) });
 }

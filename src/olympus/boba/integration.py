@@ -147,6 +147,12 @@ from olympus.boba.performance_feedback import (
 from olympus.boba.project_memory import build_and_save_project_memory
 from olympus.boba.ranking import rank_candidates
 from olympus.boba.reasoning import explain_clip_selection, summarize_project_understanding
+from olympus.boba.repair_plan_review import (
+    BobaRepairPlanReviewV1,
+    RepairPlanComparisonType,
+    RepairPlanReviewFilter,
+    RepairPlanReviewSort,
+)
 from olympus.boba.repair_planner import (
     BobaRepairPlannerSetV1,
     BobaRepairPlannerV1,
@@ -425,6 +431,33 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "error_doctor_review.load",
     "error_doctor_review.export",
     "error_doctor_review.reset",
+    "repair_plan_review.inspect_registry",
+    "repair_plan_review.create_session",
+    "repair_plan_review.update_session",
+    "repair_plan_review.build_queue",
+    "repair_plan_review.inspect_queue",
+    "repair_plan_review.build_snapshot",
+    "repair_plan_review.refresh_snapshot",
+    "repair_plan_review.inspect_plan",
+    "repair_plan_review.inspect_steps",
+    "repair_plan_review.inspect_risks",
+    "repair_plan_review.inspect_approvals",
+    "repair_plan_review.inspect_verification",
+    "repair_plan_review.inspect_evidence",
+    "repair_plan_review.inspect_recovery_history",
+    "repair_plan_review.detect_conflicts",
+    "repair_plan_review.inspect_conflicts",
+    "repair_plan_review.compare_plans",
+    "repair_plan_review.describe_confirmation",
+    "repair_plan_review.create_action",
+    "repair_plan_review.validate_action",
+    "repair_plan_review.submit_action",
+    "repair_plan_review.inspect_receipt",
+    "repair_plan_review.inspect_timeline",
+    "repair_plan_review.inspect_events",
+    "repair_plan_review.load",
+    "repair_plan_review.export",
+    "repair_plan_review.reset",
     "clip_brief_review.inspect_registry",
     "clip_brief_review.create_session",
     "clip_brief_review.update_session",
@@ -546,6 +579,7 @@ class BobaIntegration:
         self.candidate_review = BobaCandidateReviewV1(store, self)
         self.clip_brief_review = BobaClipBriefReviewV1(store, self)
         self.error_doctor_review = BobaErrorDoctorReviewV1(store, self)
+        self.repair_plan_review = BobaRepairPlanReviewV1(store, self)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
 
@@ -1721,6 +1755,237 @@ class BobaIntegration:
         self, project_id: str, session_id: str | None = None
     ) -> dict[str, Any]:
         return self.error_doctor_review.reset_error_doctor_review_metadata(
+            project_id, session_id
+        )
+
+    # ------------------------------------------------------------------
+    # BOBA Repair Plan Panel V1 - fixed projection and routing helpers
+    #
+    # Every helper is read-only or review-session metadata only. None of them
+    # generates a repair plan, revises one, approves or rejects one, executes a
+    # plan or a step, runs a command, restores a checkpoint, restarts a process,
+    # transitions the workflow, modifies code or artifacts, or publishes.
+    # ------------------------------------------------------------------
+    def build_boba_repair_plan_review_registry(self, project_id: str) -> dict[str, Any]:
+        return self.repair_plan_review.build_repair_plan_review_registry(project_id)
+
+    def inspect_boba_repair_plan_review_registry(self, project_id: str) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_repair_plan_review_registry(project_id)
+
+    def create_boba_repair_plan_review_session(
+        self,
+        project_id: str,
+        *,
+        reviewer_context_id: str,
+        selected_repair_plan_id: str | None = None,
+        expires_in_seconds: int = 3_600,
+    ) -> dict[str, Any]:
+        session = self.repair_plan_review.create_repair_plan_review_session(
+            project_id,
+            reviewer_context_id=reviewer_context_id,
+            selected_repair_plan_id=selected_repair_plan_id,
+            expires_in_seconds=expires_in_seconds,
+        )
+        return session.model_dump(mode="json")
+
+    def inspect_boba_repair_plan_review_session(
+        self, project_id: str, session_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.get_repair_plan_review_session(
+            project_id, session_id
+        ).model_dump(mode="json")
+
+    def update_boba_repair_plan_review_session(
+        self, project_id: str, session_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.update_repair_plan_review_session(
+            project_id, session_id, updates
+        ).model_dump(mode="json")
+
+    def build_boba_repair_plan_queue(
+        self,
+        project_id: str,
+        *,
+        review_filter: str = "all_current",
+        sort: str = "review_priority",
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.build_repair_plan_queue(
+            project_id,
+            active_filter=cast(RepairPlanReviewFilter, review_filter),
+            active_sort=cast(RepairPlanReviewSort, sort),
+            offset=offset,
+            limit=limit,
+        )
+
+    def inspect_boba_repair_plan_queue(
+        self, project_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        return self.build_boba_repair_plan_queue(project_id, **kwargs)
+
+    def inspect_boba_repair_plan(
+        self, project_id: str, repair_plan_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_repair_plan(project_id, repair_plan_id)
+
+    def build_boba_repair_plan_snapshot(
+        self, project_id: str, session_id: str, repair_plan_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.build_repair_plan_snapshot(
+            project_id, session_id, repair_plan_id
+        )
+
+    def refresh_boba_repair_plan_snapshot(
+        self, project_id: str, snapshot_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.refresh_repair_plan_snapshot(
+            project_id, snapshot_id
+        )
+
+    def inspect_boba_repair_plan_steps(
+        self, project_id: str, repair_plan_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_repair_steps(project_id, repair_plan_id)
+
+    def inspect_boba_repair_plan_risks(
+        self, project_id: str, repair_plan_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_repair_risks(project_id, repair_plan_id)
+
+    def inspect_boba_repair_plan_approvals(
+        self, project_id: str, repair_plan_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_approval_requirements(
+            project_id, repair_plan_id
+        )
+
+    def inspect_boba_repair_plan_verification(
+        self, project_id: str, repair_plan_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_verification_requirements(
+            project_id, repair_plan_id
+        )
+
+    def inspect_boba_repair_plan_evidence(
+        self, project_id: str, repair_plan_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_repair_evidence(project_id, repair_plan_id)
+
+    def inspect_boba_repair_plan_recovery_history(
+        self, project_id: str, repair_plan_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_linked_recovery_history(
+            project_id, repair_plan_id
+        )
+
+    def detect_boba_repair_plan_conflicts(
+        self, project_id: str, repair_plan_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_repair_plan_conflicts(
+            project_id, repair_plan_id
+        )
+
+    def compare_boba_repair_plans(
+        self,
+        project_id: str,
+        repair_plan_ids: list[str],
+        *,
+        comparison_type: str = "side_by_side",
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.compare_repair_plans(
+            project_id,
+            repair_plan_ids,
+            comparison_type=cast(RepairPlanComparisonType, comparison_type),
+        )
+
+    def describe_boba_repair_plan_action_confirmation(
+        self, project_id: str, repair_plan_snapshot_id: str, action_descriptor_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.describe_repair_plan_action_confirmation(
+            project_id, repair_plan_snapshot_id, action_descriptor_id
+        )
+
+    def create_boba_repair_plan_action_request(
+        self,
+        project_id: str,
+        *,
+        repair_plan_review_session_id: str,
+        repair_plan_snapshot_id: str,
+        action_descriptor_id: str,
+        decision_value: str | None = None,
+        reason: str = "",
+        confirmation_context_digest: str,
+        idempotency_key: str,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        request = self.repair_plan_review.create_repair_plan_action_request(
+            project_id,
+            repair_plan_review_session_id=repair_plan_review_session_id,
+            repair_plan_snapshot_id=repair_plan_snapshot_id,
+            action_descriptor_id=action_descriptor_id,
+            decision_value=decision_value,
+            reason=reason,
+            confirmation_context_digest=confirmation_context_digest,
+            idempotency_key=idempotency_key,
+            confirmed=confirmed,
+        )
+        return request.model_dump(mode="json")
+
+    def validate_boba_repair_plan_action_request(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.validate_repair_plan_action_request(
+            project_id, request_id
+        )
+
+    async def submit_boba_repair_plan_action_to_owner(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        receipt = await self.repair_plan_review.submit_repair_plan_action_to_owner(
+            project_id, request_id
+        )
+        return receipt.model_dump(mode="json")
+
+    def inspect_boba_repair_plan_action_receipt(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_repair_plan_action_receipt(
+            project_id, request_id
+        )
+
+    def inspect_boba_repair_plan_timeline(
+        self, project_id: str, *, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_repair_plan_timeline(
+            project_id, limit=limit
+        )
+
+    def inspect_boba_repair_plan_events(
+        self, project_id: str, *, after_sequence: int = 0, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.inspect_repair_plan_events(
+            project_id, after_sequence=after_sequence, limit=limit
+        )
+
+    def load_boba_repair_plan_review(self, project_id: str) -> dict[str, Any]:
+        payload = self.repair_plan_review.load_repair_plan_review(project_id)
+        if payload is None:
+            return self.repair_plan_review.build_repair_plan_review(project_id)
+        return payload
+
+    def build_boba_repair_plan_review(self, project_id: str) -> dict[str, Any]:
+        return self.repair_plan_review.build_repair_plan_review(project_id)
+
+    def export_boba_repair_plan_review(
+        self, project_id: str, session_id: str | None = None
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.export_repair_plan_review(project_id, session_id)
+
+    def reset_boba_repair_plan_review_metadata(
+        self, project_id: str, session_id: str | None = None
+    ) -> dict[str, Any]:
+        return self.repair_plan_review.reset_repair_plan_review_metadata(
             project_id, session_id
         )
 
