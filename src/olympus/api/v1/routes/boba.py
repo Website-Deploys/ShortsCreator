@@ -7262,3 +7262,197 @@ async def export_repair_plan_review(
     _require_enabled(settings)
     await _require_project(project_id, boba)
     return boba.export_boba_repair_plan_review(project_id)
+
+
+# ----------------------------------------------------------------------
+# BOBA Approval / Reject Buttons V1
+#
+# An interaction layer over the existing Review UI action chain. No route here
+# approves anything itself, grants Safety Gate approval, advances a workflow,
+# executes a repair or recovery, restores a checkpoint, modifies code, artifacts
+# or media, runs a command, uploads or publishes.
+# ----------------------------------------------------------------------
+class ApprovalControlSnapshotCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_session_id: str = Field(min_length=1, max_length=180)
+    review_snapshot_id: str = Field(min_length=1, max_length=180)
+    target_type: str = Field(min_length=1, max_length=80)
+    target_id: str = Field(default="", max_length=180)
+
+
+class ApprovalDecisionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approval_control_snapshot_id: str = Field(min_length=1, max_length=180)
+    decision_kind: Literal["approve", "reject"]
+    reason: str = Field(default="", max_length=500)
+    idempotency_key: str = Field(min_length=8, max_length=180)
+    confirmed: bool = False
+
+
+class ApprovalDecisionSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision_kind: Literal["approve", "reject"]
+
+
+@router.get("/projects/{project_id}/approval-controls")
+async def get_approval_controls(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    target_type: str = "workflow_stage",
+    target_id: str = "",
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_approval_controls(project_id, target_type, target_id)
+
+
+@router.get("/projects/{project_id}/approval-controls/registry")
+async def get_approval_control_registry(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_approval_control_registry(project_id)
+
+
+@router.get("/projects/{project_id}/approval-controls/eligibility")
+async def get_approval_eligibility(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    target_type: str = "workflow_stage",
+    target_id: str = "",
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_approval_eligibility(project_id, target_type, target_id)
+
+
+@router.post("/projects/{project_id}/approval-controls/snapshots")
+async def create_approval_control_snapshot(
+    project_id: str,
+    body: ApprovalControlSnapshotCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_approval_control_snapshot(
+        project_id,
+        body.review_session_id,
+        body.review_snapshot_id,
+        body.target_type,
+        body.target_id,
+    )
+
+
+@router.post("/projects/{project_id}/approval-controls/snapshots/{snapshot_id}/revalidate")
+async def revalidate_approval_control_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.revalidate_boba_approval_control_snapshot(project_id, snapshot_id)
+
+
+@router.post("/projects/{project_id}/approval-controls/decisions")
+async def create_approval_decision(
+    project_id: str,
+    body: ApprovalDecisionCreateRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_approval_decision_request(
+        project_id,
+        approval_control_snapshot_id=body.approval_control_snapshot_id,
+        decision_kind=body.decision_kind,
+        reason=body.reason,
+        idempotency_key=body.idempotency_key,
+        confirmed=body.confirmed,
+    )
+
+
+@router.post("/projects/{project_id}/approval-controls/decisions/{request_id}/submit")
+async def submit_approval_decision(
+    project_id: str,
+    request_id: str,
+    body: ApprovalDecisionSubmitRequest,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return await boba.submit_boba_approval_decision(
+        project_id, request_id, body.decision_kind
+    )
+
+
+@router.get("/projects/{project_id}/approval-controls/decisions/{request_id}")
+async def get_approval_decision_status(
+    project_id: str,
+    request_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_approval_decision_status(project_id, request_id)
+
+
+@router.get("/projects/{project_id}/approval-controls/history")
+async def get_approval_decision_history(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_approval_decision_history(project_id)
+
+
+@router.get("/projects/{project_id}/approval-controls/events")
+async def get_approval_control_events(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    after_sequence: int = 0,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_approval_control_events(
+        project_id, after_sequence=after_sequence, limit=limit
+    )
+
+
+@router.get("/projects/{project_id}/approval-controls/export")
+async def export_approval_controls(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_approval_controls(project_id)
+
+
+@router.delete("/projects/{project_id}/approval-controls")
+async def reset_approval_control_metadata(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_approval_control_metadata(project_id)

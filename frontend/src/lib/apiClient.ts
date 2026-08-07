@@ -18,6 +18,12 @@ import type {
   CandidateSnapshot,
 } from "@/lib/candidateReview";
 import type {
+  ApprovalControlSnapshot,
+  ApprovalDecisionReceipt,
+  ApprovalEligibility,
+  ApprovalRevalidation,
+} from "@/lib/approvalControls";
+import type {
   RepairApprovalRequirement,
   RepairEvidenceCard,
   RepairPlanActionDescriptor,
@@ -2139,6 +2145,101 @@ export const api = {
   exportBobaErrorDoctorReview: (projectId: string) =>
     request<Record<string, unknown>>(
       `/boba/projects/${projectId}/error-doctor-review/export`,
+    ),
+
+  /* BOBA Approval / Reject Buttons V1 - decision input only.
+     No method here approves anything itself, grants Safety approval, advances a
+     workflow, executes, restores a checkpoint, uploads or publishes. */
+  getBobaApprovalControls: (
+    projectId: string,
+    params: { target_type?: string; target_id?: string } = {},
+  ) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/approval-controls${_qs({
+        target_type: params.target_type,
+        target_id: params.target_id,
+      })}`,
+    ),
+  getBobaApprovalControlRegistry: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/approval-controls/registry`,
+    ),
+  getBobaApprovalEligibility: (
+    projectId: string,
+    targetType: string,
+    targetId = "",
+  ) =>
+    request<{
+      eligibility: ApprovalEligibility[];
+      approve_available: boolean;
+      reject_available: boolean;
+    }>(
+      `/boba/projects/${projectId}/approval-controls/eligibility${_qs({
+        target_type: targetType,
+        target_id: targetId,
+      })}`,
+    ),
+  createBobaApprovalControlSnapshot: (
+    projectId: string,
+    input: {
+      review_session_id: string;
+      review_snapshot_id: string;
+      target_type: string;
+      target_id?: string;
+    },
+  ) =>
+    request<{
+      snapshot: ApprovalControlSnapshot;
+      eligibility: ApprovalEligibility[];
+    }>(`/boba/projects/${projectId}/approval-controls/snapshots`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  revalidateBobaApprovalControlSnapshot: (projectId: string, snapshotId: string) =>
+    request<ApprovalRevalidation>(
+      `/boba/projects/${projectId}/approval-controls/snapshots/${snapshotId}/revalidate`,
+      { method: "POST" },
+    ),
+  createBobaApprovalDecision: (
+    projectId: string,
+    input: {
+      approval_control_snapshot_id: string;
+      decision_kind: "approve" | "reject";
+      reason?: string;
+      idempotency_key: string;
+      confirmed: boolean;
+    },
+  ) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/approval-controls/decisions`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  submitBobaApprovalDecision: (
+    projectId: string,
+    requestId: string,
+    decisionKind: "approve" | "reject",
+  ) =>
+    request<ApprovalDecisionReceipt>(
+      `/boba/projects/${projectId}/approval-controls/decisions/${requestId}/submit`,
+      { method: "POST", body: JSON.stringify({ decision_kind: decisionKind }) },
+    ),
+  getBobaApprovalDecisionStatus: (projectId: string, requestId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/approval-controls/decisions/${requestId}`,
+    ),
+  getBobaApprovalDecisionHistory: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/approval-controls/history`,
+    ),
+  getBobaApprovalControlEvents: (projectId: string, afterSequence = 0) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/approval-controls/events${_qs({
+        after_sequence: String(afterSequence),
+      })}`,
+    ),
+  exportBobaApprovalControls: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/approval-controls/export`,
     ),
 
   /* BOBA Repair Plan Panel V1 - read-only plan projection and safe routing.

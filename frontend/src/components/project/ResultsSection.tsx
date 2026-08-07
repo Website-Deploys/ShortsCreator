@@ -11,6 +11,10 @@ import { BobaArtifactInspectorPanel } from "@/components/project/BobaArtifactIns
 import { BobaFinalDecisionBusPanel } from "@/components/project/BobaFinalDecisionBusPanel";
 import { BobaCandidateReviewPanel } from "@/components/review/BobaCandidateReviewPanel";
 import {
+  BobaApprovalControlsErrorBoundary,
+  BobaApprovalRejectControls,
+} from "@/components/review/BobaApprovalRejectControls";
+import {
   BobaClipBriefReviewErrorBoundary,
   BobaClipBriefReviewPanel,
 } from "@/components/review/BobaClipBriefReviewPanel";
@@ -12195,6 +12199,11 @@ export function ResultsSection({
       <BobaRepairPlanReviewPanel projectId={projectId} />
     </BobaRepairPlanReviewErrorBoundary>
   );
+  const approvalRejectControls = (
+    <BobaApprovalControlsErrorBoundary>
+      <BobaApprovalRejectControls projectId={projectId} targetType="workflow_stage" />
+    </BobaApprovalControlsErrorBoundary>
+  );
   const scoutCreativePanel = <BobaScoutCreativePanel projectId={projectId} />;
 
   if (renders.length > 0) {
@@ -12240,6 +12249,7 @@ export function ResultsSection({
         {clipBriefReviewPanel}
         {errorDoctorReviewPanel}
         {repairPlanReviewPanel}
+        {approvalRejectControls}
         {scoutCreativePanel}
         {renders.map((rendered) => (
           <ClipCard
@@ -12297,6 +12307,7 @@ export function ResultsSection({
         {clipBriefReviewPanel}
         {errorDoctorReviewPanel}
         {repairPlanReviewPanel}
+        {approvalRejectControls}
         {scoutCreativePanel}
         <EmptyState
           icon={<SparklesIcon className="h-6 w-6" />}
@@ -12350,6 +12361,7 @@ export function ResultsSection({
         {clipBriefReviewPanel}
         {errorDoctorReviewPanel}
         {repairPlanReviewPanel}
+        {approvalRejectControls}
         {scoutCreativePanel}
         <EmptyState
           icon={<ServerIcon className="h-6 w-6" />}
@@ -12403,6 +12415,7 @@ export function ResultsSection({
         {clipBriefReviewPanel}
         {errorDoctorReviewPanel}
         {repairPlanReviewPanel}
+        {approvalRejectControls}
       {scoutCreativePanel}
       <EmptyState
         icon={<ServerIcon className="h-6 w-6" />}

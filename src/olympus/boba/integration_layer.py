@@ -1149,6 +1149,19 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
             "workflow_controller",
         ],
     },
+    "approval_controls": {
+        "name": "Approval Reject Buttons",
+        "path": "olympus.boba.approval_controls",
+        "deps": [
+            "integration_layer",
+            "safety_gate",
+            "review_ui",
+            "workflow_controller",
+            "final_decision_bus",
+            "autopilot_controller",
+            "output_quality_reviewer",
+        ],
+    },
     "repair_plan_review": {
         "name": "Repair Plan Panel",
         "path": "olympus.boba.repair_plan_review",
@@ -1730,6 +1743,40 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
             ),
             _operation(
                 "error_doctor_review", "inspect_events", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "approval_controls", "inspect_registry", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "approval_controls", "inspect_eligibility", "read_only", side_effect_class="none"
+            ),
+            _operation("approval_controls", "build_snapshot", "read_only"),
+            _operation(
+                "approval_controls", "revalidate_snapshot", "read_only", side_effect_class="none"
+            ),
+            _operation("approval_controls", "create_decision", "read_only"),
+            _operation(
+                "approval_controls",
+                "submit_decision",
+                "read_only",
+                approval=True,
+                approval_type="exact_human_review_action",
+                safety=True,
+            ),
+            _operation(
+                "approval_controls",
+                "inspect_decision_status",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "approval_controls",
+                "inspect_decision_history",
+                "read_only",
+                side_effect_class="none",
+            ),
+            _operation(
+                "approval_controls", "inspect_events", "read_only", side_effect_class="none"
             ),
             _operation(
                 "repair_plan_review", "inspect_registry", "read_only", side_effect_class="none"
