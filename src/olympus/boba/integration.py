@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from olympus.boba.approval_controls import BobaApprovalControlsV1
 from olympus.boba.approval_rejection_learning import (
     BobaApprovalRejectionLearningSetV1,
     BobaApprovalRejectionLearningV1,
@@ -431,6 +432,20 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "error_doctor_review.load",
     "error_doctor_review.export",
     "error_doctor_review.reset",
+    "approval_controls.inspect_registry",
+    "approval_controls.inspect_eligibility",
+    "approval_controls.build_snapshot",
+    "approval_controls.revalidate_snapshot",
+    "approval_controls.create_decision",
+    "approval_controls.submit_decision",
+    "approval_controls.inspect_decision_status",
+    "approval_controls.inspect_decision_history",
+    "approval_controls.inspect_events",
+    "approval_controls.inspect_timeline",
+    "approval_controls.compare_decisions",
+    "approval_controls.load",
+    "approval_controls.export",
+    "approval_controls.reset",
     "repair_plan_review.inspect_registry",
     "repair_plan_review.create_session",
     "repair_plan_review.update_session",
@@ -580,6 +595,7 @@ class BobaIntegration:
         self.clip_brief_review = BobaClipBriefReviewV1(store, self)
         self.error_doctor_review = BobaErrorDoctorReviewV1(store, self)
         self.repair_plan_review = BobaRepairPlanReviewV1(store, self)
+        self.approval_controls = BobaApprovalControlsV1(store, self)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
 
@@ -1757,6 +1773,128 @@ class BobaIntegration:
         return self.error_doctor_review.reset_error_doctor_review_metadata(
             project_id, session_id
         )
+
+    # ------------------------------------------------------------------
+    # BOBA Approval / Reject Buttons V1 - eligibility and decision routing
+    #
+    # Decisions are submitted through the existing Review UI action chain. No
+    # helper here approves anything itself, grants Safety approval, advances a
+    # workflow, executes, uploads or publishes.
+    # ------------------------------------------------------------------
+    def build_boba_approval_control_registry(self, project_id: str) -> dict[str, Any]:
+        return self.approval_controls.build_approval_control_registry(project_id)
+
+    def inspect_boba_approval_eligibility(
+        self, project_id: str, target_type: str, target_id: str = ""
+    ) -> dict[str, Any]:
+        rows = self.approval_controls.inspect_approval_eligibility(
+            project_id, target_type, target_id
+        )
+        return {
+            "schema_version": "boba_approval_controls_eligibility_v1",
+            "project_id": project_id,
+            "target_type": target_type,
+            "target_id": target_id,
+            "eligibility": [item.model_dump(mode="json") for item in rows],
+            "approve_available": any(
+                item.eligible and item.decision_kind == "approve" for item in rows
+            ),
+            "reject_available": any(
+                item.eligible and item.decision_kind == "reject" for item in rows
+            ),
+        }
+
+    def build_boba_approval_control_snapshot(
+        self,
+        project_id: str,
+        review_session_id: str,
+        review_snapshot_id: str,
+        target_type: str,
+        target_id: str = "",
+    ) -> dict[str, Any]:
+        return self.approval_controls.build_approval_control_snapshot(
+            project_id, review_session_id, review_snapshot_id, target_type, target_id
+        )
+
+    def revalidate_boba_approval_control_snapshot(
+        self, project_id: str, snapshot_id: str
+    ) -> dict[str, Any]:
+        return self.approval_controls.revalidate_approval_snapshot(project_id, snapshot_id)
+
+    def create_boba_approval_decision_request(
+        self,
+        project_id: str,
+        *,
+        approval_control_snapshot_id: str,
+        decision_kind: str,
+        reason: str = "",
+        idempotency_key: str,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        return self.approval_controls.create_approval_decision_request(
+            project_id,
+            approval_control_snapshot_id=approval_control_snapshot_id,
+            decision_kind=decision_kind,
+            reason=reason,
+            idempotency_key=idempotency_key,
+            confirmed=confirmed,
+        )
+
+    async def submit_boba_approval_decision(
+        self, project_id: str, review_action_request_id: str, decision_kind: str
+    ) -> dict[str, Any]:
+        receipt = await self.approval_controls.submit_approval_decision(
+            project_id, review_action_request_id, decision_kind
+        )
+        return receipt.model_dump(mode="json")
+
+    def inspect_boba_approval_decision_status(
+        self, project_id: str, review_action_request_id: str
+    ) -> dict[str, Any]:
+        return self.approval_controls.inspect_decision_status(
+            project_id, review_action_request_id
+        )
+
+    def inspect_boba_approval_decision_history(self, project_id: str) -> dict[str, Any]:
+        return self.approval_controls.inspect_decision_history(project_id)
+
+    def inspect_boba_approval_control_events(
+        self, project_id: str, *, after_sequence: int = 0, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.approval_controls.inspect_approval_events(
+            project_id, after_sequence=after_sequence, limit=limit
+        )
+
+    def inspect_boba_approval_timeline(
+        self, project_id: str, *, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.approval_controls.inspect_approval_timeline(project_id, limit=limit)
+
+    def compare_boba_approval_decisions(
+        self, project_id: str, review_action_request_ids: list[str]
+    ) -> dict[str, Any]:
+        return self.approval_controls.compare_approval_decisions(
+            project_id, review_action_request_ids
+        )
+
+    def build_boba_approval_controls(
+        self, project_id: str, target_type: str = "workflow_stage", target_id: str = ""
+    ) -> dict[str, Any]:
+        return self.approval_controls.build_approval_controls(
+            project_id, target_type, target_id
+        )
+
+    def load_boba_approval_controls(self, project_id: str) -> dict[str, Any]:
+        payload = self.approval_controls.load_approval_controls(project_id)
+        if payload is None:
+            return self.approval_controls.build_approval_controls(project_id)
+        return payload
+
+    def export_boba_approval_controls(self, project_id: str) -> dict[str, Any]:
+        return self.approval_controls.export_approval_controls(project_id)
+
+    def reset_boba_approval_control_metadata(self, project_id: str) -> dict[str, Any]:
+        return self.approval_controls.reset_approval_control_metadata(project_id)
 
     # ------------------------------------------------------------------
     # BOBA Repair Plan Panel V1 - fixed projection and routing helpers

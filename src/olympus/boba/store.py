@@ -7658,3 +7658,191 @@ class BobaMemoryStore:
             "code_modified": False,
             "artifacts_modified": False,
         }
+
+    @staticmethod
+    def _validate_approval_control_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
+            raise ValidationError(f"Invalid BOBA approval control {label}.")
+        return value
+
+    def boba_approval_controls_path(self, project_id: str) -> Path:
+        return self._path(project_id, "approval_controls/index.json")
+
+    def boba_approval_control_registry_path(self, project_id: str, record_id: str) -> Path:
+        self._validate_approval_control_record_id(record_id, label="registry id")
+        return self._path(project_id, f"approval_controls/registries/{record_id}.json")
+
+    def boba_approval_control_snapshot_path(self, project_id: str, record_id: str) -> Path:
+        self._validate_approval_control_record_id(record_id, label="snapshot id")
+        return self._path(project_id, f"approval_controls/snapshots/{record_id}.json")
+
+    def boba_approval_control_receipt_path(self, project_id: str, record_id: str) -> Path:
+        self._validate_approval_control_record_id(record_id, label="receipt id")
+        return self._path(project_id, f"approval_controls/receipts/{record_id}.json")
+
+    def boba_approval_control_event_log_path(self, project_id: str) -> Path:
+        return self._path(project_id, "approval_controls/events/log.json")
+
+    def _write_boba_approval_control_record(
+        self, path: Path, payload: dict[str, Any], *, scope: str
+    ) -> None:
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path=f"boba.approval_controls.{scope}",
+        )
+        self._atomic_write_compact(path, safe)
+
+    def _write_immutable_boba_approval_control_record(
+        self, path: Path, payload: dict[str, Any], *, scope: str, label: str
+    ) -> None:
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path=f"boba.approval_controls.{scope}",
+        )
+        with self._lock:
+            if path.exists():
+                existing = self._read(path, None)
+                if existing != safe:
+                    raise ValidationError(
+                        f"BOBA approval control {label} are immutable."
+                    )
+                return
+            self._atomic_write_compact(path, safe)
+
+    def save_boba_approval_controls(self, project_id: str, payload: dict[str, Any]) -> None:
+        self._write_boba_approval_control_record(
+            self.boba_approval_controls_path(project_id), payload, scope="index"
+        )
+
+    def load_boba_approval_controls(self, project_id: str) -> dict[str, Any] | None:
+        raw = self._read(self.boba_approval_controls_path(project_id), None)
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_approval_control_registry(
+        self, project_id: str, record_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_immutable_boba_approval_control_record(
+            self.boba_approval_control_registry_path(project_id, record_id),
+            payload,
+            scope="registry",
+            label="registry snapshots",
+        )
+
+    def load_boba_approval_control_registry(
+        self, project_id: str, record_id: str
+    ) -> dict[str, Any] | None:
+        raw = self._read(
+            self.boba_approval_control_registry_path(project_id, record_id), None
+        )
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_approval_control_snapshot(
+        self, project_id: str, record_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_boba_approval_control_record(
+            self.boba_approval_control_snapshot_path(project_id, record_id),
+            payload,
+            scope="snapshot",
+        )
+
+    def load_boba_approval_control_snapshot(
+        self, project_id: str, record_id: str
+    ) -> dict[str, Any] | None:
+        raw = self._read(
+            self.boba_approval_control_snapshot_path(project_id, record_id), None
+        )
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_approval_control_receipt(
+        self, project_id: str, record_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_immutable_boba_approval_control_record(
+            self.boba_approval_control_receipt_path(project_id, record_id),
+            payload,
+            scope="receipt",
+            label="decision receipts",
+        )
+
+    def load_boba_approval_control_receipt(
+        self, project_id: str, record_id: str
+    ) -> dict[str, Any] | None:
+        raw = self._read(
+            self.boba_approval_control_receipt_path(project_id, record_id), None
+        )
+        return raw if isinstance(raw, dict) else None
+
+    def load_boba_approval_control_receipt_for_request(
+        self, project_id: str, request_id: str
+    ) -> dict[str, Any] | None:
+        self._validate_approval_control_record_id(request_id, label="request id")
+        directory = self._path(project_id, "approval_controls/receipts")
+        if not directory.exists():
+            return None
+        for path in sorted(directory.glob("*.json"))[:256]:
+            raw = self._read(path, None)
+            if isinstance(raw, dict) and raw.get("review_action_request_id") == request_id:
+                return raw
+        return None
+
+    def load_boba_approval_control_events(self, project_id: str) -> list[dict[str, Any]]:
+        raw = self._read(self.boba_approval_control_event_log_path(project_id), None)
+        return [row for row in raw if isinstance(row, dict)] if isinstance(raw, list) else []
+
+    def append_boba_approval_control_event(
+        self, project_id: str, payload: dict[str, Any]
+    ) -> None:
+        """Append-only event log. Existing entries are never rewritten."""
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path="boba.approval_controls.event",
+        )
+        path = self.boba_approval_control_event_log_path(project_id)
+        with self._lock:
+            existing = self._read(path, None)
+            rows = (
+                [row for row in existing if isinstance(row, dict)]
+                if isinstance(existing, list)
+                else []
+            )
+            rows.append(safe)
+            self._atomic_write_compact(path, rows[-500:])
+
+    def reset_boba_approval_control_metadata(self, project_id: str) -> dict[str, Any]:
+        """Remove only interaction metadata. Owner decision history is preserved."""
+        directory = self.boba_approval_controls_path(project_id).parent.resolve()
+        project_directory = self._project_dir(project_id).resolve()
+        if directory.parent != project_directory or directory.name != "approval_controls":
+            raise ValidationError("Invalid BOBA approval control reset path.")
+        with self._lock:
+            index_removed = self.boba_approval_controls_path(project_id).exists()
+            self.boba_approval_controls_path(project_id).unlink(missing_ok=True)
+            snapshots = directory / "snapshots"
+            removed_snapshots = (
+                len(list(snapshots.glob("*.json"))) if snapshots.exists() else 0
+            )
+            if snapshots.exists():
+                shutil.rmtree(snapshots)
+        return {
+            "schema_version": "boba_approval_controls_reset_v1",
+            "project_id": project_id,
+            "active_index_removed": index_removed,
+            "snapshots_removed": removed_snapshots,
+            "registry_history_preserved": True,
+            "decision_receipt_history_preserved": True,
+            "event_log_preserved": True,
+            "workflow_decision_history_preserved": True,
+            "safety_gate_records_preserved": True,
+            "final_decision_bus_records_preserved": True,
+            "autopilot_history_preserved": True,
+            "repair_history_preserved": True,
+            "review_ui_history_preserved": True,
+            "validator_history_preserved": True,
+            "output_quality_history_preserved": True,
+            "media_removed": False,
+            "outputs_removed": False,
+            "code_modified": False,
+            "artifacts_modified": False,
+        }

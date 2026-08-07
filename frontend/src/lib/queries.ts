@@ -201,6 +201,16 @@ export const queryKeys = {
     ["boba", "projects", id, "error-doctor-review", "incident", incidentId] as const,
   bobaIncidentTimeline: (id: string) =>
     ["boba", "projects", id, "error-doctor-review", "timeline"] as const,
+  bobaApprovalControls: (id: string, targetType: string, targetId: string) =>
+    ["boba", "projects", id, "approval-controls", targetType, targetId] as const,
+  bobaApprovalControlRegistry: (id: string) =>
+    ["boba", "projects", id, "approval-controls", "registry"] as const,
+  bobaApprovalEligibility: (id: string, targetType: string, targetId: string) =>
+    ["boba", "projects", id, "approval-controls", "eligibility", targetType, targetId] as const,
+  bobaApprovalTimeline: (id: string) =>
+    ["boba", "projects", id, "approval-controls", "timeline"] as const,
+  bobaApprovalDecisionHistory: (id: string) =>
+    ["boba", "projects", id, "approval-controls", "history"] as const,
   bobaRepairPlanReview: (id: string) =>
     ["boba", "projects", id, "repair-plan-review"] as const,
   bobaRepairPlanRegistry: (id: string) =>
@@ -3971,6 +3981,126 @@ export function useSubmitBobaRepairPlanAction(projectId: string) {
       });
     },
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* BOBA Approval / Reject Buttons V1                                    */
+/*                                                                     */
+/* Read-only queries plus the decision mutations. Nothing here shows an  */
+/* approval optimistically: the owner's receipt is the only source of    */
+/* truth, and every affected canonical query is invalidated after it.    */
+/* ------------------------------------------------------------------ */
+
+export function useBobaApprovalEligibility(
+  projectId: string,
+  targetType: string,
+  targetId = "",
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaApprovalEligibility(projectId, targetType, targetId),
+    queryFn: () => api.getBobaApprovalEligibility(projectId, targetType, targetId),
+    enabled: Boolean(projectId) && Boolean(targetType) && enabled,
+    staleTime: 5_000,
+  });
+}
+
+export function useBobaApprovalControlRegistry(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaApprovalControlRegistry(projectId),
+    queryFn: () => api.getBobaApprovalControlRegistry(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useBobaApprovalDecisionHistory(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaApprovalDecisionHistory(projectId),
+    queryFn: () => api.getBobaApprovalDecisionHistory(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useCreateBobaApprovalControlSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: (input: {
+      review_session_id: string;
+      review_snapshot_id: string;
+      target_type: string;
+      target_id?: string;
+    }) => api.createBobaApprovalControlSnapshot(projectId, input),
+  });
+}
+
+export function useRevalidateBobaApprovalControlSnapshot(projectId: string) {
+  return useMutation({
+    mutationFn: (snapshotId: string) =>
+      api.revalidateBobaApprovalControlSnapshot(projectId, snapshotId),
+  });
+}
+
+export function useCreateBobaApprovalDecision(projectId: string) {
+  return useMutation({
+    mutationFn: (input: {
+      approval_control_snapshot_id: string;
+      decision_kind: "approve" | "reject";
+      reason?: string;
+      idempotency_key: string;
+      confirmed: boolean;
+    }) => api.createBobaApprovalDecision(projectId, input),
+  });
+}
+
+/**
+ * Submit a confirmed approve or reject decision to its canonical owner.
+ *
+ * The decision is never shown as accepted until the owner's receipt says so.
+ */
+export function useSubmitBobaApprovalDecision(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      requestId,
+      decisionKind,
+    }: {
+      requestId: string;
+      decisionKind: "approve" | "reject";
+    }) => api.submitBobaApprovalDecision(projectId, requestId, decisionKind),
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["boba", "projects", projectId, "approval-controls"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bobaReviewUi(projectId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["boba", "projects", projectId, "workflow"],
+      });
+    },
+  });
+}
+
+export function useBobaApprovalTimeline(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaApprovalTimeline(projectId),
+    queryFn: () => api.getBobaApprovalTimeline(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+/** Read-only comparison. Selects no winner and mutates nothing. */
+export function useCompareBobaApprovalDecisions(projectId: string) {
+  return useMutation({
+    mutationFn: (requestIds: string[]) =>
+      api.compareBobaApprovalDecisions(projectId, requestIds),
+  });
+}
+
+export function useExportBobaApprovalControls(projectId: string) {
+  return useMutation({ mutationFn: () => api.exportBobaApprovalControls(projectId) });
 }
 
 export function useExportBobaRepairPlanReview(projectId: string) {
