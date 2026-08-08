@@ -14,9 +14,10 @@ import json
 import re
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 from olympus.boba.integration_layer import (
     build_boba_module_registry,
@@ -191,10 +192,13 @@ class ScenarioResult:
 class _WorkflowStore(BobaMemoryStore):
     """A store that reports a synthetic canonical workflow run."""
 
-    workflow_payload: ClassVar[dict[str, Any]] = {}
+    _workflow_payload: dict[str, Any]
+
+    def set_workflow_payload(self, payload: dict[str, Any]) -> None:
+        self._workflow_payload = dict(payload)
 
     def load_boba_workflow_controller(self, project_id: str) -> Any:
-        return dict(self.workflow_payload)
+        return dict(getattr(self, "_workflow_payload", {}))
 
 
 class _ForeignProjectStore(BobaMemoryStore):
@@ -244,7 +248,7 @@ def _engine(
     workflow: dict[str, Any] | None = None,
 ) -> BobaValidationReportsV1:
     store = _WorkflowStore(root / "boba")
-    store.workflow_payload = workflow if workflow is not None else _workflow()
+    store.set_workflow_payload(workflow if workflow is not None else _workflow())
     fx.seed(store, runner=runner, reader=reader)
     return BobaValidationReportsV1(store, None)  # type: ignore[arg-type]
 
@@ -1067,7 +1071,7 @@ def _run_ownership() -> list[ScenarioResult]:
     )
 
 
-_GROUP_RUNNERS: dict[str, Any] = {
+_GROUP_RUNNERS: dict[str, Callable[[], list[ScenarioResult]]] = {
     "validation-evidence": _run_validation_evidence,
     "stale-state": _run_stale_state,
     "matrix": _run_matrix,

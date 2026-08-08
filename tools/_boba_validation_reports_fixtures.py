@@ -79,7 +79,7 @@ def _check(
         category="contract_schema",
         required=required,
         attempt_number=attempt,
-        status=status,  # type: ignore[arg-type]
+        status=status,
         adapter_id=f"adapter-{validator_id}",
         input_digest=digest(input_seed),
         environment_digest=digest("env"),
@@ -104,7 +104,7 @@ def _result(
         validation_run_id=RUN_ID,
         check_run_id=check_run_id,
         validator_id=validator_id,
-        status=status,  # type: ignore[arg-type]
+        status=status,
         failed_assertions=failed or [],
         result_digest=digest(result_id),
     )
@@ -354,7 +354,7 @@ def _reference(
         workflow_run_id=WORKFLOW_RUN_ID,
         producer_module_id=producer,
         producer_record_id=f"rec-{reference_id}",
-        report_type=report_type,  # type: ignore[arg-type]
+        report_type=report_type,
         schema_id=f"schema-{report_type}",
         expected_digest=expected,
         sanitized_storage_reference=f"projects/{project_id}/reports/{reference_id}.json",
@@ -387,7 +387,7 @@ def _document(
         workflow_run_id=WORKFLOW_RUN_ID,
         producer_module_id=producer,
         producer_record_id=f"rec-{reference_id}",
-        report_type=report_type,  # type: ignore[arg-type]
+        report_type=report_type,
         schema_id=f"schema-{report_type}",
         schema_version="1",
         parser_id="fixed_json_parser",
@@ -397,7 +397,7 @@ def _document(
         schema_supported=schema_supported,
         malformed=malformed,
         stale=stale,
-        read_status=read_status,  # type: ignore[arg-type]
+        read_status=read_status,
         finding_ids=finding_ids or [],
         evidence_reference_ids=evidence_ids or [],
         section_ids=section_ids or [],
@@ -416,9 +416,9 @@ def _finding(
         finding_id=finding_id,
         report_document_id=document_id,
         producer_module_id=producer,
-        authority_domain=domain,  # type: ignore[arg-type]
+        authority_domain=domain,
         finding_type="fixture_finding",
-        severity=severity,  # type: ignore[arg-type]
+        severity=severity,
         title=f"Fixture {severity} finding",
         bounded_summary=f"A synthetic {severity} finding for {document_id}.",
         source_field_path="findings[0]",
@@ -459,7 +459,7 @@ def _section(
     return BobaReportSectionV1(
         report_section_id=section_id,
         report_document_id=document_id,
-        section_type=section_type,  # type: ignore[arg-type]
+        section_type=section_type,
         source_field_path="status",
         title=f"Fixture {section_type} section",
         bounded_text=f"Synthetic {section_type} text.",
