@@ -211,6 +211,24 @@ export const queryKeys = {
     ["boba", "projects", id, "approval-controls", "timeline"] as const,
   bobaApprovalDecisionHistory: (id: string) =>
     ["boba", "projects", id, "approval-controls", "history"] as const,
+  bobaValidationReports: (id: string, runId: string) =>
+    ["boba", "projects", id, "validation-reports", runId] as const,
+  bobaValidationReportsRegistry: (id: string) =>
+    ["boba", "projects", id, "validation-reports", "registry"] as const,
+  bobaValidationSummary: (id: string, runId: string) =>
+    ["boba", "projects", id, "validation-reports", "summary", runId] as const,
+  bobaValidationMatrix: (id: string, runId: string) =>
+    ["boba", "projects", id, "validation-reports", "matrix", runId] as const,
+  bobaValidationReportCards: (id: string, reportType: string) =>
+    ["boba", "projects", id, "validation-reports", "reports", reportType] as const,
+  bobaValidationReportDetail: (id: string, documentId: string) =>
+    ["boba", "projects", id, "validation-reports", "report", documentId] as const,
+  bobaValidationEvidence: (id: string, runId: string, documentId: string) =>
+    ["boba", "projects", id, "validation-reports", "evidence", runId, documentId] as const,
+  bobaValidationConflicts: (id: string, runId: string) =>
+    ["boba", "projects", id, "validation-reports", "conflicts", runId] as const,
+  bobaValidationReportEvents: (id: string) =>
+    ["boba", "projects", id, "validation-reports", "events"] as const,
   bobaRepairPlanReview: (id: string) =>
     ["boba", "projects", id, "repair-plan-review"] as const,
   bobaRepairPlanRegistry: (id: string) =>
@@ -4105,4 +4123,149 @@ export function useExportBobaApprovalControls(projectId: string) {
 
 export function useExportBobaRepairPlanReview(projectId: string) {
   return useMutation({ mutationFn: () => api.exportBobaRepairPlanReview(projectId) });
+}
+
+
+/* BOBA Validation + Reports V1 - read-only projection hooks.
+   No hook here mutates owner state, approves anything or reports readiness. The
+   only mutation records this module's own projection request metadata. */
+export function useBobaValidationReports(
+  projectId: string,
+  validationRunId = "",
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaValidationReports(projectId, validationRunId),
+    queryFn: () => api.getBobaValidationReports(projectId, validationRunId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 10_000,
+  });
+}
+
+export function useBobaValidationReportsRegistry(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bobaValidationReportsRegistry(projectId),
+    queryFn: () => api.getBobaValidationReportsRegistry(projectId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useBobaValidationSummary(
+  projectId: string,
+  validationRunId = "",
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaValidationSummary(projectId, validationRunId),
+    queryFn: () => api.getBobaValidationSummary(projectId, validationRunId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 10_000,
+  });
+}
+
+export function useBobaValidationMatrix(
+  projectId: string,
+  validationRunId = "",
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaValidationMatrix(projectId, validationRunId),
+    queryFn: () => api.getBobaValidationMatrix(projectId, validationRunId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 10_000,
+  });
+}
+
+export function useBobaValidationReportCards(
+  projectId: string,
+  reportType = "",
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaValidationReportCards(projectId, reportType),
+    queryFn: () => api.getBobaValidationReportCards(projectId, reportType),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaValidationReportDetail(
+  projectId: string,
+  reportDocumentId: string,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaValidationReportDetail(projectId, reportDocumentId),
+    queryFn: () => api.getBobaValidationReportDetail(projectId, reportDocumentId),
+    enabled: Boolean(projectId) && Boolean(reportDocumentId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaValidationEvidence(
+  projectId: string,
+  params: { validation_run_id?: string; report_document_id?: string } = {},
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaValidationEvidence(
+      projectId,
+      params.validation_run_id ?? "",
+      params.report_document_id ?? "",
+    ),
+    queryFn: () => api.getBobaValidationEvidence(projectId, params),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaValidationConflicts(
+  projectId: string,
+  validationRunId = "",
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaValidationConflicts(projectId, validationRunId),
+    queryFn: () => api.getBobaValidationConflicts(projectId, validationRunId),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useBobaValidationReportEvents(
+  projectId: string,
+  afterSequence = 0,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.bobaValidationReportEvents(projectId),
+    queryFn: () => api.getBobaValidationReportEvents(projectId, afterSequence),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 10_000,
+  });
+}
+
+export function useCreateBobaValidationProjectionRequest(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      requested_scope?: "full" | "summary" | "matrix" | "reports" | "evidence" | "conflicts";
+      validation_run_id?: string;
+      idempotency_key?: string;
+    }) => api.createBobaValidationProjectionRequest(projectId, input),
+    onSuccess: () => {
+      // Refetch rather than writing an optimistic result. The projection is the
+      // backend's to compute, never the UI's to guess.
+      void queryClient.invalidateQueries({
+        queryKey: ["boba", "projects", projectId, "validation-reports"],
+      });
+    },
+  });
+}
+
+export function useExportBobaValidationReports(projectId: string) {
+  return useMutation({
+    mutationFn: () => api.exportBobaValidationReports(projectId),
+  });
 }

@@ -199,6 +199,7 @@ from olympus.boba.trend_topic_watcher import (
     BobaTrendTopicWatcherV1,
 )
 from olympus.boba.validation import compact_boba_summary
+from olympus.boba.validation_reports import BobaValidationReportsV1
 from olympus.boba.validator_runner import BobaValidationTargetTypeV1
 from olympus.boba.validator_runner_execution import BobaValidatorRunnerV1
 from olympus.boba.whole_video import (
@@ -432,6 +433,19 @@ _INTEGRATION_FACADE_OPERATION_IDS = (
     "error_doctor_review.load",
     "error_doctor_review.export",
     "error_doctor_review.reset",
+    "validation_reports.inspect_registry",
+    "validation_reports.inspect_summary",
+    "validation_reports.inspect_matrix",
+    "validation_reports.inspect_reports",
+    "validation_reports.inspect_report_detail",
+    "validation_reports.inspect_evidence",
+    "validation_reports.inspect_conflicts",
+    "validation_reports.inspect_events",
+    "validation_reports.create_request",
+    "validation_reports.build_projection",
+    "validation_reports.load",
+    "validation_reports.export",
+    "validation_reports.reset",
     "approval_controls.inspect_registry",
     "approval_controls.inspect_eligibility",
     "approval_controls.build_snapshot",
@@ -596,6 +610,7 @@ class BobaIntegration:
         self.error_doctor_review = BobaErrorDoctorReviewV1(store, self)
         self.repair_plan_review = BobaRepairPlanReviewV1(store, self)
         self.approval_controls = BobaApprovalControlsV1(store, self)
+        self.validation_reports = BobaValidationReportsV1(store, self)
         self.memory_enabled = memory_enabled
         self.allow_global_memory = allow_global_memory
 
@@ -1773,6 +1788,91 @@ class BobaIntegration:
         return self.error_doctor_review.reset_error_doctor_review_metadata(
             project_id, session_id
         )
+
+    # ------------------------------------------------------------------
+    # BOBA Validation + Reports V1 - read-only projection helpers
+    #
+    # Every helper here reads canonical owner records and returns a bounded
+    # projection. None runs a validator, reads a report file, writes an owner
+    # record, creates a Safety decision, advances a workflow or approves
+    # anything.
+    # ------------------------------------------------------------------
+    def build_boba_validation_reports_registry(self, project_id: str) -> dict[str, Any]:
+        return self.validation_reports.build_validation_reports_registry(project_id)
+
+    def build_boba_validation_reports(
+        self, project_id: str, validation_run_id: str = ""
+    ) -> dict[str, Any]:
+        return self.validation_reports.build_validation_reports(project_id, validation_run_id)
+
+    def build_boba_validation_summary(
+        self, project_id: str, validation_run_id: str = ""
+    ) -> dict[str, Any]:
+        return self.validation_reports.build_validation_summary(project_id, validation_run_id)
+
+    def build_boba_validation_matrix(
+        self, project_id: str, validation_run_id: str = ""
+    ) -> dict[str, Any]:
+        return self.validation_reports.build_validation_matrix(project_id, validation_run_id)
+
+    def inspect_boba_validation_reports_list(
+        self, project_id: str, report_type: str = ""
+    ) -> dict[str, Any]:
+        return self.validation_reports.inspect_reports(project_id, report_type)
+
+    def inspect_boba_validation_report_detail(
+        self, project_id: str, report_document_id: str
+    ) -> dict[str, Any]:
+        return self.validation_reports.inspect_report_detail(project_id, report_document_id)
+
+    def inspect_boba_validation_evidence(
+        self,
+        project_id: str,
+        validation_run_id: str = "",
+        report_document_id: str = "",
+    ) -> dict[str, Any]:
+        return self.validation_reports.inspect_evidence(
+            project_id, validation_run_id, report_document_id
+        )
+
+    def inspect_boba_validation_conflicts(
+        self, project_id: str, validation_run_id: str = ""
+    ) -> dict[str, Any]:
+        return self.validation_reports.inspect_conflicts(project_id, validation_run_id)
+
+    def inspect_boba_validation_report_events(
+        self, project_id: str, *, after_sequence: int = 0, limit: int = 100
+    ) -> dict[str, Any]:
+        return self.validation_reports.inspect_validation_report_events(
+            project_id, after_sequence=after_sequence, limit=limit
+        )
+
+    def create_boba_validation_projection_request(
+        self,
+        project_id: str,
+        *,
+        requested_scope: str = "full",
+        validation_run_id: str = "",
+        idempotency_key: str = "",
+    ) -> dict[str, Any]:
+        return self.validation_reports.create_projection_request(
+            project_id,
+            requested_scope=requested_scope,
+            validation_run_id=validation_run_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def load_boba_validation_reports(self, project_id: str) -> dict[str, Any]:
+        payload = self.validation_reports.load_validation_reports(project_id)
+        if payload is None:
+            return self.validation_reports.build_validation_reports(project_id)
+        return payload
+
+    def export_boba_validation_reports(self, project_id: str) -> dict[str, Any]:
+        return self.validation_reports.export_validation_reports(project_id)
+
+    def reset_boba_validation_report_metadata(self, project_id: str) -> dict[str, Any]:
+        return self.validation_reports.reset_validation_report_metadata(project_id)
 
     # ------------------------------------------------------------------
     # BOBA Approval / Reject Buttons V1 - eligibility and decision routing

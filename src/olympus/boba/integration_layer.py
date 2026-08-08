@@ -1162,6 +1162,19 @@ _MODULE_SPECS: dict[str, dict[str, Any]] = {
             "output_quality_reviewer",
         ],
     },
+    "validation_reports": {
+        "name": "Validation Reports",
+        "path": "olympus.boba.validation_reports",
+        "deps": [
+            "integration_layer",
+            "validator_runner",
+            "report_reader",
+            "artifact_inspector",
+            "workflow_controller",
+            "safety_gate",
+            "final_decision_bus",
+        ],
+    },
     "repair_plan_review": {
         "name": "Repair Plan Panel",
         "path": "olympus.boba.repair_plan_review",
@@ -1784,6 +1797,32 @@ def build_boba_operation_registry() -> dict[str, BobaIntegrationOperationDescrip
             _operation(
                 "approval_controls", "compare_decisions", "read_only", side_effect_class="none"
             ),
+            _operation(
+                "validation_reports", "inspect_registry", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "validation_reports", "inspect_summary", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "validation_reports", "inspect_matrix", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "validation_reports", "inspect_reports", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "validation_reports", "inspect_report_detail", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "validation_reports", "inspect_evidence", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "validation_reports", "inspect_conflicts", "read_only", side_effect_class="none"
+            ),
+            _operation(
+                "validation_reports", "inspect_events", "read_only", side_effect_class="none"
+            ),
+            _operation("validation_reports", "create_request", "read_only"),
+            _operation("validation_reports", "build_projection", "read_only"),
             _operation(
                 "repair_plan_review", "inspect_registry", "read_only", side_effect_class="none"
             ),
