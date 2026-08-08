@@ -83,6 +83,9 @@ def _check(
         adapter_id=f"adapter-{validator_id}",
         input_digest=digest(input_seed),
         environment_digest=digest("env"),
+        started_at="2026-08-01T00:00:10+00:00",
+        completed_at="2026-08-01T00:00:20+00:00",
+        duration_seconds=10.0,
         timeout_seconds=60,
         failure_summary=failure_summary,
     )
