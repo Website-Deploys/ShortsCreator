@@ -26,6 +26,10 @@ import {
   BobaRepairPlanReviewErrorBoundary,
   BobaRepairPlanReviewPanel,
 } from "@/components/review/BobaRepairPlanReviewPanel";
+import {
+  BobaValidationReportsErrorBoundary,
+  BobaValidationReportsPanel,
+} from "@/components/review/BobaValidationReportsPanel";
 import { BobaReviewWorkspace } from "@/components/project/BobaReviewWorkspace";
 import { BobaReportReaderPanel } from "@/components/project/BobaReportReaderPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -12181,6 +12185,14 @@ export function ResultsSection({
   );
   const reportReaderPanel = <BobaReportReaderPanel projectId={projectId} />;
   const artifactInspectorPanel = <BobaArtifactInspectorPanel projectId={projectId} />;
+  // The coordinated Validation + Reports projection. It sits alongside the
+  // owner-specific Validator Runner and Report Reader panels rather than
+  // replacing them: those remain the owners' own surfaces.
+  const validationReportsPanel = (
+    <BobaValidationReportsErrorBoundary>
+      <BobaValidationReportsPanel projectId={projectId} />
+    </BobaValidationReportsErrorBoundary>
+  );
   const finalDecisionBusPanel = <BobaFinalDecisionBusPanel projectId={projectId} />;
   const reviewWorkspace = <BobaReviewWorkspace projectId={projectId} />;
   const candidateReviewPanel = <BobaCandidateReviewPanel projectId={projectId} />;
@@ -12243,6 +12255,7 @@ export function ResultsSection({
         {validatorRunnerPanel}
         {reportReaderPanel}
         {artifactInspectorPanel}
+        {validationReportsPanel}
         {finalDecisionBusPanel}
         {reviewWorkspace}
         {candidateReviewPanel}
@@ -12301,6 +12314,7 @@ export function ResultsSection({
         {validatorRunnerPanel}
         {reportReaderPanel}
         {artifactInspectorPanel}
+        {validationReportsPanel}
         {finalDecisionBusPanel}
         {reviewWorkspace}
         {candidateReviewPanel}
@@ -12355,6 +12369,7 @@ export function ResultsSection({
         {validatorRunnerPanel}
         {reportReaderPanel}
         {artifactInspectorPanel}
+        {validationReportsPanel}
         {finalDecisionBusPanel}
         {reviewWorkspace}
         {candidateReviewPanel}
@@ -12409,6 +12424,7 @@ export function ResultsSection({
       {validatorRunnerPanel}
       {reportReaderPanel}
         {artifactInspectorPanel}
+        {validationReportsPanel}
         {finalDecisionBusPanel}
         {reviewWorkspace}
         {candidateReviewPanel}

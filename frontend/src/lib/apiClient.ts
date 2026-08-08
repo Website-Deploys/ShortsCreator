@@ -2256,6 +2256,81 @@ export const api = {
       `/boba/projects/${projectId}/approval-controls/export`,
     ),
 
+  /* BOBA Validation + Reports V1 - read-only projection.
+     No method here runs a validator, reads a report file, approves anything,
+     grants Safety approval, advances a workflow, uploads or publishes. The only
+     write is this module's own projection request metadata. */
+  getBobaValidationReports: (projectId: string, validationRunId = "") =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports${_qs({
+        validation_run_id: validationRunId,
+      })}`,
+    ),
+  getBobaValidationReportsRegistry: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports/registry`,
+    ),
+  getBobaValidationSummary: (projectId: string, validationRunId = "") =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports/summary${_qs({
+        validation_run_id: validationRunId,
+      })}`,
+    ),
+  getBobaValidationMatrix: (projectId: string, validationRunId = "") =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports/matrix${_qs({
+        validation_run_id: validationRunId,
+      })}`,
+    ),
+  getBobaValidationReportCards: (projectId: string, reportType = "") =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports/reports${_qs({
+        report_type: reportType,
+      })}`,
+    ),
+  getBobaValidationReportDetail: (projectId: string, reportDocumentId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports/reports/${reportDocumentId}`,
+    ),
+  getBobaValidationEvidence: (
+    projectId: string,
+    params: { validation_run_id?: string; report_document_id?: string } = {},
+  ) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports/evidence${_qs({
+        validation_run_id: params.validation_run_id,
+        report_document_id: params.report_document_id,
+      })}`,
+    ),
+  getBobaValidationConflicts: (projectId: string, validationRunId = "") =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports/conflicts${_qs({
+        validation_run_id: validationRunId,
+      })}`,
+    ),
+  getBobaValidationReportEvents: (projectId: string, afterSequence = 0) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports/events${_qs({
+        after_sequence: String(afterSequence),
+      })}`,
+    ),
+  createBobaValidationProjectionRequest: (
+    projectId: string,
+    input: {
+      requested_scope?: "full" | "summary" | "matrix" | "reports" | "evidence" | "conflicts";
+      validation_run_id?: string;
+      idempotency_key?: string;
+    },
+  ) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports/requests`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  exportBobaValidationReports: (projectId: string) =>
+    request<Record<string, unknown>>(
+      `/boba/projects/${projectId}/validation-reports/export`,
+    ),
+
   /* BOBA Repair Plan Panel V1 - read-only plan projection and safe routing.
      No method here approves, rejects, revises or executes a repair plan, runs a
      command, restores a checkpoint, restarts a process or changes a workflow. */
