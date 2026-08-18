@@ -1310,3 +1310,37 @@ def test_no_optional_provider_is_installed_by_registry_build() -> None:
         for tool in tools
         for argument in (tool.health_check.arguments if tool.health_check else [])
     )
+
+
+# ---------------------------------------------------------------------------
+# Recovery approval provenance.
+#
+# The parametrised mutation test above covers the binding fields, but an
+# empirical sweep disabling each guard in verify_recovery_approval found these
+# two provenance guards could be removed with the whole suite still green. An
+# approval with no timestamp or no named approver is unattributable, so it
+# cannot authorise a recovery.
+# ---------------------------------------------------------------------------
+def test_recovery_approval_requires_a_timestamp(tmp_path: Path) -> None:
+    _, report = _report(tmp_path)
+    plan = report.recovery_plans[0]
+    strategy = _strategy(report)
+
+    errors = verify_recovery_approval(
+        plan, strategy, _approval(plan, strategy, approved_at="")
+    )
+    assert "Recovery approval timestamp is missing." in errors
+
+
+def test_recovery_approval_requires_a_named_approver(tmp_path: Path) -> None:
+    _, report = _report(tmp_path)
+    plan = report.recovery_plans[0]
+    strategy = _strategy(report)
+
+    assert "Recovery approver identity is missing." in verify_recovery_approval(
+        plan, strategy, _approval(plan, strategy, approved_by="")
+    )
+    # Whitespace is not an identity either.
+    assert "Recovery approver identity is missing." in verify_recovery_approval(
+        plan, strategy, _approval(plan, strategy, approved_by="   ")
+    )
