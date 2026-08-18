@@ -7490,3 +7490,174 @@ async def reset_approval_control_metadata(
     _require_enabled(settings)
     await _require_project(project_id, boba)
     return boba.reset_boba_approval_control_metadata(project_id)
+
+
+# ----------------------------------------------------------------------
+# BOBA Validation + Reports V1
+#
+# A read-only projection over the canonical Validator Runner and Report Reader
+# records. No route here runs a validator, reads a report file from disk, writes
+# an owner record, creates a Safety decision, advances a workflow, approves
+# anything, executes a repair, modifies code, artifacts or media, uploads or
+# publishes. The only writes are this module's own projection metadata.
+# ----------------------------------------------------------------------
+class ValidationProjectionRequestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requested_scope: Literal[
+        "full", "summary", "matrix", "reports", "evidence", "conflicts"
+    ] = "full"
+    validation_run_id: str = Field(default="", max_length=180)
+    idempotency_key: str = Field(default="", max_length=180)
+
+
+@router.get("/projects/{project_id}/validation-reports")
+async def get_validation_reports(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    validation_run_id: str = "",
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_validation_reports(project_id, validation_run_id)
+
+
+@router.get("/projects/{project_id}/validation-reports/registry")
+async def get_validation_reports_registry(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_validation_reports_registry(project_id)
+
+
+@router.get("/projects/{project_id}/validation-reports/summary")
+async def get_validation_summary(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    validation_run_id: str = "",
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_validation_summary(project_id, validation_run_id)
+
+
+@router.get("/projects/{project_id}/validation-reports/matrix")
+async def get_validation_matrix(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    validation_run_id: str = "",
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.build_boba_validation_matrix(project_id, validation_run_id)
+
+
+@router.get("/projects/{project_id}/validation-reports/reports")
+async def get_validation_report_cards(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    report_type: str = "",
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_validation_reports_list(project_id, report_type)
+
+
+@router.get("/projects/{project_id}/validation-reports/reports/{report_document_id}")
+async def get_validation_report_detail(
+    project_id: str,
+    report_document_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_validation_report_detail(project_id, report_document_id)
+
+
+@router.get("/projects/{project_id}/validation-reports/evidence")
+async def get_validation_evidence(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    validation_run_id: str = "",
+    report_document_id: str = "",
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_validation_evidence(
+        project_id, validation_run_id, report_document_id
+    )
+
+
+@router.get("/projects/{project_id}/validation-reports/conflicts")
+async def get_validation_conflicts(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    validation_run_id: str = "",
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_validation_conflicts(project_id, validation_run_id)
+
+
+@router.get("/projects/{project_id}/validation-reports/events")
+async def get_validation_report_events(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+    after_sequence: int = 0,
+    limit: int = 100,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.inspect_boba_validation_report_events(
+        project_id, after_sequence=after_sequence, limit=limit
+    )
+
+
+@router.post("/projects/{project_id}/validation-reports/requests")
+async def create_validation_projection_request(
+    project_id: str,
+    body: ValidationProjectionRequestBody,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.create_boba_validation_projection_request(
+        project_id,
+        requested_scope=body.requested_scope,
+        validation_run_id=body.validation_run_id,
+        idempotency_key=body.idempotency_key,
+    )
+
+
+@router.get("/projects/{project_id}/validation-reports/export")
+async def export_validation_reports(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.export_boba_validation_reports(project_id)
+
+
+@router.delete("/projects/{project_id}/validation-reports")
+async def reset_validation_report_metadata(
+    project_id: str,
+    boba: BobaIntegrationDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    _require_enabled(settings)
+    await _require_project(project_id, boba)
+    return boba.reset_boba_validation_report_metadata(project_id)

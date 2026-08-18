@@ -7846,3 +7846,162 @@ class BobaMemoryStore:
             "code_modified": False,
             "artifacts_modified": False,
         }
+
+    # ------------------------------------------------------------------
+    # BOBA Validation + Reports V1
+    #
+    # This module owns only its own projection metadata: request records, an
+    # immutable projection index, immutable registry snapshots and an append-only
+    # event log. Validator Runner and Report Reader records are never copied here
+    # and are never written by these helpers.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _validate_validation_reports_record_id(value: str, *, label: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,180}", value):
+            raise ValidationError(f"Invalid BOBA validation reports {label}.")
+        return value
+
+    def boba_validation_reports_path(self, project_id: str) -> Path:
+        return self._path(project_id, "validation_reports/index.json")
+
+    def boba_validation_reports_registry_path(self, project_id: str, record_id: str) -> Path:
+        self._validate_validation_reports_record_id(record_id, label="registry id")
+        return self._path(project_id, f"validation_reports/registries/{record_id}.json")
+
+    def boba_validation_reports_request_path(self, project_id: str, record_id: str) -> Path:
+        self._validate_validation_reports_record_id(record_id, label="request id")
+        return self._path(project_id, f"validation_reports/requests/{record_id}.json")
+
+    def boba_validation_reports_event_log_path(self, project_id: str) -> Path:
+        return self._path(project_id, "validation_reports/events/log.json")
+
+    def _write_boba_validation_reports_record(
+        self, path: Path, payload: dict[str, Any], *, scope: str
+    ) -> None:
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path=f"boba.validation_reports.{scope}",
+        )
+        self._atomic_write_compact(path, safe)
+
+    def _write_immutable_boba_validation_reports_record(
+        self, path: Path, payload: dict[str, Any], *, scope: str, label: str
+    ) -> None:
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path=f"boba.validation_reports.{scope}",
+        )
+        with self._lock:
+            if path.exists():
+                existing = self._read(path, None)
+                if existing != safe:
+                    raise ValidationError(
+                        f"BOBA validation reports {label} are immutable."
+                    )
+                return
+            self._atomic_write_compact(path, safe)
+
+    def save_boba_validation_reports(self, project_id: str, payload: dict[str, Any]) -> None:
+        self._write_boba_validation_reports_record(
+            self.boba_validation_reports_path(project_id), payload, scope="index"
+        )
+
+    def load_boba_validation_reports(self, project_id: str) -> dict[str, Any] | None:
+        raw = self._read(self.boba_validation_reports_path(project_id), None)
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_validation_reports_registry(
+        self, project_id: str, record_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_immutable_boba_validation_reports_record(
+            self.boba_validation_reports_registry_path(project_id, record_id),
+            payload,
+            scope="registry",
+            label="registry snapshots",
+        )
+
+    def load_boba_validation_reports_registry(
+        self, project_id: str, record_id: str
+    ) -> dict[str, Any] | None:
+        raw = self._read(
+            self.boba_validation_reports_registry_path(project_id, record_id), None
+        )
+        return raw if isinstance(raw, dict) else None
+
+    def save_boba_validation_reports_request(
+        self, project_id: str, record_id: str, payload: dict[str, Any]
+    ) -> None:
+        self._write_immutable_boba_validation_reports_record(
+            self.boba_validation_reports_request_path(project_id, record_id),
+            payload,
+            scope="request",
+            label="projection requests",
+        )
+
+    def load_boba_validation_reports_request(
+        self, project_id: str, record_id: str
+    ) -> dict[str, Any] | None:
+        raw = self._read(
+            self.boba_validation_reports_request_path(project_id, record_id), None
+        )
+        return raw if isinstance(raw, dict) else None
+
+    def load_boba_validation_reports_events(self, project_id: str) -> list[dict[str, Any]]:
+        raw = self._read(self.boba_validation_reports_event_log_path(project_id), None)
+        return [row for row in raw if isinstance(row, dict)] if isinstance(raw, list) else []
+
+    def append_boba_validation_reports_event(
+        self, project_id: str, payload: dict[str, Any]
+    ) -> None:
+        """Append-only projection event log. Existing entries are never rewritten."""
+        safe = sanitize_memory_payload(
+            dict(payload),
+            max_excerpt_chars=max(self.max_excerpt_chars, 1_200),
+            path="boba.validation_reports.event",
+        )
+        path = self.boba_validation_reports_event_log_path(project_id)
+        with self._lock:
+            existing = self._read(path, None)
+            rows = (
+                [row for row in existing if isinstance(row, dict)]
+                if isinstance(existing, list)
+                else []
+            )
+            rows.append(safe)
+            self._atomic_write_compact(path, rows[-500:])
+
+    def reset_boba_validation_reports_metadata(self, project_id: str) -> dict[str, Any]:
+        """Remove only this module's projection metadata.
+
+        Registry snapshots, the request history and the event log are immutable
+        history and are preserved. No owner record, report body, artifact, media
+        or output is touched.
+        """
+        directory = self.boba_validation_reports_path(project_id).parent.resolve()
+        project_directory = self._project_dir(project_id).resolve()
+        if directory.parent != project_directory or directory.name != "validation_reports":
+            raise ValidationError("Invalid BOBA validation reports reset path.")
+        with self._lock:
+            index_removed = self.boba_validation_reports_path(project_id).exists()
+            self.boba_validation_reports_path(project_id).unlink(missing_ok=True)
+        return {
+            "schema_version": "boba_validation_reports_reset_v1",
+            "project_id": project_id,
+            "active_index_removed": index_removed,
+            "registry_history_preserved": True,
+            "request_history_preserved": True,
+            "event_log_preserved": True,
+            "validator_runner_history_preserved": True,
+            "report_reader_history_preserved": True,
+            "artifact_inspector_history_preserved": True,
+            "workflow_decision_history_preserved": True,
+            "safety_gate_records_preserved": True,
+            "final_decision_bus_records_preserved": True,
+            "report_bodies_preserved": True,
+            "media_removed": False,
+            "outputs_removed": False,
+            "code_modified": False,
+            "artifacts_modified": False,
+        }
