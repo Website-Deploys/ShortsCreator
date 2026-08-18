@@ -144,6 +144,8 @@ _CONDITION_GROUPS: dict[str, tuple[str, ...]] = {
         "reset-preserves-owner-history",
         "reset-preserves-events",
         "reload-is-deterministic",
+        "projection-digest-deterministic",
+        "projection-digest-content-sensitive",
     ),
     "idempotency": (
         "same-request-reused",
@@ -813,6 +815,13 @@ def _run_persistence() -> list[ScenarioResult]:
             PROJECT_ID, requested_scope="matrix", idempotency_key="k-1"
         )
 
+        # A projection built from different owner evidence must digest differently,
+        # otherwise a "deterministic" digest would just be a constant.
+        with tempfile.TemporaryDirectory() as other_raw:
+            other = _engine(
+                Path(other_raw), runner=fx.mixed_state_runner(), reader=fx.healthy_reader()
+            ).build_validation_reports(PROJECT_ID)
+
         events_before = engine.inspect_validation_report_events(PROJECT_ID)["total_available"]
         reset = engine.reset_validation_report_metadata(PROJECT_ID)
         events_after = engine.inspect_validation_report_events(PROJECT_ID)["total_available"]
@@ -857,6 +866,17 @@ def _run_persistence() -> list[ScenarioResult]:
             "reload-is-deterministic": (
                 first["matrix"]["matrix_digest"] == second["matrix"]["matrix_digest"],
                 "repeated projections produce the same matrix digest",
+            ),
+            "projection-digest-deterministic": (
+                first["projection_digest"] == second["projection_digest"]
+                and len(first["projection_digest"]) == 64
+                and loaded is not None
+                and loaded["projection_digest"] == first["projection_digest"],
+                "an unchanged projection keeps one content digest across rebuilds",
+            ),
+            "projection-digest-content-sensitive": (
+                other["projection_digest"] != first["projection_digest"],
+                "different owner evidence produces a different content digest",
             ),
         },
     )

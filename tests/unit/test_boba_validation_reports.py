@@ -53,6 +53,8 @@ from olympus.boba.validation_reports import (
     build_fixed_validation_projection_source_registry,
     derive_matrix_state,
     owner_check_state_mapping,
+    projection_content_digest,
+    projection_content_for_digest,
     validate_projection_digest,
     validate_projection_reference,
     verdict_available,
@@ -988,6 +990,116 @@ def test_integration_facade_exposes_the_projection(tmp_path: Path) -> None:
     assert integration.inspect_boba_validation_reports_list(PROJECT_ID)["reports_available"]
     assert integration.inspect_boba_validation_conflicts(PROJECT_ID)["schema_version"]
     assert integration.export_boba_validation_reports(PROJECT_ID)["secrets_included"] is False
+
+
+# ---------------------------------------------------------------------------
+# Projection digest determinism
+#
+# The projection digest has to identify projected content. It previously hashed
+# the payload including its own generation timestamps, so an unchanged
+# projection produced a different digest on every rebuild and the digest could
+# not distinguish "nothing changed" from "something changed".
+# ---------------------------------------------------------------------------
+def test_projection_digest_is_stable_across_rebuilds(tmp_path: Path) -> None:
+    engine = _engine(tmp_path, runner=fx.passing_runner(), reader=fx.healthy_reader())
+    first = engine.build_validation_reports(PROJECT_ID)
+    second = engine.build_validation_reports(PROJECT_ID)
+
+    assert first["projection_digest"] == second["projection_digest"]
+    assert len(first["projection_digest"]) == 64
+
+
+def test_projection_digest_ignores_generation_timestamps_only(tmp_path: Path) -> None:
+    """Timestamps stay in the payload; they simply do not feed the digest."""
+    engine = _engine(tmp_path, runner=fx.passing_runner(), reader=fx.healthy_reader())
+    first = engine.build_validation_reports(PROJECT_ID)
+    second = engine.build_validation_reports(PROJECT_ID)
+
+    # The generation timestamps are still reported, and did advance.
+    assert first["created_at"] and second["created_at"]
+    assert first["summary"]["created_at"] and first["matrix"]["created_at"]
+    differing = {
+        key
+        for key in ("created_at",)
+        if first[key] != second[key]
+    }
+    assert differing == {"created_at"}, "only wall-clock metadata may differ"
+    assert first["projection_digest"] == second["projection_digest"]
+
+
+def test_projection_digest_changes_when_owner_evidence_changes(tmp_path: Path) -> None:
+    """A deterministic digest must still be sensitive to real content."""
+    passing = _engine(
+        tmp_path / "pass", runner=fx.passing_runner(), reader=fx.healthy_reader()
+    ).build_validation_reports(PROJECT_ID)["projection_digest"]
+    mixed = _engine(
+        tmp_path / "mixed", runner=fx.mixed_state_runner(), reader=fx.healthy_reader()
+    ).build_validation_reports(PROJECT_ID)["projection_digest"]
+    malformed = _engine(
+        tmp_path / "malformed", runner=fx.passing_runner(), reader=fx.malformed_reader()
+    ).build_validation_reports(PROJECT_ID)["projection_digest"]
+    stale = _engine(
+        tmp_path / "stale", runner=fx.stale_target_runner(), reader=fx.healthy_reader()
+    ).build_validation_reports(PROJECT_ID)["projection_digest"]
+    empty = _engine(
+        tmp_path / "empty", runner=fx.empty_runner(), reader=fx.empty_reader()
+    ).build_validation_reports(PROJECT_ID)["projection_digest"]
+
+    assert len({passing, mixed, malformed, stale, empty}) == 5
+
+
+def test_reloaded_projection_keeps_its_digest(tmp_path: Path) -> None:
+    engine = _engine(tmp_path, runner=fx.passing_runner(), reader=fx.healthy_reader())
+    built = engine.build_validation_reports(PROJECT_ID)
+    reloaded = engine.load_validation_reports(PROJECT_ID)
+
+    assert reloaded is not None
+    assert reloaded["projection_digest"] == built["projection_digest"]
+    assert projection_content_digest(reloaded) == built["projection_digest"]
+
+
+def test_projection_content_for_digest_strips_only_generation_timestamps() -> None:
+    payload = {
+        "created_at": "2026-08-01T00:00:00+00:00",
+        "started_at": "2026-08-01T00:00:01+00:00",
+        "completed_at": "2026-08-01T00:00:02+00:00",
+        "generated_at": "2026-08-01T00:00:03+00:00",
+        "matrix": {
+            "created_at": "2026-08-01T00:00:04+00:00",
+            "cells": [{"created_at": "x", "id": "c1"}],
+        },
+        "rows": [{"created_at": "y", "value": 1}],
+    }
+    content = projection_content_for_digest(payload)
+
+    assert "created_at" not in content
+    assert "created_at" not in content["matrix"]
+    assert "created_at" not in content["matrix"]["cells"][0]
+    assert "created_at" not in content["rows"][0]
+    # Owner timestamps genuinely describe the evidence and must survive.
+    assert content["started_at"] == "2026-08-01T00:00:01+00:00"
+    assert content["completed_at"] == "2026-08-01T00:00:02+00:00"
+    assert content["generated_at"] == "2026-08-01T00:00:03+00:00"
+    assert content["matrix"]["cells"][0]["id"] == "c1"
+    assert content["rows"][0]["value"] == 1
+
+
+def test_projection_content_digest_excludes_the_digest_field() -> None:
+    base = {"project_id": PROJECT_ID, "value": 1}
+    without = projection_content_digest(base)
+    with_digest = projection_content_digest({**base, "projection_digest": "z" * 64})
+
+    assert without == with_digest
+
+
+def test_projection_digest_survives_a_persisted_reload_round_trip(tmp_path: Path) -> None:
+    """Rebuilding after a reload must not shift the digest."""
+    engine = _engine(tmp_path, runner=fx.mixed_state_runner(), reader=fx.healthy_reader())
+    first = engine.build_validation_reports(PROJECT_ID)["projection_digest"]
+    assert engine.load_validation_reports(PROJECT_ID) is not None
+    second = engine.build_validation_reports(PROJECT_ID)["projection_digest"]
+
+    assert first == second
 
 
 # ---------------------------------------------------------------------------

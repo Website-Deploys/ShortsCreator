@@ -876,6 +876,8 @@ from olympus.boba.validation_reports import (
     build_fixed_validation_projection_source_registry,
     derive_matrix_state,
     owner_check_state_mapping,
+    projection_content_digest,
+    projection_content_for_digest,
     verdict_available,
 )
 from olympus.boba.validator_runner import (
@@ -1769,6 +1771,8 @@ __all__ = [
     "owner_schema_optional_field_paths",
     "owner_schema_required_field_paths",
     "prepare_boba_code_surgeon_local_commit",
+    "projection_content_digest",
+    "projection_content_for_digest",
     "rank_candidates",
     "rank_repair_strategies",
     "record_boba_output_human_review",

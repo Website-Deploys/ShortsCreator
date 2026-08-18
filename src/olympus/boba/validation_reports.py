@@ -243,6 +243,13 @@ _STALE_DIMENSIONS: tuple[str, ...] = (
     "validation_request_id",
 )
 
+# Wall-clock metadata that must never contribute to a content digest. A
+# projection rebuilt from unchanged canonical evidence has to produce an
+# identical digest, otherwise the digest cannot be used to tell "nothing
+# changed" apart from "something changed". These keys stay in the payload as
+# metadata; they are only excluded from the digested content.
+_VOLATILE_DIGEST_KEYS: frozenset[str] = frozenset({"created_at"})
+
 
 def owner_check_state_mapping() -> dict[str, str]:
     """Return the fixed owner-status to matrix-state mapping."""
@@ -385,6 +392,34 @@ def _bounded_warnings(value: object) -> list[str]:
 def sanitize_validation_reports_export(value: Any) -> Any:
     """Reuse the Report Reader export sanitiser for this module's export."""
     return sanitize_report_export(value)
+
+
+def projection_content_for_digest(value: Any) -> Any:
+    """Return ``value`` with wall-clock metadata removed, recursively.
+
+    The projection digest has to identify *content*. Generation timestamps are
+    honest metadata but they are not content: including them made every rebuild
+    of an unchanged projection report a different digest, which silently
+    destroyed the determinism this module promises. Timestamps that are owner
+    facts (``started_at``, ``completed_at``, ``generated_at``) are deliberately
+    kept, because those genuinely describe the evidence being projected.
+    """
+    if isinstance(value, Mapping):
+        return {
+            key: projection_content_for_digest(item)
+            for key, item in value.items()
+            if key not in _VOLATILE_DIGEST_KEYS
+        }
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return [projection_content_for_digest(item) for item in value]
+    return value
+
+
+def projection_content_digest(payload: Mapping[str, Any]) -> str:
+    """Digest a projection payload over its content alone."""
+    content = projection_content_for_digest(dict(payload))
+    content.pop("projection_digest", None)
+    return _digest(_safe_payload(content))
 
 
 # ----------------------------------------------------------------------
@@ -2533,7 +2568,7 @@ class BobaValidationReportsV1:
             warnings=summary.warnings[:MAX_WARNINGS],
         )
         payload = result.model_dump(mode="json")
-        payload["projection_digest"] = _digest(_safe_payload(payload))
+        payload["projection_digest"] = projection_content_digest(payload)
         self.store.save_boba_validation_reports(project_id, payload)
 
         if not run:

@@ -134,7 +134,43 @@ Detected conflict kinds: `check_status_conflict`, `result_status_conflict`,
 `report_status_conflict`, `report_digest_conflict`, `reported_contradiction`,
 `unknown`.
 
-## 9. Persistence
+## 9. Determinism
+
+Rebuilding a projection from unchanged canonical evidence produces an identical
+`projection_digest`. Ordering is fixed everywhere it could otherwise vary:
+matrix cells by `(validator_id, plan_check_id, attempt_number, cell_id)`,
+report cards, evidence, conflicts and events all sort on explicit keys, and no
+output depends on dictionary or set iteration order.
+
+Generation timestamps are metadata, not content. `created_at` appears on the
+projection, the summary and the matrix, and is deliberately **excluded** from
+the digested content by `projection_content_for_digest`. Owner timestamps that
+genuinely describe the evidence — `started_at`, `completed_at`, `generated_at` —
+are content and are digested.
+
+This distinction was a real defect, not a hypothetical one: the digest
+originally hashed the whole payload including its own `created_at` fields, so an
+unchanged projection produced a different digest on every rebuild and the digest
+could not distinguish "nothing changed" from "something changed". The digest
+remains sensitive to real change: differing owner evidence, malformed reports,
+a stale binding and an empty project each produce a distinct digest.
+
+## 10. Health score — deliberately absent
+
+There is no numeric weighted health score in V1, and none was added.
+
+The Validator Runner does not expose one. Its vocabulary is categorical
+(`BobaValidationCheckStatusV1`) plus per-record confidence values. Inventing a
+weighted score here would mean this layer manufacturing a judgement no owner
+made, which is exactly what the ownership model forbids — and any weighting
+chosen would be this module's opinion presented as an owner fact.
+
+The authoritative V1 signals are therefore categorical: the seven-state matrix,
+`verdict_available`, `evidence_present`, `evidence_missing`, `stale`, the
+per-state `state_counts`, and the owner's own `suite_decision`. Counts are
+reported; they are never collapsed into a single score.
+
+## 11. Persistence
 
 Uses existing BOBA storage under `validation_reports/`. This module persists only
 what it owns:
@@ -153,7 +189,7 @@ history, report bodies, media and outputs are preserved.
 Export is sanitised with the Report Reader's own export sanitiser and excludes
 report bodies, raw paths, commands, secrets and media.
 
-## 10. Security
+## 12. Security
 
 Refused rather than silently rewritten: absolute paths, Windows drive paths, UNC
 paths, traversal, external URLs, raw media references, credential-like text and
@@ -164,7 +200,7 @@ Raw input is validated *before* sanitisation, because the shared `_safe_text`
 helper rewrites `https://` into `http[private-path]/` and a post-sanitisation
 check would therefore accept the very material this refuses.
 
-## 11. API
+## 13. API
 
 Twelve fixed, project-scoped routes. Only two mutate, and both touch this
 module's own metadata alone.
@@ -184,7 +220,7 @@ module's own metadata alone.
 | GET | `/boba/projects/{project_id}/validation-reports/export` |
 | DELETE | `/boba/projects/{project_id}/validation-reports` |
 
-## 12. Integration
+## 14. Integration
 
 Registered as module `validation_reports` in the Integration Layer with 13
 operations. Every operation is `read_only`, apart from the framework's standard
@@ -194,7 +230,7 @@ or Safety authorisation, and none is prohibited or future-gated.
 The Safety Gate classifies all 13 operations as `automatic_read_only`, which is
 the honest classification: this module reaches no owner and executes nothing.
 
-## 13. Frontend
+## 15. Frontend
 
 `BobaValidationReportsPanel` renders validation summary, the seven-state matrix
 strip, per-check rows with owner status beside derived state, report cards,
@@ -210,20 +246,38 @@ It sits **alongside** the owner-specific `BobaValidatorRunnerPanel` and
 `BobaReportReaderPanel` rather than replacing them, because those remain the
 owners' own surfaces.
 
-## 14. Tests
+## 16. Tests
 
-- Backend: **212** tests in `tests/unit/test_boba_validation_reports.py`.
-- Task validator: **103** synthetic scenarios across 12 condition groups plus
+- Backend: **221** tests in `tests/unit/test_boba_validation_reports.py`.
+- Task validator: **105** synthetic scenarios across 12 condition groups plus
   **20** declared-boundary self-checks in
-  `tools/validate_boba_validation_reports.py`.
-- Frontend: **72** tests across `validationReports.test.ts` and
-  `BobaValidationReportsPanel.test.ts`.
+  `tools/validate_boba_validation_reports.py`. Run it with
+  `python -m tools.validate_boba_validation_reports --self-check`.
+- Frontend: **84** tests in three files with deliberately separate jobs:
+  - `validationReports.test.ts` (**38**) exercises the projection logic.
+  - `BobaValidationReportsPanel.render.test.tsx` (**31**) renders the panel in
+    jsdom and asserts what a reader actually sees, including a click interaction
+    and the error-boundary path.
+  - `BobaValidationReportsPanel.test.ts` (**15**) covers wiring only — which
+    module is mounted where, which endpoints and hooks exist, which controls are
+    absent.
+
+The render tests replaced a set of source-text assertions that read the `.tsx`
+file and matched prose with `toContain`. Those passed whenever the wording was
+present and the behaviour was broken, and broke whenever a comment was reworded,
+so they were removed rather than kept for their count. Every behavioural claim
+they made has a rendering equivalent, including report lineage, `aria-hidden`
+decorative glyphs, and the guarantee that a display failure never reads as a
+pass. One assertion was dropped without replacement on purpose: a grep for
+Tailwind breakpoint classes, which asserted a stylesheet rather than a
+behaviour. The `jsdom` environment is set per test file, so the rest of the
+frontend suite still runs under `node`.
 
 Validator condition groups: validation-evidence, stale-state, matrix, summary,
 reports, aggregation, security, persistence, idempotency, api,
 frontend-contract, ownership.
 
-## 15. Limitations
+## 17. Limitations
 
 - This layer reports what the owners recorded. It cannot detect a validator that
   is itself wrong, only that evidence is absent, stale or contradictory.
@@ -235,3 +289,57 @@ frontend-contract, ownership.
   does not judge which record is correct.
 - Passing technical validation is never production readiness, quality
   acceptance, rights clearance, or approval for upload or publication.
+- There is no single number summarising project health, by design. A reader has
+  to look at the state counts and the conflicts, because collapsing them would
+  hide exactly the cases this layer exists to surface.
+
+## 18. Verification status
+
+Measured on the delivery branch, Python 3.11.15 / Node 22:
+
+| Check | Result |
+|---|---|
+| `pytest tests/unit/test_boba_validation_reports.py` | 221 passed |
+| `python -m tools.validate_boba_validation_reports --self-check` | 105/105 scenarios, 20/20 self-checks, exit 0 |
+| `python -m tools.validate_boba_validation_reports --synthetic-project` | 105/105, exit 0 |
+| `python -m tools.validate_boba_validation_reports --report` | byte-identical across runs |
+| `pytest tests/ -k boba` | 7,735 passed, 4 skipped, 1 pre-existing failure |
+| `vitest run` (whole frontend) | 1,450 passed |
+| `tsc --noEmit`, `next lint`, `next build` | clean |
+| `ruff check` on this module's files | clean |
+
+Both determinism and truthfulness claims are negative-controlled. Reverting the
+digest fix fails 5 backend tests and the `persistence:projection-digest-deterministic`
+scenario. Relabelling `MISSING` as `Passed` fails 3 rendering tests and 2 logic
+tests — and passes every wiring test, which is precisely why the wiring tests
+cannot be the only frontend coverage.
+
+## 19. Known pre-existing failures, not caused by this work
+
+These were verified identical before and after, by stashing this branch's
+changes and re-running. None is in the Validation + Reports surface and none is
+fixed here, because each belongs to another owner's roadmap item.
+
+| Item | Where | Note |
+|---|---|---|
+| 1 test failure | `test_boba_output_quality_reviewer.py::test_target_resolution_rejects_external_symlink` | Expects a `ValidationError` matching `external symlink`, but an earlier and also-correct root-escape guard fires first. Output Quality Reviewer's own test, not this module's. |
+| 3 mypy errors | `api/v1/routes/boba.py:2982,3226,3414` | `no-any-return` in the Validator Runner, Report Reader and Artifact Inspector routes. That file is untouched by this work. |
+| 3 ruff `I001` | `tools/validate_durable_restart_resume.py`, `validate_long_video_full_render.py`, `validate_multi_speaker_layout.py` | Unsorted imports in unrelated validators. |
+| 4 skips | `test_boba_tool_recovery.py` | FFmpeg/FFprobe absent from the environment. Environmental, not a defect. |
+
+## 20. Explicitly out of scope for V1
+
+Named here so their absence is a decision on record rather than an oversight:
+
+- **Historical report comparison and regression detection.** V1 persists an
+  active `index.json`, immutable registry and request snapshots, and an
+  append-only event log. It does not diff two projections over time. The
+  deterministic `projection_digest` is the primitive such a feature would build
+  on, which is why determinism was fixed here.
+- **Authentication and authorisation middleware.** Routes follow the existing
+  BOBA contract (`_require_enabled`, `_require_project`). Platform-wide auth is
+  not this module's concern.
+- **A numeric health score.** See §10.
+- Other BOBA roadmap items — Self-Healing Validation, Creative Director
+  Validation, Scout Validation, Learning Loop Validation, Safety Gate
+  Validation, Live Companion, Final System Audit — are untouched.

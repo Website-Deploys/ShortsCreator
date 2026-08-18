@@ -1,3 +1,19 @@
+/**
+ * Wiring and boundary checks for the Validation + Reports panel.
+ *
+ * Scope note, deliberately narrow: this file only asserts things that are
+ * genuinely structural — which module is mounted where, which endpoints and
+ * hooks exist, and which controls are absent. Those are wiring facts that a
+ * render test cannot observe.
+ *
+ * What a user actually sees is covered behaviourally in
+ * `BobaValidationReportsPanel.render.test.tsx`, and the projection logic is
+ * covered in `src/lib/validationReports.test.ts`. This file previously also
+ * asserted the panel's prose and comments via `toContain`, which measured
+ * nothing: it passed whenever the wording was present and the behaviour was
+ * broken, and broke whenever a comment was reworded. Those assertions were
+ * replaced by real rendering tests rather than kept for their count.
+ */
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
@@ -8,18 +24,8 @@ function source(relative: string) {
 
 const panel = source("./BobaValidationReportsPanel.tsx");
 const results = source("../project/ResultsSection.tsx");
-const clientLogic = readFileSync(
-  new URL("../../lib/validationReports.ts", import.meta.url),
-  "utf8",
-);
 const apiClient = readFileSync(new URL("../../lib/apiClient.ts", import.meta.url), "utf8");
 const queries = readFileSync(new URL("../../lib/queries.ts", import.meta.url), "utf8");
-
-/** Collapse whitespace and JSDoc markers so prose assertions survive wrapping. */
-const flat = (value: string) =>
-  value.replace(/^[ \t]*\*[ \t]?/gm, " ").replace(/\s+/g, " ");
-const flatPanel = flat(panel);
-const flatLogic = flat(clientLogic);
 
 describe("integration with the existing project surfaces", () => {
   it("is mounted from the existing project results route", () => {
@@ -72,7 +78,8 @@ describe("the API client surface", () => {
   });
 
   it("scopes every call to a project", () => {
-    const calls = apiClient.match(/`\/boba\/projects\/\$\{projectId\}\/validation-reports[^`]*`/g) ?? [];
+    const calls =
+      apiClient.match(/`\/boba\/projects\/\$\{projectId\}\/validation-reports[^`]*`/g) ?? [];
     expect(calls.length).toBeGreaterThanOrEqual(11);
     for (const call of calls) {
       expect(call).toContain("/boba/projects/${projectId}/validation-reports");
@@ -132,17 +139,11 @@ describe("the React Query surface", () => {
     const block = queries.slice(queries.indexOf("BOBA Validation + Reports V1"));
     expect(block).toContain("invalidateQueries");
     expect(block).not.toContain("setQueryData");
-    expect(flat(block)).toContain("never the UI's to guess");
   });
 });
 
-describe("the panel holds no authority", () => {
-  it("declares itself presentation only", () => {
-    expect(flatPanel).toContain("Presentation only");
-    expect(flatPanel).toContain("holds no authority");
-  });
-
-  it("offers no control that could execute, approve or advance anything", () => {
+describe("the panel exposes no control that could act", () => {
+  it("offers no mutation and no execute, approve or advance control", () => {
     for (const forbidden of [
       "useMutation",
       "Approve",
@@ -159,10 +160,11 @@ describe("the panel holds no authority", () => {
     }
   });
 
-  it("never makes an affirmative authorisation claim", () => {
-    // "approved for upload" may only ever appear inside a denial, never as a
-    // claim, so affirmative phrasings are what get asserted against.
-    const lowered = flat(panel).toLowerCase();
+  it("never introduces an affirmative authorisation claim", () => {
+    // A guard against future wording, not a behavioural assertion: the panel
+    // must never gain prose that reads as an authorisation. The denial that is
+    // actually rendered is asserted in the render tests.
+    const lowered = panel.replace(/\s+/g, " ").toLowerCase();
     for (const claim of [
       "is production ready",
       "is approved",
@@ -175,148 +177,26 @@ describe("the panel holds no authority", () => {
     ]) {
       expect(lowered).not.toContain(claim);
     }
-    // The only mention of upload approval is the explicit denial.
-    expect(lowered).toContain(
-      "does not mean production ready, quality accepted, rights cleared, or approved for upload or publication",
-    );
-  });
-
-  it("states plainly that a technical pass is not readiness", () => {
-    expect(flatPanel).toContain("does not mean production ready");
-    expect(flatPanel).toContain("quality accepted");
-  });
-
-  it("says the panel runs no validator and changes no workflow", () => {
-    expect(flatPanel).toContain("Nothing here runs a validator");
-    expect(flatPanel).toContain("changes a workflow");
   });
 });
 
-describe("the matrix presentation", () => {
-  it("renders all seven states rather than a subset", () => {
-    expect(panel).toContain("BobaValidationStateStrip");
-    expect(clientLogic).toContain('"NOT_RUN"');
-    expect(clientLogic).toContain('"MISSING"');
-    expect(clientLogic).toContain('"STALE"');
-    expect(clientLogic).toContain('"SKIPPED"');
-    expect(clientLogic).toContain('"BLOCKED"');
-  });
-
-  it("shows the owner status next to the derived state", () => {
-    expect(panel).toContain("Owner status");
-    expect(panel).toContain("cell.owner_status");
-    expect(panel).toContain("cell.derived_state");
-  });
-
-  it("explains why a derived state differs from the owner presentation", () => {
-    expect(panel).toContain("cell.owner_reported_state !== cell.derived_state");
-    expect(flatPanel).toContain("Owner-reported presentation was");
-  });
-
-  it("reports checks that carry no verdict", () => {
-    expect(panel).toContain("cellsWithoutVerdict");
-    expect(flatPanel).toContain("carry no validation verdict");
-    expect(flatPanel).toContain("not counted as passing");
-  });
-
-  it("shows validator identity, digests and timestamps", () => {
-    expect(panel).toContain("Validator version");
-    expect(panel).toContain("Result digest");
-    expect(panel).toContain("Completed");
-  });
-});
-
-describe("stale state and lineage presentation", () => {
-  it("names the exact dimensions that invalidated reuse", () => {
-    expect(panel).toContain("staleDimensionLabels");
-    expect(flatPanel).toContain("Stale binding.");
-    expect(flatPanel).toContain("cannot be reused");
-  });
-
-  it("shows report lineage", () => {
-    expect(panel).toContain("lineage_read_run_id");
-    expect(flatPanel).toContain("Lineage:");
-  });
-
-  it("shows digest and integrity indicators for reports", () => {
-    expect(panel).toContain("Content digest");
-    expect(panel).toContain("Integrity");
-    expect(panel).toContain("Digest verified");
-  });
-});
-
-describe("conflict presentation", () => {
-  it("presents conflicts as unresolved and preserves every value", () => {
-    expect(panel).toContain("BobaValidationConflictList");
-    expect(flatPanel).toContain("unresolved");
-    expect(flatPanel).toContain("Both values are preserved");
-    expect(flatPanel).toContain("No result was selected as best");
-    expect(flatPanel).toContain("no root cause or repair is inferred");
-  });
-});
-
-describe("report bodies stay with their owner", () => {
-  it("says so in the panel and in the logic module", () => {
-    expect(flatPanel).toContain("Report bodies remain owned by the");
-    expect(flatPanel).toContain("not stored here");
-    expect(flatLogic).toContain("never turns missing evidence into a");
-  });
-});
-
-describe("loading, empty and error states", () => {
-  it("provides all three for every asynchronous section", () => {
+describe("every asynchronous section has a loading and an error branch", () => {
+  it("provides a loading, empty and error component", () => {
     expect(panel).toContain("function LoadingState");
     expect(panel).toContain("function EmptyState");
     expect(panel).toContain("function ErrorState");
+  });
+
+  it("branches on pending and error state for each query", () => {
     const loading = panel.match(/isPending \?/g) ?? [];
     const failing = panel.match(/isError \?/g) ?? [];
     expect(loading.length).toBeGreaterThanOrEqual(5);
     expect(failing.length).toBeGreaterThanOrEqual(5);
   });
 
-  it("never presents an error as a pass", () => {
-    expect(flatPanel).toContain(
-      "Nothing is reported as passing while data is unavailable",
-    );
-  });
-
-  it("states honestly when no checks exist", () => {
-    expect(flatPanel).toContain("No validation checks exist for this project yet");
-    expect(flatPanel).toContain("Nothing is reported as passing.");
-  });
-
-  it("states honestly when evidence is absent", () => {
-    expect(flatPanel).toContain("Absent evidence is not treated as a pass");
-  });
-});
-
-describe("accessibility and responsive layout", () => {
   it("marks live and alert regions", () => {
     expect(panel).toContain('role="status"');
     expect(panel).toContain('aria-live="polite"');
     expect(panel).toContain('role="alert"');
-  });
-
-  it("labels the matrix, strip and conflict lists", () => {
-    expect(panel).toContain('aria-label="Validation state totals"');
-    expect(panel).toContain('aria-label="Validation status matrix"');
-    expect(panel).toContain('aria-label="Validation conflicts"');
-  });
-
-  it("uses accessible toggle semantics for report details", () => {
-    expect(panel).toContain("aria-pressed={selected}");
-    expect(panel).toContain('type="button"');
-    expect(panel).toContain("focus-visible:ring");
-  });
-
-  it("hides decorative glyphs from assistive technology", () => {
-    const hidden = panel.match(/aria-hidden/g) ?? [];
-    expect(hidden.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("lays out responsively", () => {
-    expect(panel).toContain("sm:grid-cols-4");
-    expect(panel).toContain("lg:grid-cols-7");
-    expect(panel).toContain("sm:p-4");
   });
 });
