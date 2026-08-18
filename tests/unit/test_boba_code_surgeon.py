@@ -173,11 +173,14 @@ def _approval(
     approved: bool = True,
     explicit: bool = True,
     expires: str | None = None,
+    patch_proposal_id: str | None = None,
+    code_repair_case_id: str | None = None,
+    special_paths: list[str] | None = None,
 ) -> BobaCodeApprovalRecordV1:
     return BobaCodeApprovalRecordV1(
         approval_id=f"approval_{approval_type}",
-        code_repair_case_id=proposal.code_repair_case_id,
-        patch_proposal_id=proposal.patch_proposal_id,
+        code_repair_case_id=code_repair_case_id or proposal.code_repair_case_id,
+        patch_proposal_id=patch_proposal_id or proposal.patch_proposal_id,
         approval_type=approval_type,
         approved=approved,
         approved_by="local-human-reviewer",
@@ -185,7 +188,7 @@ def _approval(
         approved_diff_sha256=diff_sha or proposal.diff_sha256,
         approved_scope=scope or [item.path for item in proposal.files],
         approved_validation_commands=validation_commands or ["git_diff_check"],
-        approved_special_paths=[],
+        approved_special_paths=special_paths or [],
         approval_expires_at=expires,
         explicit_confirmation=explicit,
     )
@@ -1135,3 +1138,78 @@ def test_050_no_generated_outputs_are_tracked_by_policy() -> None:
     assert "media" in policy.protected_paths
     assert "node_modules" in policy.protected_paths
     assert ".venv" in policy.protected_paths
+
+
+# ---------------------------------------------------------------------------
+# Approval binding guarantees.
+#
+# An approval authorises exactly one patch, for exactly one repair case, at
+# exactly one base, with exactly one path scope, for a bounded time. The four
+# tests below cover guards that no test or validator previously exercised: an
+# empirical sweep disabling each guard in verify_approval found these four could
+# be removed with the whole suite and the Autopilot validator still green.
+# ---------------------------------------------------------------------------
+def test_051_approval_for_another_patch_proposal_is_rejected(tmp_path: Path) -> None:
+    """An approval must not authorise a patch it was not issued for."""
+    _, report = _proposal(_repository(tmp_path))
+    proposal = report.patch_proposals[0]
+    approval = _approval(proposal, patch_proposal_id="code_patch_other")
+
+    assert "Approval is bound to a different patch proposal." in verify_approval(
+        proposal,
+        approval,
+        required_type="isolated_patch_execution",
+    )
+
+
+def test_052_approval_for_another_repair_case_is_rejected(tmp_path: Path) -> None:
+    """Authorising one repair case must never authorise a different one."""
+    _, report = _proposal(_repository(tmp_path))
+    proposal = report.patch_proposals[0]
+    approval = _approval(proposal, code_repair_case_id="code_case_other")
+
+    assert "Approval is bound to a different repair case." in verify_approval(
+        proposal,
+        approval,
+        required_type="isolated_patch_execution",
+    )
+
+
+def test_053_missing_special_path_approval_is_rejected(tmp_path: Path) -> None:
+    """A path needing special approval cannot ride along on a plain approval."""
+    _, report = _proposal(_repository(tmp_path))
+    proposal = report.patch_proposals[0]
+    guarded = proposal.model_copy(
+        update={
+            "files": [
+                proposal.files[0].model_copy(update={"special_approval_required": True})
+            ]
+        }
+    )
+    approval = _approval(guarded, special_paths=[])
+
+    assert "Required special-path approval is missing." in verify_approval(
+        guarded,
+        approval,
+        required_type="isolated_patch_execution",
+    )
+    # Naming the path explicitly is what clears it.
+    cleared = _approval(guarded, special_paths=[guarded.files[0].path])
+    assert "Required special-path approval is missing." not in verify_approval(
+        guarded,
+        cleared,
+        required_type="isolated_patch_execution",
+    )
+
+
+def test_054_unparseable_approval_expiry_fails_closed(tmp_path: Path) -> None:
+    """A malformed expiry is refused, never read as "no expiry"."""
+    _, report = _proposal(_repository(tmp_path))
+    proposal = report.patch_proposals[0]
+    approval = _approval(proposal, expires="not-a-timestamp")
+
+    assert "Approval expiry timestamp is invalid." in verify_approval(
+        proposal,
+        approval,
+        required_type="isolated_patch_execution",
+    )
