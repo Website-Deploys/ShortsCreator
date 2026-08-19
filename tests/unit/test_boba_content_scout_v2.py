@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import socket
 import subprocess
 import urllib.request
+from collections.abc import Iterator, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tools.validate_boba_content_scout_v2 import (
+    _recommendations,
     build_synthetic_content_scout,
     build_synthetic_scout_items,
     build_synthetic_scout_signals,
@@ -43,9 +47,11 @@ from olympus.boba import (
     normalize_scout_item,
     score_scout_items,
 )
+from olympus.boba.content_scout import _duplicate_map
 from olympus.data.repositories import StorageProjectRepository
 from olympus.data.storage.local import LocalStorage
 from olympus.domain.entities.project import Project, ProjectStatus
+from olympus.platform.errors import ValidationError
 from olympus.utils import utc_now
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -672,4 +678,660 @@ def test_47_no_reports_or_media_are_staged() -> None:
     assert not any(
         path.casefold().endswith((".mp4", ".mov", ".wav", ".webm"))
         for path in staged
+    )
+
+# ---------------------------------------------------------------------------
+# Helpers for the behavioural proof (test_48 onward).
+# ---------------------------------------------------------------------------
+SCORE_FIELDS = (
+    "creator_fit_score",
+    "topic_fit_score",
+    "shortability_score",
+    "hook_potential_score",
+    "emotional_story_score",
+    "trend_context_score",
+    "novelty_score",
+    "rights_readiness_score",
+    "review_priority_score",
+    "confidence",
+)
+ANGLE_FIELDS = {
+    "angle_id",
+    "title",
+    "hook_direction",
+    "why_it_might_work",
+    "risk",
+    "confidence",
+}
+TOP_LEVEL_FIELDS = {
+    "created_at",
+    "imported_sources",
+    "limitations",
+    "project_id",
+    "rejected_items",
+    "review_queue",
+    "schema_version",
+    "scored_items",
+    "scout_items",
+    "scout_summary",
+    "signal_usage",
+    "source_id",
+    "warnings",
+}
+QUEUE_LISTS = (
+    "top_items",
+    "backup_items",
+    "permission_needed_items",
+    "blocked_items",
+    "duplicate_or_similar_items",
+)
+RECOMMENDATION_VALUES = {
+    "review_now",
+    "save_for_later",
+    "seek_permission",
+    "blocked",
+    "reject",
+}
+AUTHORITY_KEYS = {"approved", "authorized", "selected", "render_ready", "publish"}
+_NEGATION_MARKERS = (
+    "not",
+    "no ",
+    "cannot",
+    "do not",
+    "does not",
+    "without",
+    "must",
+    "remain",
+    "never",
+    "?",
+)
+_CLEARANCE_TOKENS = ("cleared", "verified", "confirmed")
+_PERFORMANCE_TOKENS = (
+    "predict",
+    "prediction",
+    "forecast",
+    "guarantee",
+    "guaranteed",
+    "will perform",
+    "viral",
+)
+
+
+def _walk_strings(payload: Any) -> Iterator[str]:
+    """Yield every string value at any depth."""
+    if isinstance(payload, str):
+        yield payload
+    elif isinstance(payload, Mapping):
+        for value in payload.values():
+            yield from _walk_strings(value)
+    elif isinstance(payload, list):
+        for value in payload:
+            yield from _walk_strings(value)
+
+
+def _walk_keys(payload: Any) -> Iterator[str]:
+    """Yield every mapping key at any depth, for exact-equality comparison only."""
+    if isinstance(payload, Mapping):
+        for key, value in payload.items():
+            yield str(key)
+            yield from _walk_keys(value)
+    elif isinstance(payload, list):
+        for value in payload:
+            yield from _walk_keys(value)
+
+
+def _key_paths(payload: Any, leaf_names: tuple[str, ...], path: str = "") -> set[str]:
+    """Collect the dotted/indexed path of every leaf whose key name is in leaf_names."""
+    found: set[str] = set()
+    if isinstance(payload, Mapping):
+        for key, value in payload.items():
+            here = f"{path}.{key}" if path else str(key)
+            if key in leaf_names:
+                found.add(here)
+            found |= _key_paths(value, leaf_names, here)
+    elif isinstance(payload, list):
+        for index, value in enumerate(payload):
+            found |= _key_paths(value, leaf_names, f"{path}[{index}]")
+    return found
+
+
+def _differing_paths(first: Any, second: Any, path: str = "") -> set[str]:
+    """Key paths whose values differ between two payloads."""
+    out: set[str] = set()
+    if isinstance(first, Mapping) and isinstance(second, Mapping):
+        for key in set(first) | set(second):
+            here = f"{path}.{key}" if path else str(key)
+            out |= _differing_paths(first.get(key), second.get(key), here)
+    elif isinstance(first, list) and isinstance(second, list):
+        if len(first) != len(second):
+            out.add(path or "<root>")
+        else:
+            for index, (left, right) in enumerate(zip(first, second, strict=True)):
+                out |= _differing_paths(left, right, f"{path}[{index}]")
+    elif first != second:
+        out.add(path or "<root>")
+    return out
+
+
+def _snapshot(value: Any) -> Any:
+    """Deep copy, normalising models and mappings onto one comparison surface."""
+    if hasattr(value, "model_dump"):
+        return copy.deepcopy(value.model_dump(mode="json"))
+    return copy.deepcopy(value)
+
+
+def _flagged(text: str, tokens: tuple[str, ...]) -> bool:
+    lowered = text.casefold()
+    if not any(token in lowered for token in tokens):
+        return False
+    return not any(marker in lowered for marker in _NEGATION_MARKERS)
+
+
+def _claims_clearance(text: str) -> bool:
+    """True only when a clearance token appears without a negation marker."""
+    return _flagged(text, _CLEARANCE_TOKENS)
+
+
+def _claims_performance(text: str) -> bool:
+    """True only when a performance-claim token appears without a negation marker."""
+    return _flagged(text, _PERFORMANCE_TOKENS)
+
+
+def _all_recommendations(
+    result: BobaContentScoutSetV2,
+) -> list[BobaScoutRecommendationV2]:
+    return [
+        item
+        for name in QUEUE_LISTS
+        for item in getattr(result.review_queue, name)
+    ]
+
+
+def _signals_kwargs() -> dict[str, Any]:
+    """The fixture signals mapped onto analyze()'s parameter names.
+
+    build_synthetic_scout_signals() returns the key ``memory``; analyze() takes
+    ``boba_memory=``. analyze() accepts a missing boba_memory silently, so a
+    dropped mapping would exercise the degraded path invisibly.
+    """
+    signals = build_synthetic_scout_signals()
+    return {
+        "creator_learning": signals["creator_learning"],
+        "approval_rejection_learning": signals["approval_rejection_learning"],
+        "performance_feedback": signals["performance_feedback"],
+        "boba_memory": signals["memory"],
+    }
+
+
+def test_helper_matchers_are_falsifiable() -> None:
+    """Positive controls for the denial-aware matchers.
+
+    Without these, the absence assertions in test_56 and test_68 would be
+    unfalsifiable: a matcher that never fires would satisfy them trivially.
+    """
+    assert _claims_clearance("Rights are cleared and copyright is confirmed.") is True
+    assert _claims_performance("This short will predict a viral audience response.") is True
+    # The engine's own honest text must NOT be flagged.
+    assert _claims_clearance("Has a human independently confirmed rights and permission?") is False
+    assert _claims_performance(
+        "Scores estimate metadata fit only and do not predict audience performance."
+    ) is False
+
+# ---------------------------------------------------------------------------
+# Requirement 1 — the clamp's reachable limb (task 4.1)
+# ---------------------------------------------------------------------------
+def test_48_score_values_lie_within_the_unit_interval() -> None:
+    """STRUCTURAL TRIPWIRE, NOT PROOF.
+
+    No available input can falsify this. `_clamp`'s bound limbs are structurally
+    unreachable — every `_score` component caps its terms with `min(...)` and the
+    global ceiling is 0.91 — and `BobaScoutScoreV2` declares `ge=0.0, le=1.0` as a
+    second independent guard. Retained per R1.4 as a regression tripwire and
+    excluded from the validator's `passed` formula, because a term guaranteed by
+    the contract layer is exactly what R9.11 forbids. The load-bearing assertion
+    is test_49.
+    """
+    for score in _result().scored_items:
+        dumped = score.model_dump()
+        for field in SCORE_FIELDS:
+            assert 0.0 <= dumped[field] <= 1.0, f"{score.item_id}.{field}"
+
+
+def test_49_score_values_are_rounded_to_four_decimals() -> None:
+    """The real G2 detector: 32 of 100 values carry float tails without the clamp."""
+    for score in _result().scored_items:
+        dumped = score.model_dump()
+        for field in SCORE_FIELDS:
+            value = dumped[field]
+            assert round(value, 4) == value, f"{score.item_id}.{field}={value!r}"
+
+
+def test_50_angle_confidence_is_rounded_and_bounded() -> None:
+    """Covers the second clamp site at content_scout.py:1184."""
+    angles = [
+        angle
+        for recommendation in _all_recommendations(_result())
+        for angle in recommendation.suggested_short_angles
+    ]
+    assert angles
+    for angle in angles:
+        assert round(angle.confidence, 4) == angle.confidence, angle.angle_id
+        assert 0.0 <= angle.confidence <= 1.0, angle.angle_id
+
+
+def test_51_hook_saturated_candidate_holds_the_fixture_maximum_hook_score() -> None:
+    """Positive control keeping C9 load-bearing."""
+    result = _result()
+    saturated = _score("hook_saturated_owned")
+    assert saturated.hook_potential_score == max(
+        item.hook_potential_score for item in result.scored_items
+    )
+    assert saturated.hook_potential_score > _score("weak_generic").hook_potential_score
+
+
+# ---------------------------------------------------------------------------
+# Requirements 2 and 3 — duplicates and rights (task 4.2)
+# ---------------------------------------------------------------------------
+def test_52_duplicate_candidate_is_recommended_for_rejection() -> None:
+    """The decision itself, not a side effect with an independent cause.
+
+    Novelty reduction (`_score`) and `duplicate_or_similar_items` membership
+    (`_queue`) are both caused by `duplicate_of`, so neither is proof (R2.4).
+    `score.warnings` also names the original but survives branch removal, so it is
+    barred too. `recommendation.reason` is authored inside the `elif duplicate_of:`
+    branch and is therefore branch-coupled.
+    """
+    result = _result()
+    recommendation = _recommendations(result)["owned_emotional_duplicate"]
+
+    assert recommendation.recommendation == "reject"
+    assert _duplicate_map(result.scout_items)["owned_emotional_duplicate"] == (
+        "owned_emotional_story"
+    )
+    assert "owned_emotional_story" in recommendation.reason
+
+
+def test_53_unsupported_rights_status_normalizes_through_analyze() -> None:
+    """R3.1 requires the guard be driven through analyze(), not normalize_scout_item."""
+    result = BobaContentScoutV2().analyze(
+        "proj_unsupported_rights",
+        manual_items=[
+            {
+                "item_id": "probably_safe_item",
+                "title": "A story about an unexpected lesson",
+                "description": "Metadata with an unsupported rights label.",
+                "rights_status": "probably_safe",
+            }
+        ],
+        **_signals_kwargs(),
+    )
+
+    item = next(row for row in result.scout_items if row.item_id == "probably_safe_item")
+    assert item.rights_status == "unknown"
+    assert any("Unsupported rights status" in warning for warning in item.warnings)
+
+
+def test_54_blocked_check_precedes_the_duplicate_check() -> None:
+    """R3.5 branch order: blocked wins over duplicate.
+
+    Dual membership plus the blocked-branch reason is the evidence. `_queue` places
+    any candidate in duplicate_or_similar_items whenever it is in the duplicate map
+    regardless of recommendation, so dual membership with a "blocked" recommendation
+    can only arise if the blocked branch ran first.
+    """
+    result = _result()
+    recommendation = _recommendations(result)["blocked_emotional_duplicate"]
+
+    assert recommendation.recommendation == "blocked"
+    assert recommendation.reason == "The user-provided rights status is blocked."
+    assert any(
+        item.item_id == "blocked_emotional_duplicate"
+        for item in result.review_queue.blocked_items
+    )
+    assert any(
+        item.item_id == "blocked_emotional_duplicate"
+        for item in result.review_queue.duplicate_or_similar_items
+    )
+    assert _duplicate_map(result.scout_items)["blocked_emotional_duplicate"] == (
+        "blocked_source"
+    )
+
+
+def test_55_every_recommendation_warns_that_copyright_is_unconfirmed() -> None:
+    recommendations = _all_recommendations(_result())
+    assert recommendations
+    for recommendation in recommendations:
+        assert any(
+            "cannot confirm copyright safety" in warning.casefold()
+            for warning in recommendation.warnings
+        ), recommendation.item_id
+
+
+def test_56_no_output_string_claims_rights_are_cleared() -> None:
+    payload = _result().model_dump(mode="json")
+
+    offenders = [text for text in _walk_strings(payload) if _claims_clearance(text)]
+    assert offenders == []
+
+    # Positive control: the matcher must fire on an injected claim.
+    tainted = copy.deepcopy(payload)
+    tainted["warnings"] = [*tainted["warnings"], "Rights are cleared and copyright is confirmed."]
+    assert [text for text in _walk_strings(tainted) if _claims_clearance(text)]
+
+
+# ---------------------------------------------------------------------------
+# Requirement 4 — determinism with exactly two timestamp exceptions (task 4.3)
+# ---------------------------------------------------------------------------
+def test_57_repeated_analysis_differs_only_at_the_two_timestamp_locations() -> None:
+    """Scout has TWO timestamp locations. #44's root-only rule does not transfer.
+
+    A recursive strip-all-`created_at` is forbidden: it would silently absorb a
+    newly introduced nondeterministic field, which is what R4.3 exists to prevent.
+    """
+    engine = BobaContentScoutV2()
+    items = build_synthetic_scout_items()
+    first = engine.analyze("proj_determinism", manual_items=items, **_signals_kwargs())
+    second = engine.analyze("proj_determinism", manual_items=items, **_signals_kwargs())
+
+    left = first.model_dump(mode="json")
+    right = second.model_dump(mode="json")
+
+    allowed = {"created_at"} | {
+        f"imported_sources[{index}].imported_at"
+        for index in range(len(left["imported_sources"]))
+    }
+
+    # The exclusion set must be exactly the two documented locations.
+    assert _key_paths(left, ("created_at", "imported_at")) == allowed
+    assert _key_paths(right, ("created_at", "imported_at")) == allowed
+
+    # published_at is deterministic source metadata and stays inside the
+    # compared surface.
+    published = _key_paths(left, ("published_at",))
+    assert published
+    assert published.isdisjoint(allowed)
+    for path in published:
+        assert path not in _differing_paths(left, right)
+
+    differing = _differing_paths(left, right)
+    assert differing <= allowed, f"nondeterministic fields: {sorted(differing - allowed)}"
+
+    for payload in (left, right):
+        payload.pop("created_at", None)
+        for source in payload["imported_sources"]:
+            source.pop("imported_at", None)
+    assert json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
+
+
+def test_58_ordering_is_stable_across_runs() -> None:
+    engine = BobaContentScoutV2()
+    items = build_synthetic_scout_items()
+    first = engine.analyze("proj_order", manual_items=items, **_signals_kwargs())
+    second = engine.analyze("proj_order", manual_items=items, **_signals_kwargs())
+
+    assert [row.item_id for row in first.scout_items] == [
+        row.item_id for row in second.scout_items
+    ]
+    assert [row.item_id for row in first.scored_items] == [
+        row.item_id for row in second.scored_items
+    ]
+    for name in QUEUE_LISTS:
+        assert [row.item_id for row in getattr(first.review_queue, name)] == [
+            row.item_id for row in getattr(second.review_queue, name)
+        ], name
+
+
+# ---------------------------------------------------------------------------
+# Requirement 5 — caller-supplied inputs are never mutated (task 4.4)
+# ---------------------------------------------------------------------------
+def test_59_analyze_does_not_mutate_any_caller_supplied_input() -> None:
+    """Nothing is excluded from the comparison; an exclusion leaves a channel unproven."""
+    items = build_synthetic_scout_items()
+    signals = _signals_kwargs()
+    inputs = {"manual_items": items, **signals}
+    before = {name: _snapshot(value) for name, value in inputs.items()}
+
+    result = BobaContentScoutV2().analyze(
+        "proj_no_mutation", manual_items=items, **signals
+    )
+
+    after = {name: _snapshot(value) for name, value in inputs.items()}
+    for name in inputs:
+        assert after[name] == before[name], name
+
+    # A dropped memory -> boba_memory mapping would silently exercise the
+    # degraded path, so assert the artifacts actually arrived.
+    usage = result.signal_usage
+    assert usage.creator_learning_used is True
+    assert usage.approval_rejection_learning_used is True
+    assert usage.performance_feedback_used is True
+    assert usage.memory_used is True
+
+
+def test_60_manual_items_length_and_order_are_unchanged() -> None:
+    items = build_synthetic_scout_items()
+    ids_before = [row.get("item_id") for row in items]
+    length_before = len(items)
+
+    BobaContentScoutV2().analyze("proj_order_stable", manual_items=items, **_signals_kwargs())
+
+    assert len(items) == length_before
+    assert [row.get("item_id") for row in items] == ids_before
+
+
+# ---------------------------------------------------------------------------
+# Requirement 6 — the advisory authority boundary (task 4.5)
+# ---------------------------------------------------------------------------
+def test_61_no_authority_bearing_field_exists_at_any_depth() -> None:
+    """EXACT key-name equality, never substring: `published_at` contains `publish`."""
+    payload = _result().model_dump(mode="json")
+
+    keys = set(_walk_keys(payload))
+    assert keys & AUTHORITY_KEYS == set()
+
+    # Positive control: the scan must find an injected authority field.
+    tainted = copy.deepcopy(payload)
+    tainted["approved"] = True
+    assert set(_walk_keys(tainted)) & AUTHORITY_KEYS == {"approved"}
+
+
+def test_62_top_level_field_set_is_exactly_the_thirteen_documented_names() -> None:
+    result = _result()
+    payload = result.model_dump(mode="json")
+
+    assert set(payload) == TOP_LEVEL_FIELDS
+    assert "recommendations" not in payload
+
+    flattened = _recommendations(result)
+    assert {item.item_id for item in _all_recommendations(result)} == set(flattened)
+
+
+def test_63_published_at_is_source_metadata_and_never_an_approval() -> None:
+    result = _result()
+    assert _item("hook_saturated_owned").published_at
+
+    for recommendation in _all_recommendations(result):
+        dumped = recommendation.model_dump(mode="json")
+        assert "published_at" not in dumped, recommendation.item_id
+
+
+def test_64_every_recommendation_value_is_one_of_the_five() -> None:
+    recommendations = _all_recommendations(_result())
+    assert recommendations
+    for recommendation in recommendations:
+        assert recommendation.recommendation in RECOMMENDATION_VALUES
+
+
+# ---------------------------------------------------------------------------
+# Requirement 7 — human review is always required (task 4.6)
+# ---------------------------------------------------------------------------
+def test_65_human_review_is_required_on_every_recommendation() -> None:
+    """Coverage assertions matter: without them one branch of _recommend could hide."""
+    result = _result()
+    recommendations = _all_recommendations(result)
+    assert recommendations
+
+    for recommendation in recommendations:
+        assert recommendation.human_review_required is True, recommendation.item_id
+
+    statuses = {row.rights_status for row in result.scout_items}
+    assert statuses == {
+        "owned",
+        "licensed",
+        "permission_granted",
+        "permission_needed",
+        "unknown",
+        "blocked",
+    }
+    assert {item.recommendation for item in recommendations} == RECOMMENDATION_VALUES
+
+
+def test_66_human_review_is_independent_of_rights_review() -> None:
+    relaxed = [
+        item
+        for item in _all_recommendations(_result())
+        if item.rights_review_required is False
+    ]
+    assert relaxed, "positive control: the selection must be non-empty"
+    for recommendation in relaxed:
+        assert recommendation.human_review_required is True, recommendation.item_id
+
+
+# ---------------------------------------------------------------------------
+# Requirement 8 — no audience-performance claim (task 4.7)
+# ---------------------------------------------------------------------------
+def test_67_engine_authored_limitations_are_present_verbatim() -> None:
+    limitations = _result().limitations
+    for expected in (
+        "Scores estimate metadata fit only and do not predict audience performance.",
+        "No external trend knowledge was verified or used.",
+        "Human review and an independent rights check remain required.",
+    ):
+        assert expected in limitations, expected
+
+
+def test_68_no_output_string_asserts_a_prediction_or_guarantee() -> None:
+    payload = _result().model_dump(mode="json")
+
+    offenders = [text for text in _walk_strings(payload) if _claims_performance(text)]
+    assert offenders == []
+
+    tainted = copy.deepcopy(payload)
+    tainted["warnings"] = [
+        *tainted["warnings"],
+        "This short will predict a viral audience response.",
+    ]
+    assert [text for text in _walk_strings(tainted) if _claims_performance(text)]
+
+
+def test_69_angle_field_set_is_exact() -> None:
+    angles = [
+        angle
+        for recommendation in _all_recommendations(_result())
+        for angle in recommendation.suggested_short_angles
+    ]
+    assert angles
+    for angle in angles:
+        assert set(angle.model_dump(mode="json")) == ANGLE_FIELDS, angle.angle_id
+
+
+# ---------------------------------------------------------------------------
+# Requirement 10 — no-network additions around the untouched test_43-test_46
+# (task 4.8)
+# ---------------------------------------------------------------------------
+def test_70_a_source_url_is_retained_without_being_fetched() -> None:
+    result = _result()
+    item = _item("owned_emotional_story")
+
+    assert result.signal_usage.url_fetching_used is False
+    assert item.source_url is not None
+
+    recommendation = _recommendations(result)["owned_emotional_story"]
+    assert any(
+        "only if authorized" in question.casefold()
+        for question in recommendation.suggested_review_questions
+    )
+
+
+def test_71_an_oversized_import_is_declined(tmp_path: Path) -> None:
+    oversized = tmp_path / "oversized.json"
+    oversized.write_text(
+        json.dumps([{"item_id": "x", "title": "y" * 2_100_000}]), encoding="utf-8"
+    )
+
+    with pytest.raises(ValidationError) as caught:
+        BobaContentScoutV2().analyze(
+            "proj_oversized", import_paths=[oversized], **_signals_kwargs()
+        )
+    assert "2" in str(caught.value)
+
+
+def test_72_a_non_local_import_path_is_declined(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        BobaContentScoutV2().analyze(
+            "proj_remote", import_paths=["https://example.invalid/items.json"]
+        )
+    with pytest.raises(ValidationError):
+        BobaContentScoutV2().analyze(
+            "proj_missing", import_paths=[tmp_path / "absent.json"]
+        )
+
+
+# ---------------------------------------------------------------------------
+# Requirement 12 — persistence and ownership boundaries (task 4.9)
+# ---------------------------------------------------------------------------
+def test_73_store_round_trips_and_keys_off_the_scout_project_id(tmp_path: Path) -> None:
+    store = BobaMemoryStore(tmp_path / "boba")
+    scout = build_synthetic_content_scout("proj_round_trip")
+
+    saved = store.save_content_scout_v2(scout)
+    path = store.content_scout_v2_path(scout.project_id)
+
+    assert path.is_file()
+    assert store.load_content_scout_v2("proj_round_trip") == saved
+
+
+def test_74_export_omits_private_keys_and_empties_review_questions(
+    tmp_path: Path,
+) -> None:
+    """Reads the ACTUAL popped keys. The self-reported `privacy` block is forbidden
+    as evidence: its members are hardcoded literals and would pass even if every
+    private key were exported."""
+    store = BobaMemoryStore(tmp_path / "boba")
+    scout = build_synthetic_content_scout("proj_export")
+    store.save_content_scout_v2(scout)
+    export = store.export_content_scout_v2("proj_export")
+    exported = export["content_scout_v2"]
+
+    # Positive control: the keys ARE present before export, so their absence
+    # afterwards is meaningful rather than trivially true of any dictionary.
+    unexported = scout.model_dump(mode="json")
+    assert any("source_path" in row for row in unexported["imported_sources"])
+    assert any("source_url" in row for row in unexported["scout_items"])
+
+    for source in exported["imported_sources"]:
+        assert "source_path" not in source
+    for item in exported["scout_items"]:
+        for key in ("source_url", "permission_notes", "user_notes", "raw_metadata_summary"):
+            assert key not in item, key
+    for name in QUEUE_LISTS:
+        for recommendation in exported["review_queue"][name]:
+            assert recommendation["suggested_review_questions"] == []
+
+    # The export carries a self-reported `privacy` block of hardcoded literals.
+    # It is deliberately NOT read as evidence (R12.5): it would report success
+    # even if every private key above had been exported.
+    assert export["privacy"]["local_paths_excluded"] is True
+
+    assert json.loads(json.dumps(export)) == export
+
+
+def test_75_a_missing_artifact_is_not_fabricated(tmp_path: Path) -> None:
+    store = BobaMemoryStore(tmp_path / "boba")
+
+    assert store.load_content_scout_v2("proj_absent") is None
+    with pytest.raises(ValidationError) as caught:
+        store.export_content_scout_v2("proj_absent")
+    assert "proj_absent" in str(caught.value) or "proj_absent" in str(
+        getattr(caught.value, "details", "")
     )
